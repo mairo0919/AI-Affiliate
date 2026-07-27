@@ -1,0 +1,6 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# pnpm 11: declare packages allowed to run install scripts
+allowBuilds: {}
