@@ -1,0 +1,2809 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum SourceType {
+  FANZA
+  TIKTOK
+  X
+  OTHER
+}
+
+enum ImageUsageStatus {
+  ALLOWED
+  REQUIRES_CONFIRMATION
+  NOT_ALLOWED
+  UNKNOWN
+}
+
+model ResearchSource {
+  id        String     @id @default(cuid())
+  name      String     @unique
+  type      SourceType
+  baseUrl   String?
+  isActive  Boolean    @default(true)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  items     ResearchItem[]
+}
+
+model ResearchItem {
+  id          String   @id @default(cuid())
+  sourceId    String
+  externalId  String
+  itemType    String
+  title       String
+  description String?
+  url         String?
+  publishedAt DateTime?
+  collectedAt DateTime
+  rawData     Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  source            ResearchSource     @relation(fields: [sourceId], references: [id])
+  metrics           ResearchMetric[]
+  tags              ResearchItemTag[]
+  images            ResearchImage[]
+  productAnalyses   ProductAnalysis[]
+  contentCandidates ContentCandidate[]
+  generatedContents GeneratedContent[]
+  xPublications     XPublication[]
+
+  @@unique([sourceId, externalId])
+  @@index([sourceId])
+  @@index([itemType, collectedAt])
+}
+
+model ResearchMetric {
+  id             String   @id @default(cuid())
+  researchItemId String
+  metricType     String
+  value          Float
+  recordedAt     DateTime
+  createdAt      DateTime @default(now())
+
+  researchItem ResearchItem @relation(fields: [researchItemId], references: [id], onDelete: Cascade)
+
+  @@index([researchItemId, recordedAt])
+}
+
+model ResearchTag {
+  id        String   @id @default(cuid())
+  name      String
+  type      String
+  createdAt DateTime @default(now())
+
+  items ResearchItemTag[]
+
+  @@unique([name, type])
+}
+
+model ResearchItemTag {
+  researchItemId String
+  researchTagId  String
+
+  researchItem ResearchItem @relation(fields: [researchItemId], references: [id], onDelete: Cascade)
+  researchTag  ResearchTag  @relation(fields: [researchTagId], references: [id], onDelete: Cascade)
+
+  @@id([researchItemId, researchTagId])
+}
+
+model ResearchImage {
+  id             String           @id @default(cuid())
+  researchItemId String
+  imageType      String
+  sourceUrl      String
+  size           String?
+  usageStatus    ImageUsageStatus @default(REQUIRES_CONFIRMATION)
+  usageNote      String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  researchItem ResearchItem @relation(fields: [researchItemId], references: [id], onDelete: Cascade)
+
+  @@unique([researchItemId, imageType, sourceUrl])
+  @@index([researchItemId])
+}
+
+enum ResearchJobStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  PARTIALLY_COMPLETED
+  FAILED
+  CANCELLED
+  MANUAL_REVIEW_REQUIRED
+}
+
+enum ResearchJobType {
+  SINGLE_PAGE
+  PAGINATED_COLLECTION
+  RESEARCH
+  STRATEGY
+  GENERATION
+  CLAIM_VALIDATION
+  REVIEW
+  REVISION
+  PUBLICATION
+  ANALYTICS_INGESTION
+  MAINTENANCE
+  OPERATION_CYCLE
+  LEARNING_GOVERNANCE
+}
+
+model ResearchJob {
+  id               String            @id @default(cuid())
+  providerName     String
+  jobType          ResearchJobType
+  status           ResearchJobStatus @default(PENDING)
+  parameters       Json
+  startedAt        DateTime?
+  completedAt      DateTime?
+  failedAt         DateTime?
+  lastHeartbeatAt  DateTime?
+  currentOffset    Int?
+  nextOffset       Int?
+  fetchedCount     Int               @default(0)
+  mappedCount      Int               @default(0)
+  savedCount       Int               @default(0)
+  updatedCount     Int               @default(0)
+  skippedCount     Int               @default(0)
+  errorCount       Int               @default(0)
+  pagesProcessed   Int               @default(0)
+  errorMessage     String?
+  cancelRequested  Boolean           @default(false)
+  resumedFromJobId String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  errors        ResearchJobError[]
+  lock          ResearchJobLock?
+  scheduleRuns  ResearchScheduleRun[]
+  notifications ResearchNotification[]
+
+  @@index([providerName, status])
+  @@index([createdAt])
+}
+
+model ResearchJobError {
+  id           String   @id @default(cuid())
+  jobId        String
+  providerName String
+  stage        String
+  externalId   String?
+  offset       Int?
+  errorType    String
+  message      String
+  retryable    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  job ResearchJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId, createdAt])
+}
+
+model ResearchJobLock {
+  id         String   @id @default(cuid())
+  lockKey    String   @unique
+  jobId      String   @unique
+  acquiredAt DateTime
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  job ResearchJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+}
+
+enum ResearchScheduleType {
+  CRON
+  MANUAL_ONLY
+}
+
+enum ResearchScheduleTriggerType {
+  SCHEDULED
+  MANUAL
+  RETRY
+}
+
+enum ResearchScheduleRunStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  PARTIALLY_COMPLETED
+  FAILED
+  SKIPPED
+}
+
+model ResearchSchedule {
+  id                       String               @id @default(cuid())
+  name                     String
+  providerName             String
+  scheduleType             ResearchScheduleType
+  cronExpression           String?
+  timezone                 String               @default("Asia/Tokyo")
+  parameters               Json
+  isActive                 Boolean              @default(true)
+  lastRunAt                DateTime?
+  nextRunAt                DateTime?
+  lastJobId                String?
+  consecutiveFailureCount  Int                  @default(0)
+  deletedAt                DateTime?
+  createdAt                DateTime             @default(now())
+  updatedAt                DateTime             @updatedAt
+
+  runs          ResearchScheduleRun[]
+  lock          ResearchScheduleLock?
+  notifications ResearchNotification[]
+
+  @@index([isActive, nextRunAt])
+  @@index([deletedAt])
+  @@index([providerName])
+}
+
+model ResearchScheduleRun {
+  id               String                     @id @default(cuid())
+  scheduleId       String
+  jobId            String?
+  triggerType      ResearchScheduleTriggerType
+  scheduledFor     DateTime?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  status           ResearchScheduleRunStatus  @default(PENDING)
+  errorMessage     String?
+  errorType        String?
+  retryOfRunId     String?
+  rootRunId        String?
+  retryAttempt     Int                        @default(0)
+  maxRetryAttempts Int?
+  nextRetryAt      DateTime?
+  createdAt        DateTime                   @default(now())
+  updatedAt        DateTime                   @updatedAt
+
+  schedule      ResearchSchedule       @relation(fields: [scheduleId], references: [id], onDelete: Restrict)
+  job           ResearchJob?           @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  retryOfRun    ResearchScheduleRun?   @relation("ScheduleRunRetries", fields: [retryOfRunId], references: [id], onDelete: SetNull)
+  retries       ResearchScheduleRun[]  @relation("ScheduleRunRetries")
+  notifications ResearchNotification[]
+
+  @@unique([scheduleId, scheduledFor])
+  @@index([scheduleId, status])
+  @@index([jobId])
+  @@index([createdAt])
+  @@index([nextRetryAt, status])
+  @@index([rootRunId])
+  @@index([retryOfRunId])
+}
+
+model ResearchScheduleLock {
+  id          String   @id @default(cuid())
+  scheduleId  String   @unique
+  ownerToken  String
+  acquiredAt  DateTime
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  schedule ResearchSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+}
+
+enum ResearchNotificationEventType {
+  SCHEDULE_FAILED
+  SCHEDULE_PARTIALLY_COMPLETED
+  SCHEDULE_AUTO_PAUSED
+  SCHEDULE_RECOVERED
+  JOB_FAILED
+  JOB_PARTIALLY_COMPLETED
+  RETRY_SCHEDULED
+  RETRY_EXHAUSTED
+  CONTENT_GENERATION_FAILED
+  CONTENT_VALIDATION_FAILED
+  CONTENT_REVIEW_REQUIRED
+  CONTENT_APPROVED
+  CONTENT_REJECTED
+  X_PUBLICATION_FAILED
+  X_PUBLICATION_PARTIALLY_PUBLISHED
+  X_PUBLICATION_PUBLISHED
+  X_REPLY_FAILED
+  X_METRICS_COLLECTION_FAILED
+  X_STRATEGY_EVALUATION_COMPLETED
+  X_OPTIMIZATION_RECOMMENDATION_CREATED
+  X_OPTIMIZATION_RECOMMENDATION_APPROVED
+  X_OPTIMIZATION_RECOMMENDATION_REJECTED
+  X_OPTIMIZATION_EXPERIMENT_STARTED
+  X_OPTIMIZATION_IMPROVED
+  X_OPTIMIZATION_DECLINED
+  X_OPTIMIZATION_VALIDATION_FAILED
+  X_PUBLICATION_BLOCKED
+  X_PRODUCT_COOLDOWN_BLOCKED
+  X_PUBLICATION_LIMIT_REACHED
+  X_KILL_SWITCH_ENABLED
+  X_RELEASE_MODE_CHANGED
+  X_ASSISTED_REVIEW_REQUIRED
+  X_RESERVATION_EXPIRED
+  X_DUPLICATE_CONTENT_BLOCKED
+  X_AUTHORIZATION_COMPLETED
+  X_AUTHORIZATION_FAILED
+  X_TOKEN_REFRESH_FAILED
+  X_CREDENTIAL_REAUTH_REQUIRED
+  X_ACCOUNT_MISMATCH
+  X_API_RATE_LIMITED
+  X_API_SOFT_BUDGET_REACHED
+  X_API_HARD_BUDGET_REACHED
+  X_API_USAGE_SYNC_FAILED
+  X_POST_PUBLISHED_UNVERIFIED
+  X_LIVE_POST_PUBLISHED
+}
+
+enum ResearchNotificationChannelType {
+  CONSOLE
+  WEBHOOK
+}
+
+enum ResearchNotificationStatus {
+  PENDING
+  SENDING
+  SENT
+  FAILED
+  SKIPPED
+}
+
+model ResearchNotification {
+  id               String                          @id @default(cuid())
+  eventType        ResearchNotificationEventType
+  providerName     String?
+  scheduleId       String?
+  scheduleRunId    String?
+  researchJobId    String?
+  channelType      ResearchNotificationChannelType
+  status           ResearchNotificationStatus      @default(PENDING)
+  deduplicationKey String                          @unique
+  title            String
+  message          String
+  payload          Json
+  attemptCount     Int                             @default(0)
+  lastAttemptAt    DateTime?
+  sentAt           DateTime?
+  failedAt         DateTime?
+  errorMessage     String?
+  createdAt        DateTime                        @default(now())
+  updatedAt        DateTime                        @updatedAt
+
+  schedule  ResearchSchedule?             @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
+  scheduleRun ResearchScheduleRun?        @relation(fields: [scheduleRunId], references: [id], onDelete: SetNull)
+  job       ResearchJob?                  @relation(fields: [researchJobId], references: [id], onDelete: SetNull)
+  attempts  ResearchNotificationAttempt[]
+
+  @@index([status, createdAt])
+  @@index([scheduleId])
+  @@index([scheduleRunId])
+  @@index([researchJobId])
+  @@index([eventType])
+}
+
+model ResearchNotificationAttempt {
+  id             String                     @id @default(cuid())
+  notificationId String
+  attemptNumber  Int
+  status         ResearchNotificationStatus
+  httpStatus     Int?
+  errorType      String?
+  errorMessage   String?
+  startedAt      DateTime
+  completedAt    DateTime?
+  createdAt      DateTime                   @default(now())
+
+  notification ResearchNotification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+
+  @@index([notificationId, attemptNumber])
+}
+
+enum AnalysisType {
+  PRODUCT_SCORING
+  TREND_DETECTION
+  CONTENT_CANDIDATE_SELECTION
+}
+
+enum AnalysisRunStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  PARTIALLY_COMPLETED
+  FAILED
+}
+
+enum EligibilityStatus {
+  ELIGIBLE
+  REQUIRES_CONFIRMATION
+  NOT_ELIGIBLE
+}
+
+enum ContentCandidateType {
+  RANKING
+  TRENDING
+  HIGH_RATING
+  NEW_RELEASE
+  DISCOUNT
+  EDITORIAL
+}
+
+enum ContentTargetChannel {
+  BLOG
+  X
+  SHORT_VIDEO
+  GENERIC
+}
+
+enum ContentCandidateStatus {
+  SELECTED
+  HELD
+  REJECTED
+  CONTENT_CREATED
+  PUBLISHED
+}
+
+model AnalysisRun {
+  id                 String            @id @default(cuid())
+  analysisType       AnalysisType
+  status             AnalysisRunStatus @default(PENDING)
+  parameters         Json
+  startedAt          DateTime?
+  completedAt        DateTime?
+  failedAt           DateTime?
+  analyzedItemCount  Int               @default(0)
+  selectedItemCount  Int               @default(0)
+  errorCount         Int               @default(0)
+  errorMessage       String?
+  scoringVersion     String            @default("scoring-v1")
+  eligibilityVersion String            @default("eligibility-v1")
+  selectionVersion   String            @default("selection-v1")
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  productAnalyses   ProductAnalysis[]
+  contentCandidates ContentCandidate[]
+
+  @@index([status, createdAt])
+  @@index([analysisType, createdAt])
+}
+
+model ProductAnalysis {
+  id                 String            @id @default(cuid())
+  analysisRunId      String
+  researchItemId     String
+  totalScore         Float
+  popularityScore    Float?
+  trendScore         Float?
+  reviewScore        Float?
+  priceScore         Float?
+  freshnessScore     Float?
+  dataQualityScore   Float
+  eligibilityStatus  EligibilityStatus
+  exclusionReasons   Json
+  scoreBreakdown     Json
+  analyzedAt         DateTime
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  analysisRun       AnalysisRun        @relation(fields: [analysisRunId], references: [id], onDelete: Cascade)
+  researchItem      ResearchItem       @relation(fields: [researchItemId], references: [id], onDelete: Cascade)
+  contentCandidates ContentCandidate[]
+
+  @@unique([analysisRunId, researchItemId])
+  @@index([analysisRunId, totalScore])
+  @@index([researchItemId, analyzedAt])
+  @@index([eligibilityStatus])
+}
+
+model ContentCandidate {
+  id                String                 @id @default(cuid())
+  analysisRunId     String
+  researchItemId    String
+  productAnalysisId String
+  candidateType     ContentCandidateType
+  rank              Int
+  selectionScore    Float
+  selectionReasons  Json
+  targetChannel     ContentTargetChannel   @default(GENERIC)
+  status            ContentCandidateStatus @default(SELECTED)
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+
+  analysisRun       AnalysisRun        @relation(fields: [analysisRunId], references: [id], onDelete: Cascade)
+  researchItem      ResearchItem       @relation(fields: [researchItemId], references: [id], onDelete: Cascade)
+  productAnalysis   ProductAnalysis    @relation(fields: [productAnalysisId], references: [id], onDelete: Cascade)
+  generatedContents GeneratedContent[]
+  xPublications     XPublication[]
+
+  @@unique([analysisRunId, candidateType, researchItemId])
+  @@index([analysisRunId, candidateType, rank])
+  @@index([researchItemId])
+  @@index([status])
+}
+
+enum ContentGenerationRunStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  PARTIALLY_COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum GeneratedContentType {
+  BLOG_ARTICLE
+  X_POST
+  SHORT_VIDEO_SCRIPT
+  PRODUCT_INTRODUCTION
+}
+
+enum GeneratedContentStatus {
+  DRAFT
+  VALIDATION_FAILED
+  REVIEW_REQUIRED
+  APPROVED
+  REJECTED
+  READY_TO_PUBLISH
+  PUBLISHED
+  ARCHIVED
+}
+
+enum ContentValidationIssueType {
+  FORBIDDEN_SOURCE_TEXT
+  REVIEW_TEXT_DETECTED
+  MISSING_AFFILIATE_URL
+  INVALID_AFFILIATE_URL
+  UNSUPPORTED_CLAIM
+  PROHIBITED_IMAGE
+  IMAGE_CONFIRMATION_REQUIRED
+  DUPLICATE_CONTENT
+  EMPTY_CONTENT
+  LENGTH_EXCEEDED
+  LENGTH_TOO_SHORT
+  MISSING_DISCLOSURE
+  INVALID_HASHTAG
+  RAW_DATA_EXPOSURE
+  SENSITIVE_VALUE_EXPOSURE
+  FABRICATED_FACT
+  STRUCTURE_INVALID
+}
+
+enum ContentValidationSeverity {
+  INFO
+  WARNING
+  ERROR
+  BLOCKING
+}
+
+enum ContentReviewDecision {
+  APPROVE
+  REJECT
+  REQUEST_CHANGES
+}
+
+model ContentGenerationRun {
+  id             String                     @id @default(cuid())
+  status         ContentGenerationRunStatus @default(PENDING)
+  providerName   String
+  modelName      String
+  parameters     Json
+  promptVersion  String
+  startedAt      DateTime?
+  completedAt    DateTime?
+  failedAt       DateTime?
+  candidateCount Int                        @default(0)
+  generatedCount Int                        @default(0)
+  skippedCount   Int                        @default(0)
+  errorCount     Int                        @default(0)
+  errorMessage   String?
+  createdAt      DateTime                   @default(now())
+  updatedAt      DateTime                   @updatedAt
+
+  contents GeneratedContent[]
+
+  @@index([status, createdAt])
+}
+
+model GeneratedContent {
+  id                 String                 @id @default(cuid())
+  generationRunId    String?
+  contentCandidateId String
+  researchItemId     String
+  /// Link to lifecycle Content (P1/P2 split). Optional for backward compatibility.
+  contentId          String?
+  contentVersionId   String?
+  contentType        GeneratedContentType
+  targetChannel      ContentTargetChannel   @default(GENERIC)
+  status             GeneratedContentStatus @default(DRAFT)
+  title              String
+  body               String
+  summary            String?
+  hashtags           Json
+  callToAction       String?
+  affiliateUrl       String
+  imageId            String?
+  promptVersion      String
+  generationProvider String
+  generationModel    String
+  inputSnapshot      Json
+  validationResult   Json?
+  contentHash        String
+  version            Int                    @default(1)
+  parentContentId    String?
+  generatedAt        DateTime
+  approvedAt         DateTime?
+  rejectedAt         DateTime?
+  publishedAt        DateTime?
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+
+  generationRun    ContentGenerationRun?    @relation(fields: [generationRunId], references: [id], onDelete: SetNull)
+  contentCandidate ContentCandidate         @relation(fields: [contentCandidateId], references: [id], onDelete: Cascade)
+  researchItem     ResearchItem             @relation(fields: [researchItemId], references: [id], onDelete: Cascade)
+  content          Content?                 @relation(fields: [contentId], references: [id], onDelete: SetNull)
+  contentVersion   ContentVersion?          @relation(fields: [contentVersionId], references: [id], onDelete: SetNull)
+  parentContent    GeneratedContent?        @relation("ContentVersions", fields: [parentContentId], references: [id], onDelete: SetNull)
+  childContents    GeneratedContent[]       @relation("ContentVersions")
+  validationIssues ContentValidationIssue[]
+  reviews          ContentReview[]
+  xPublications    XPublication[]
+
+  @@index([contentCandidateId, contentType, version])
+  @@index([researchItemId, contentType])
+  @@index([contentId])
+  @@index([contentVersionId])
+  @@index([status, createdAt])
+  @@index([contentHash])
+  @@index([generationRunId])
+}
+
+model ContentValidationIssue {
+  id                 String                     @id @default(cuid())
+  generatedContentId String
+  issueType          ContentValidationIssueType
+  severity           ContentValidationSeverity
+  fieldName          String?
+  message            String
+  detectedValue      String?
+  createdAt          DateTime                   @default(now())
+
+  generatedContent GeneratedContent @relation(fields: [generatedContentId], references: [id], onDelete: Cascade)
+
+  @@index([generatedContentId, severity])
+}
+
+model ContentReview {
+  id                 String                @id @default(cuid())
+  generatedContentId String
+  decision           ContentReviewDecision
+  reviewer           String
+  comment            String?
+  createdAt          DateTime              @default(now())
+
+  generatedContent GeneratedContent @relation(fields: [generatedContentId], references: [id], onDelete: Cascade)
+
+  @@index([generatedContentId, createdAt])
+}
+
+enum XPublicationStrategyType {
+  SINGLE_POST
+  ROOT_WITH_REPLY
+  THREAD
+  RELATED_POST_LINK
+  HUB_POST
+  CONTROL
+}
+
+enum XPublicationStatus {
+  DRAFT
+  SCHEDULED
+  PUBLISHING
+  PARTIALLY_PUBLISHED
+  PUBLISHED
+  PUBLISHED_UNVERIFIED
+  FAILED
+  BLOCKED
+  CANCELLED
+  DELETED
+}
+
+enum XApiCredentialStatus {
+  PENDING
+  ACTIVE
+  REFRESH_REQUIRED
+  EXPIRED
+  REVOKED
+  INVALID
+  DISABLED
+}
+
+enum XOAuthSessionStatus {
+  PENDING
+  CONSUMED
+  EXPIRED
+  FAILED
+  CANCELLED
+}
+
+enum XApiUsageSource {
+  LOCAL_ESTIMATE
+  X_USAGE_API
+  MANUAL
+  DEVELOPER_CONSOLE
+}
+
+enum XApiBudgetPeriodType {
+  DAILY
+  MONTHLY
+}
+
+enum XApiBudgetStatus {
+  ACTIVE
+  SOFT_LIMIT_REACHED
+  HARD_LIMIT_REACHED
+  PAUSED
+}
+
+enum XProductReservationStatus {
+  ACTIVE
+  CONSUMED
+  RELEASED
+  EXPIRED
+  CANCELLED
+}
+
+enum XAuditActorType {
+  SYSTEM
+  ADMIN
+  SCHEDULER
+  CLI
+}
+
+enum XAuditResult {
+  SUCCESS
+  REJECTED
+  BLOCKED
+  FAILED
+  SKIPPED
+}
+
+enum XPublicationPostRole {
+  ROOT
+  REPLY
+  RELATED_LINK
+  CTA
+  HUB
+}
+
+enum XPublicationPostStatus {
+  PENDING
+  PUBLISHING
+  PUBLISHED
+  FAILED
+  SKIPPED
+  CANCELLED
+}
+
+enum XExperimentStatus {
+  DRAFT
+  RUNNING
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+enum XExperimentAllocationMethod {
+  ROUND_ROBIN
+  RANDOM
+  WEIGHTED
+  MANUAL
+}
+
+enum XStrategyConfidenceLevel {
+  INSUFFICIENT
+  LOW
+  MEDIUM
+  HIGH
+}
+
+model XPublication {
+  id                   String                 @id @default(cuid())
+  generatedContentId   String
+  contentCandidateId   String
+  researchItemId       String
+  strategyType         XPublicationStrategyType
+  status               XPublicationStatus     @default(DRAFT)
+  scheduledAt          DateTime?
+  publishingStartedAt  DateTime?
+  publishedAt          DateTime?
+  failedAt             DateTime?
+  rootPostId           String?
+  conversationId       String?
+  rootPostUrl          String?
+  accountId            String?
+  attemptCount         Int                    @default(0)
+  lastErrorType        String?
+  lastErrorMessage     String?
+  idempotencyKey       String                 @unique
+  experimentGroup      String?
+  strategyVersion      String                 @default("x-strategy-v1")
+  nextRetryAt          DateTime?
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
+
+  generatedContent GeneratedContent @relation(fields: [generatedContentId], references: [id], onDelete: Cascade)
+  contentCandidate ContentCandidate @relation(fields: [contentCandidateId], references: [id], onDelete: Cascade)
+  researchItem     ResearchItem     @relation(fields: [researchItemId], references: [id], onDelete: Cascade)
+  posts            XPublicationPost[]
+  metricSnapshots  XPostMetricSnapshot[]
+  locks            XPublicationLock[]
+
+  @@index([status, scheduledAt])
+  @@index([researchItemId, status])
+  @@index([strategyType, status])
+  @@index([generatedContentId])
+  @@index([nextRetryAt])
+}
+
+model XPublicationPost {
+  id                   String                 @id @default(cuid())
+  publicationId        String
+  sequence             Int
+  role                 XPublicationPostRole
+  status               XPublicationPostStatus @default(PENDING)
+  body                 String
+  bodyHash             String?
+  weightedLength       Int
+  replyToSequence      Int?
+  relatedPublicationId String?
+  xPostId              String?
+  xPostUrl             String?
+  publishedAt          DateTime?
+  failedAt             DateTime?
+  attemptCount         Int                    @default(0)
+  lastErrorType        String?
+  lastErrorMessage     String?
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
+
+  publication      XPublication         @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+  metricSnapshots  XPostMetricSnapshot[]
+
+  @@unique([publicationId, sequence])
+  @@index([publicationId, status])
+  @@index([xPostId])
+  @@index([bodyHash, createdAt])
+}
+
+model XPublicationLock {
+  id            String   @id @default(cuid())
+  publicationId String
+  lockKey       String   @unique
+  ownerId       String
+  expiresAt     DateTime
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  publication XPublication @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+  @@index([publicationId])
+}
+
+model XPostMetricSnapshot {
+  id                        String   @id @default(cuid())
+  publicationId             String
+  publicationPostId         String?
+  xPostId                   String
+  measuredAt                DateTime
+  impressionCount           Int?
+  likeCount                 Int?
+  replyCount                Int?
+  repostCount               Int?
+  quoteCount                Int?
+  bookmarkCount             Int?
+  urlClickCount             Int?
+  profileClickCount         Int?
+  detailExpandCount         Int?
+  mediaViewCount            Int?
+  followerCountAtMeasurement Int?
+  rawMetricAvailability     Json
+  source                    String
+  collectionWindowMinutes   Int?
+  metricsVersion            String   @default("x-metrics-v1")
+  createdAt                 DateTime @default(now())
+
+  publication     XPublication      @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+  publicationPost XPublicationPost? @relation(fields: [publicationPostId], references: [id], onDelete: SetNull)
+
+  @@unique([xPostId, measuredAt])
+  @@index([publicationId, measuredAt])
+  @@index([publicationPostId, measuredAt])
+  @@index([collectionWindowMinutes])
+}
+
+model XStrategyPerformance {
+  id                          String                   @id @default(cuid())
+  strategyType                XPublicationStrategyType
+  strategyVersion             String
+  evaluationWindowHours       Int
+  sampleCount                 Int
+  eligibleSampleCount         Int
+  averageImpressions          Float?
+  medianImpressions           Float?
+  averageEngagementRate       Float?
+  medianEngagementRate        Float?
+  averageUrlClickRate         Float?
+  averageProfileClickRate     Float?
+  averageReplyContinuationRate Float?
+  confidenceLevel             XStrategyConfidenceLevel
+  score                       Float?
+  recommendedStrategy         XPublicationStrategyType?
+  supportingMetrics           Json?
+  dataLimitations             Json?
+  calculatedAt                DateTime
+  parameters                  Json
+  createdAt                   DateTime                 @default(now())
+  updatedAt                   DateTime                 @updatedAt
+
+  @@index([strategyType, strategyVersion, calculatedAt])
+  @@index([calculatedAt])
+}
+
+model XPublicationExperiment {
+  id                   String                      @id @default(cuid())
+  name                 String
+  status               XExperimentStatus           @default(DRAFT)
+  strategyVariants     Json
+  allocationMethod     XExperimentAllocationMethod @default(ROUND_ROBIN)
+  startedAt            DateTime?
+  endedAt              DateTime?
+  minimumSampleSize    Int                         @default(30)
+  evaluationWindowHours Int                        @default(72)
+  result               Json?
+  allocationCursor     Int                         @default(0)
+  createdAt            DateTime                    @default(now())
+  updatedAt            DateTime                    @updatedAt
+
+  @@index([status, startedAt])
+  @@unique([name])
+}
+
+enum XOptimizationRunStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  PARTIALLY_COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum XOptimizationDimension {
+  CONTENT_ANGLE
+  POST_FORMAT
+  POSTING_TIME
+  HASHTAG_SET
+  URL_PLACEMENT
+  DISCLOSURE_PLACEMENT
+  CTA_STYLE
+  RELATED_POST_USAGE
+  INFORMATION_DENSITY
+  TITLE_LENGTH
+}
+
+enum XOptimizationFindingType {
+  POSITIVE
+  NEGATIVE
+  NEUTRAL
+  INSUFFICIENT_DATA
+  CONFLICTING
+}
+
+enum XOptimizationRecommendationStatus {
+  PROPOSED
+  REVIEW_REQUIRED
+  APPROVED
+  REJECTED
+  EXPIRED
+  APPLIED
+  CANCELLED
+}
+
+enum XOptimizationPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum XOptimizationApplicationStatus {
+  PREPARED
+  APPLIED
+  EVALUATING
+  COMPLETED
+  CANCELLED
+  FAILED
+}
+
+model XOptimizationRun {
+  id                          String                  @id @default(cuid())
+  status                      XOptimizationRunStatus  @default(PENDING)
+  optimizationVersion         String                  @default("x-optimization-v1")
+  metricVersion               String                  @default("x-optimization-metrics-v1")
+  evaluationWindowHours       Int
+  parameters                  Json
+  startedAt                   DateTime?
+  completedAt                 DateTime?
+  failedAt                    DateTime?
+  analyzedPublicationCount    Int                     @default(0)
+  generatedRecommendationCount Int                    @default(0)
+  approvedRecommendationCount Int                     @default(0)
+  rejectedRecommendationCount Int                     @default(0)
+  errorCount                  Int                     @default(0)
+  errorMessage                String?
+  createdAt                   DateTime                @default(now())
+  updatedAt                   DateTime                @updatedAt
+
+  findings         XOptimizationFinding[]
+  recommendations  XOptimizationRecommendation[]
+
+  @@index([status, createdAt])
+}
+
+model XOptimizationFinding {
+  id                   String                    @id @default(cuid())
+  optimizationRunId    String
+  dimension            XOptimizationDimension
+  segmentKey           String
+  currentVariant       String
+  comparedVariant      String
+  currentSampleCount   Int
+  comparedSampleCount  Int
+  currentScore         Float?
+  comparedScore        Float?
+  scoreDifference      Float?
+  confidenceLevel      XStrategyConfidenceLevel
+  statisticalResult    Json?
+  supportingMetrics    Json?
+  dataLimitations      Json?
+  findingType          XOptimizationFindingType
+  createdAt            DateTime                  @default(now())
+
+  optimizationRun XOptimizationRun              @relation(fields: [optimizationRunId], references: [id], onDelete: Cascade)
+  recommendations XOptimizationRecommendation[]
+
+  @@index([optimizationRunId, dimension])
+  @@index([dimension, findingType])
+}
+
+model XOptimizationRecommendation {
+  id                 String                            @id @default(cuid())
+  optimizationRunId  String
+  findingId          String?
+  dimension          XOptimizationDimension
+  status             XOptimizationRecommendationStatus @default(REVIEW_REQUIRED)
+  priority           XOptimizationPriority             @default(MEDIUM)
+  currentValue       String
+  recommendedValue   String
+  rationale          String
+  expectedImpact     Json?
+  confidenceLevel    XStrategyConfidenceLevel
+  requiredSampleSize Int                               @default(30)
+  expiresAt          DateTime?
+  approvedAt         DateTime?
+  rejectedAt         DateTime?
+  reviewer           String?
+  reviewComment      String?
+  createdAt          DateTime                          @default(now())
+  updatedAt          DateTime                          @updatedAt
+
+  optimizationRun XOptimizationRun            @relation(fields: [optimizationRunId], references: [id], onDelete: Cascade)
+  finding         XOptimizationFinding?       @relation(fields: [findingId], references: [id], onDelete: SetNull)
+  applications    XOptimizationApplication[]
+
+  @@index([status, dimension])
+  @@index([optimizationRunId])
+  @@index([expiresAt])
+}
+
+model XOptimizationApplication {
+  id                  String                         @id @default(cuid())
+  recommendationId    String
+  sourcePublicationId String?
+  generatedContentId  String?
+  targetPublicationId String?
+  experimentId        String?
+  appliedValue        String
+  status              XOptimizationApplicationStatus @default(PREPARED)
+  appliedAt           DateTime?
+  completedAt         DateTime?
+  result              Json?
+  createdAt           DateTime                       @default(now())
+  updatedAt           DateTime                       @updatedAt
+
+  recommendation XOptimizationRecommendation @relation(fields: [recommendationId], references: [id], onDelete: Cascade)
+
+  @@index([recommendationId, status])
+  @@index([generatedContentId])
+}
+
+model XContentVariant {
+  id                   String   @id @default(cuid())
+  generatedContentId   String?
+  publicationId        String?
+  contentAngle         String?
+  postFormat           String?
+  postingTimeBucket    String?
+  weekday              String?
+  hashtagSet           String?
+  urlPlacement         String?
+  disclosurePlacement  String?
+  ctaStyle             String?
+  informationDensity   String?
+  titleWeightedLength  Int?
+  bodyWeightedLength   Int?
+  featureSnapshot      Json
+  variantVersion       String   @default("x-variant-v1")
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@index([publicationId])
+  @@index([generatedContentId])
+  @@index([contentAngle, postFormat])
+}
+
+model XProductPublicationState {
+  id                     String    @id @default(cuid())
+  productKey             String    @unique
+  provider               String
+  researchItemId         String?
+  contentCandidateId     String?
+  lastScheduledAt        DateTime?
+  lastPublishedAt        DateTime?
+  lastPublicationId      String?
+  nextEligibleAt         DateTime?
+  activeReservationCount Int       @default(0)
+  lockVersion            Int       @default(0)
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  reservations XProductPublicationReservation[]
+
+  @@index([nextEligibleAt])
+  @@index([researchItemId])
+}
+
+model XProductPublicationReservation {
+  id            String                    @id @default(cuid())
+  productKey    String
+  publicationId String
+  status        XProductReservationStatus @default(ACTIVE)
+  reservedAt    DateTime                  @default(now())
+  expiresAt     DateTime
+  releasedAt    DateTime?
+  reason        String?
+  createdAt     DateTime                  @default(now())
+  updatedAt     DateTime                  @updatedAt
+
+  productState XProductPublicationState @relation(fields: [productKey], references: [productKey], onDelete: Cascade)
+
+  @@unique([productKey, publicationId])
+  @@unique([publicationId])
+  @@index([status, expiresAt])
+  @@index([productKey, status])
+}
+
+model XRuntimeControl {
+  id        String    @id @default(cuid())
+  key       String    @unique
+  value     String
+  reason    String?
+  changedBy String?
+  changedAt DateTime  @default(now())
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([key, expiresAt])
+}
+
+model XOperationalAuditLog {
+  id             String         @id @default(cuid())
+  action         String
+  actorType      XAuditActorType
+  actorId        String?
+  entityType     String?
+  entityId       String?
+  publicationId  String?
+  productKeyHash String?
+  releaseMode    String?
+  result         XAuditResult
+  reason         String?
+  metadata       Json?
+  createdAt      DateTime       @default(now())
+
+  @@index([action, createdAt])
+  @@index([publicationId, createdAt])
+  @@index([productKeyHash, createdAt])
+  @@index([result, createdAt])
+}
+
+model XApiCredential {
+  id                     String               @id @default(cuid())
+  accountId              String               @unique
+  provider               String               @default("x")
+  status                 XApiCredentialStatus @default(PENDING)
+  encryptedAccessToken   String?
+  encryptedRefreshToken  String?
+  accessTokenExpiresAt   DateTime?
+  refreshTokenExpiresAt  DateTime?
+  scopes                 Json
+  tokenVersion           Int                  @default(1)
+  encryptionKeyVersion   String               @default("v1")
+  lastRefreshedAt        DateTime?
+  lastRefreshFailedAt    DateTime?
+  lastRefreshErrorCode   String?
+  authorizedAt           DateTime?
+  revokedAt              DateTime?
+  createdAt              DateTime             @default(now())
+  updatedAt              DateTime             @updatedAt
+
+  @@index([status])
+}
+
+model XOAuthSession {
+  id                    String              @id @default(cuid())
+  stateHash             String              @unique
+  encryptedCodeVerifier String
+  callbackUrl           String
+  requestedScopes       Json
+  status                XOAuthSessionStatus @default(PENDING)
+  expiresAt             DateTime
+  consumedAt            DateTime?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  @@index([status, expiresAt])
+}
+
+model XApiRequestLog {
+  id                 String   @id @default(cuid())
+  requestType        String
+  endpointKey        String
+  accountId          String?
+  publicationId      String?
+  xPostId            String?
+  method             String
+  result             String
+  statusCode         Int?
+  attemptCount       Int      @default(1)
+  rateLimitRemaining Int?
+  rateLimitResetAt   DateTime?
+  estimatedCost      Float?
+  billingUnit        String?
+  responseSize       Int?
+  durationMs         Int?
+  errorCode          String?
+  createdAt          DateTime @default(now())
+
+  @@index([accountId, createdAt])
+  @@index([endpointKey, createdAt])
+  @@index([result, createdAt])
+}
+
+model XApiUsageSnapshot {
+  id                 String         @id @default(cuid())
+  accountId          String?
+  periodStart        DateTime
+  periodEnd          DateTime
+  writeRequestCount  Int            @default(0)
+  readRequestCount   Int            @default(0)
+  resourceReadCount  Int            @default(0)
+  analyticsRequestCount Int         @default(0)
+  estimatedCost      Float?
+  reportedCost       Float?
+  currency           String         @default("USD")
+  source             XApiUsageSource
+  capturedAt         DateTime       @default(now())
+  createdAt          DateTime       @default(now())
+
+  @@index([accountId, periodStart])
+  @@index([source, capturedAt])
+}
+
+model XApiBudgetControl {
+  id                    String              @id @default(cuid())
+  accountId             String?
+  periodType            XApiBudgetPeriodType
+  softLimit             Float
+  hardLimit             Float
+  currentEstimatedUsage Float               @default(0)
+  currentReportedUsage  Float?
+  currency              String              @default("USD")
+  status                XApiBudgetStatus    @default(ACTIVE)
+  reason                String?
+  updatedBy             String?
+  periodStartedAt       DateTime
+  periodEndsAt          DateTime
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  @@unique([accountId, periodType, periodStartedAt])
+  @@index([status, periodEndsAt])
+}
+
+// ---------------------------------------------------------------------------
+// P1/P2 lifecycle domain (provider-agnostic)
+// ---------------------------------------------------------------------------
+
+enum ContentLifecycleStatus {
+  DRAFT
+  RESEARCHING
+  PLANNING
+  GENERATING
+  REVIEWING
+  REVISION_REQUIRED
+  APPROVED
+  SCHEDULED
+  PUBLISHING
+  PUBLISHED
+  PUBLISH_FAILED
+  PAUSED
+  REJECTED
+  ARCHIVED
+}
+
+enum ContentVersionStatus {
+  DRAFT
+  REVIEWING
+  REVISION_REQUIRED
+  APPROVED
+  REJECTED
+  ARCHIVED
+}
+
+enum ContentFormatCategory {
+  ARTICLE
+  SHORT_POST
+  THREAD
+  LISTICLE
+  COMPARISON
+  NEWS
+  GUIDE
+  OTHER
+}
+
+enum StrategyStatus {
+  DRAFT
+  READY
+  APPROVED
+  REJECTED
+  SUPERSEDED
+  ARCHIVED
+}
+
+enum ClaimType {
+  FACT
+  OFFICIAL
+  THIRD_PARTY
+  OPINION
+  UNVERIFIED
+}
+
+enum ClaimStatus {
+  PROPOSED
+  SUPPORTED
+  PARTIALLY_SUPPORTED
+  DISPUTED
+  OUTDATED
+  UNSUPPORTED
+  REJECTED
+}
+
+enum PolicySeverity {
+  INFO
+  WARNING
+  BLOCKING
+}
+
+enum PolicyEvalResult {
+  PASSED
+  WARNING
+  BLOCKED
+  MANUAL_REVIEW_REQUIRED
+  NOT_APPLICABLE
+}
+
+enum ReviewResult {
+  PASSED
+  WARNING
+  FAILED
+  MANUAL_REVIEW_REQUIRED
+}
+
+enum PublicationApprovalMode {
+  MANUAL
+  CONDITIONAL
+  AUTOMATIC
+  DRAFT_ONLY
+}
+
+enum PublicationTargetStatus {
+  DRAFT
+  AWAITING_APPROVAL
+  APPROVED
+  SCHEDULED
+  PUBLISHING
+  PUBLISHED
+  FAILED
+  PAUSED
+  REJECTED
+  ARCHIVED
+}
+
+enum PublicationPlatform {
+  BLOGGER
+  X
+  NOTE
+  THREADS
+  OTHER
+}
+
+enum BudgetScopeType {
+  DAILY
+  MONTHLY
+  PER_JOB
+  PER_CONTENT
+}
+
+enum ModelRunStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum MonetizationStatus {
+  UNMONETIZED
+  PENDING_AFFILIATE
+  MONETIZED
+  NOT_APPLICABLE
+}
+
+model AffiliateProviderRegistry {
+  id           String   @id @default(cuid())
+  providerKey  String   @unique
+  displayName  String
+  capabilities Json
+  isActive     Boolean  @default(true)
+  metadata     Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  products AffiliateProduct[]
+}
+
+model AffiliateProduct {
+  id                 String   @id @default(cuid())
+  providerKey        String
+  externalProductId  String
+  title              String
+  url                String?
+  affiliateUrl       String?
+  locale             String   @default("ja-JP")
+  currency           String?
+  adultFlag          Boolean  @default(true)
+  availability       String   @default("UNKNOWN")
+  normalized         Json
+  metadata           Json?
+  collectedAt        DateTime @default(now())
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  provider AffiliateProviderRegistry @relation(fields: [providerKey], references: [providerKey])
+  topicCandidates TopicCandidate[]
+  snapshots ProductSnapshot[]
+  productLinks ProductLink[]
+
+  @@unique([providerKey, externalProductId])
+  @@index([providerKey, collectedAt])
+}
+
+/// Catalog-level link candidate (not a usage site). Usage is tracked via ProductLinkUsage.
+/// Selection priority: preferred affiliate → preferred product → future ASP affiliate →
+/// future ASP product → official → trusted → none.
+enum ProductLinkType {
+  PROVIDER_PRODUCT
+  AFFILIATE
+  OFFICIAL
+  TRUSTED_PRODUCT
+  OTHER
+}
+
+enum AffiliateReplacementStatus {
+  NOT_APPLICABLE
+  AWAITING_PROVIDER
+  AWAITING_MATCH
+  CANDIDATE_FOUND
+  AWAITING_APPROVAL
+  APPROVED
+  REPLACED
+  REJECTED
+  INVALID
+}
+
+enum ProductLinkUsageKind {
+  CTA
+  BODY
+  METADATA
+}
+
+enum LinkReplacementEventStatus {
+  PROPOSED
+  AWAITING_APPROVAL
+  APPROVED
+  APPLIED
+  REJECTED
+}
+
+model ProductLink {
+  id                            String                     @id @default(cuid())
+  affiliateProductId            String?
+  /// Logical product identity shared across providers (same-product matching).
+  productMatchKey               String?
+  url                           String?
+  preferredAffiliateProvider    String
+  currentLinkProvider           String
+  currentLinkType               ProductLinkType
+  replacePriority               Int
+  availability                  String                     @default("AVAILABLE")
+  isSelected                    Boolean                    @default(false)
+  replacementStatus             AffiliateReplacementStatus @default(NOT_APPLICABLE)
+  candidateAffiliateUrl         String?
+  candidateAffiliateProductId   String?
+  matchedProvider               String?
+  matchConfidence               Float?
+  matchReason                   String?
+  detectedAt                    DateTime?
+  approvedAt                    DateTime?
+  approvedBy                    String?
+  replacedAt                    DateTime?
+  rejectionReason               String?
+  metadata                      Json?
+  createdAt                     DateTime                   @default(now())
+  updatedAt                     DateTime                   @updatedAt
+
+  product            AffiliateProduct?      @relation(fields: [affiliateProductId], references: [id], onDelete: Cascade)
+  usages             ProductLinkUsage[]
+  replacementEvents  LinkReplacementEvent[]
+
+  @@index([affiliateProductId, replacePriority])
+  @@index([productMatchKey])
+  @@index([preferredAffiliateProvider, currentLinkType])
+  @@index([replacementStatus])
+}
+
+/// Where a ProductLink was actually used (one catalog link → many articles/targets).
+model ProductLinkUsage {
+  id                   String              @id @default(cuid())
+  productLinkId        String
+  contentVersionId     String?
+  publicationTargetId  String?
+  publicationRecordId  String?
+  usageKind            ProductLinkUsageKind
+  /// e.g. "cta", "body:href:0", "body:paragraph:3"
+  locationHint         String?
+  urlSnapshot          String?
+  createdAt            DateTime            @default(now())
+
+  productLink        ProductLink         @relation(fields: [productLinkId], references: [id], onDelete: Cascade)
+  contentVersion     ContentVersion?     @relation(fields: [contentVersionId], references: [id], onDelete: Cascade)
+  publicationTarget  PublicationTarget?  @relation(fields: [publicationTargetId], references: [id], onDelete: Cascade)
+  publicationRecord  PublicationRecord?  @relation(fields: [publicationRecordId], references: [id], onDelete: Cascade)
+
+  @@index([productLinkId, createdAt])
+  @@index([contentVersionId])
+  @@index([publicationTargetId])
+  @@index([publicationRecordId])
+}
+
+/// Non-destructive affiliate URL replacement history for published content.
+model LinkReplacementEvent {
+  id                         String                     @id @default(cuid())
+  productLinkId              String?
+  contentId                  String
+  sourceContentVersionId     String
+  targetContentVersionId     String?
+  sourcePublicationTargetId  String?
+  targetPublicationTargetId  String?
+  publicationRecordId        String?
+  previousUrl                String
+  nextUrl                    String
+  changeReason               String
+  approvedBy                 String?
+  approvedAt                 DateTime?
+  replacedAt                 DateTime?
+  status                     LinkReplacementEventStatus @default(PROPOSED)
+  metadata                   Json?
+  createdAt                  DateTime                   @default(now())
+  updatedAt                  DateTime                   @updatedAt
+
+  productLink             ProductLink?        @relation(fields: [productLinkId], references: [id], onDelete: SetNull)
+  content                 Content             @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  sourceContentVersion    ContentVersion      @relation("ReplacementSourceVersion", fields: [sourceContentVersionId], references: [id], onDelete: Cascade)
+  targetContentVersion    ContentVersion?     @relation("ReplacementTargetVersion", fields: [targetContentVersionId], references: [id], onDelete: SetNull)
+  sourcePublicationTarget PublicationTarget?  @relation("ReplacementSourceTarget", fields: [sourcePublicationTargetId], references: [id], onDelete: SetNull)
+  targetPublicationTarget PublicationTarget?  @relation("ReplacementTargetTarget", fields: [targetPublicationTargetId], references: [id], onDelete: SetNull)
+  publicationRecord       PublicationRecord?  @relation(fields: [publicationRecordId], references: [id], onDelete: SetNull)
+
+  @@index([contentId, createdAt])
+  @@index([productLinkId, status])
+  @@index([status, createdAt])
+}
+
+model ProductSnapshot {
+  id                String   @id @default(cuid())
+  affiliateProductId String
+  capturedAt        DateTime @default(now())
+  payload           Json
+  createdAt         DateTime @default(now())
+
+  product AffiliateProduct @relation(fields: [affiliateProductId], references: [id], onDelete: Cascade)
+
+  @@index([affiliateProductId, capturedAt])
+}
+
+model SourceDocument {
+  id              String   @id @default(cuid())
+  sourceKey       String
+  externalId      String?
+  url             String?
+  title           String?
+  documentType    String
+  contentHash     String?
+  retrievedAt     DateTime @default(now())
+  publishedAt     DateTime?
+  freshnessScore  Float?
+  robotsAllowed   Boolean?
+  termsNotes      String?
+  rateLimitNotes  String?
+  normalizedText  String?
+  metadata        Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  findings ResearchFinding[]
+  claimSources ClaimSource[]
+  articleStructureObservations ArticleStructureObservation[]
+
+  @@index([sourceKey, retrievedAt])
+  @@index([contentHash])
+}
+
+model ResearchFinding {
+  id               String   @id @default(cuid())
+  sourceDocumentId String?
+  findingType      String
+  summary          String
+  confidence       Float?
+  noveltyScore     Float?
+  metadata         Json?
+  observedAt       DateTime @default(now())
+  createdAt        DateTime @default(now())
+
+  sourceDocument SourceDocument? @relation(fields: [sourceDocumentId], references: [id], onDelete: SetNull)
+  claims         Claim[]
+
+  @@index([findingType, observedAt])
+}
+
+model TopicCandidate {
+  id                 String   @id @default(cuid())
+  title              String
+  summary            String?
+  formatHint         String?
+  formatCategory     ContentFormatCategory @default(OTHER)
+  status             String   @default("PROPOSED")
+  selectionReasons   Json?
+  affiliateProductId String?
+  contentCandidateId String?
+  researchItemId     String?
+  metadata           Json?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  affiliateProduct AffiliateProduct? @relation(fields: [affiliateProductId], references: [id], onDelete: SetNull)
+  strategies       ContentStrategy[]
+  contents         Content[]
+
+  @@index([status, createdAt])
+  @@index([affiliateProductId])
+}
+
+model ContentStrategy {
+  id                  String         @id @default(cuid())
+  topicCandidateId    String
+  objective           String
+  targetAudience      String
+  userIntent          String
+  formatCategory      ContentFormatCategory
+  formatKey           String
+  angle               String
+  primaryChannel      PublicationPlatform
+  candidateChannels   Json
+  affiliateIntent     String?
+  ctaPolicy           String?
+  timingRationale     String?
+  differentiation     String?
+  requiredClaims      Json
+  requiredResearch    Json
+  successMetrics      Json
+  riskFlags           Json
+  status              StrategyStatus @default(DRAFT)
+  confidence          Float?
+  evidenceRefs        Json?
+  modelRunId          String?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  topicCandidate TopicCandidate @relation(fields: [topicCandidateId], references: [id], onDelete: Cascade)
+  contents       Content[]
+  claims         Claim[]
+
+  @@index([topicCandidateId, status])
+  @@index([primaryChannel, status])
+}
+
+model Content {
+  id               String                 @id @default(cuid())
+  topicCandidateId String?
+  strategyId       String?
+  status           ContentLifecycleStatus @default(DRAFT)
+  primaryLanguage  String                 @default("ja")
+  contentPurpose   String?
+  monetizationStatus MonetizationStatus   @default(UNMONETIZED)
+  archivedAt       DateTime?
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+
+  topicCandidate   TopicCandidate?  @relation(fields: [topicCandidateId], references: [id], onDelete: SetNull)
+  strategy         ContentStrategy? @relation(fields: [strategyId], references: [id], onDelete: SetNull)
+  versions         ContentVersion[]
+  publicationTargets PublicationTarget[]
+  legacyGenerated  GeneratedContent[]
+  linkReplacementEvents LinkReplacementEvent[]
+  analyticsSnapshots AnalyticsSnapshot[]
+
+  @@index([status, createdAt])
+  @@index([strategyId])
+  @@index([monetizationStatus, createdAt])
+}
+
+/// Manual / imported / future-API metrics (P3/P4). Not X-specific.
+model AnalyticsSnapshot {
+  id                   String   @id @default(cuid())
+  platform             String
+  contentId            String?
+  publicationTargetId  String?
+  publicationRecordId  String?
+  externalId           String?
+  measuredAt           DateTime @default(now())
+  metrics              Json
+  source               String   @default("manual")
+  notes                String?
+  metadata             Json?
+  createdAt            DateTime @default(now())
+
+  content Content? @relation(fields: [contentId], references: [id], onDelete: SetNull)
+
+  @@index([platform, measuredAt])
+  @@index([contentId, measuredAt])
+  @@index([source, measuredAt])
+}
+
+model ContentVersion {
+  id               String               @id @default(cuid())
+  contentId        String
+  versionNumber    Int
+  parentVersionId  String?
+  revisionType     String               @default("initial")
+  title            String
+  summary          String?
+  body             String
+  structuredContent Json?
+  status           ContentVersionStatus @default(DRAFT)
+  createdBy        String               @default("system")
+  modelRunId       String?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  content          Content              @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  productLinkUsages ProductLinkUsage[]
+  replacementEventsAsSource LinkReplacementEvent[] @relation("ReplacementSourceVersion")
+  replacementEventsAsTarget LinkReplacementEvent[] @relation("ReplacementTargetVersion")
+  parentVersion    ContentVersion?      @relation("VersionTree", fields: [parentVersionId], references: [id], onDelete: SetNull)
+  childVersions    ContentVersion[]     @relation("VersionTree")
+  versionClaims    ContentVersionClaim[]
+  publicationTargets PublicationTarget[]
+  legacyGenerated  GeneratedContent[]
+  reviews          QualityReviewRecord[]
+
+  @@unique([contentId, versionNumber])
+  @@index([status, createdAt])
+}
+
+model Claim {
+  id               String      @id @default(cuid())
+  statement        String
+  claimType        ClaimType   @default(UNVERIFIED)
+  status           ClaimStatus @default(PROPOSED)
+  confidence       Float?
+  freshnessScore   Float?
+  classification   String      @default("third_party")
+  firstObservedAt  DateTime    @default(now())
+  lastVerifiedAt   DateTime?
+  expiresAt        DateTime?
+  strategyId       String?
+  researchFindingId String?
+  metadata         Json?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  strategy         ContentStrategy? @relation(fields: [strategyId], references: [id], onDelete: SetNull)
+  researchFinding  ResearchFinding? @relation(fields: [researchFindingId], references: [id], onDelete: SetNull)
+  sources          ClaimSource[]
+  versionClaims    ContentVersionClaim[]
+
+  @@index([status, claimType])
+  @@index([strategyId])
+}
+
+model ClaimSource {
+  id               String   @id @default(cuid())
+  claimId          String
+  sourceDocumentId String?
+  supportType      String
+  excerptOrSummary String
+  sourceLocation   String?
+  retrievedAt      DateTime @default(now())
+  confidence       Float?
+  contradiction    Boolean  @default(false)
+  metadata         Json?
+  createdAt        DateTime @default(now())
+
+  claim          Claim           @relation(fields: [claimId], references: [id], onDelete: Cascade)
+  sourceDocument SourceDocument? @relation(fields: [sourceDocumentId], references: [id], onDelete: SetNull)
+
+  @@index([claimId])
+}
+
+model ContentVersionClaim {
+  id               String   @id @default(cuid())
+  contentVersionId String
+  claimId          String
+  usageType        String
+  sectionRef       String?
+  wording          String?
+  validationStatus String   @default("pending")
+  createdAt        DateTime @default(now())
+
+  contentVersion ContentVersion @relation(fields: [contentVersionId], references: [id], onDelete: Cascade)
+  claim          Claim          @relation(fields: [claimId], references: [id], onDelete: Cascade)
+
+  @@unique([contentVersionId, claimId, usageType])
+}
+
+model PolicyRule {
+  id             String         @id @default(cuid())
+  policyType     String
+  scope          String
+  targetPlatform String?
+  targetProvider String?
+  ruleIdentifier String
+  ruleVersion    String         @default("v1")
+  severity       PolicySeverity @default(WARNING)
+  enabled        Boolean        @default(true)
+  condition      Json
+  resultOnMatch  PolicyEvalResult
+  message        String
+  effectiveFrom  DateTime       @default(now())
+  effectiveTo    DateTime?
+  metadata       Json?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  evaluations PolicyEvaluation[]
+
+  @@unique([ruleIdentifier, ruleVersion])
+  @@index([policyType, enabled])
+}
+
+model PolicyEvaluation {
+  id           String           @id @default(cuid())
+  policyRuleId String?
+  targetType   String
+  targetId     String
+  result       PolicyEvalResult
+  message      String?
+  details      Json?
+  evaluatedAt  DateTime         @default(now())
+  createdAt    DateTime         @default(now())
+
+  policyRule PolicyRule? @relation(fields: [policyRuleId], references: [id], onDelete: SetNull)
+
+  @@index([targetType, targetId, evaluatedAt])
+  @@index([result, evaluatedAt])
+}
+
+model QualityReviewRecord {
+  id               String       @id @default(cuid())
+  reviewType       String
+  reviewerType     String
+  targetType       String
+  targetId         String
+  contentVersionId String?
+  criteria         Json
+  result           ReviewResult
+  score            Float?
+  findings         Json
+  requiredActions  Json?
+  status           String       @default("completed")
+  modelRunId       String?
+  createdAt        DateTime     @default(now())
+
+  contentVersion ContentVersion? @relation(fields: [contentVersionId], references: [id], onDelete: SetNull)
+  revisionActions RevisionAction[]
+
+  @@index([targetType, targetId, createdAt])
+  @@index([result, createdAt])
+}
+
+model RevisionAction {
+  id             String   @id @default(cuid())
+  reviewId       String?
+  actionType     String
+  rationale      String?
+  improvementDelta Float?
+  sameErrorRepeat  Int     @default(0)
+  costDelta      Float?
+  changeScope    String?
+  needsMoreResearch Boolean @default(false)
+  needsFullRegenerate Boolean @default(false)
+  needsAngleChange Boolean @default(false)
+  needsDiscard   Boolean  @default(false)
+  metadata       Json?
+  createdAt      DateTime @default(now())
+
+  review QualityReviewRecord? @relation(fields: [reviewId], references: [id], onDelete: SetNull)
+
+  @@index([reviewId])
+}
+
+model PublicationTarget {
+  id                 String                  @id @default(cuid())
+  contentId          String
+  contentVersionId   String
+  platform           PublicationPlatform
+  destinationRef     String?
+  targetFormat       String?
+  approvalMode       PublicationApprovalMode @default(MANUAL)
+  status             PublicationTargetStatus @default(DRAFT)
+  scheduledAt        DateTime?
+  policyResult       PolicyEvalResult?
+  platformMetadata   Json?
+  publishedExternalId String?
+  publishedUrl       String?
+  approvedAt         DateTime?
+  publishedAt        DateTime?
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
+
+  content        Content        @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  contentVersion ContentVersion @relation(fields: [contentVersionId], references: [id], onDelete: Cascade)
+  publications   PublicationRecord[]
+  productLinkUsages ProductLinkUsage[]
+  replacementEventsAsSource LinkReplacementEvent[] @relation("ReplacementSourceTarget")
+  replacementEventsAsTarget LinkReplacementEvent[] @relation("ReplacementTargetTarget")
+
+  @@index([contentId, platform])
+  @@index([status, scheduledAt])
+}
+
+model PublicationRecord {
+  id                   String   @id @default(cuid())
+  publicationTargetId  String
+  platform             PublicationPlatform
+  status               String
+  externalId           String?
+  url                  String?
+  responseSummary      Json?
+  errorCode            String?
+  createdAt            DateTime @default(now())
+
+  target PublicationTarget @relation(fields: [publicationTargetId], references: [id], onDelete: Cascade)
+  productLinkUsages ProductLinkUsage[]
+  linkReplacementEvents LinkReplacementEvent[]
+
+  @@index([publicationTargetId, createdAt])
+}
+
+model ModelRun {
+  id                    String         @id @default(cuid())
+  provider              String
+  model                 String
+  taskType              String
+  promptIdentifier      String?
+  promptVersion         String?
+  inputRef              String?
+  outputRef             String?
+  status                ModelRunStatus @default(PENDING)
+  startedAt             DateTime       @default(now())
+  completedAt           DateTime?
+  inputTokens           Int?
+  outputTokens          Int?
+  cachedTokens          Int?
+  estimatedCost         Float?
+  actualCost            Float?
+  currency              String         @default("JPY")
+  errorType             String?
+  errorDetail           String?
+  structuredOutputValid Boolean?
+  retryOfId             String?
+  metadata              Json?
+  createdAt             DateTime       @default(now())
+
+  costs CostRecord[]
+
+  @@index([taskType, startedAt])
+  @@index([provider, model, startedAt])
+  @@index([status])
+}
+
+model CostRecord {
+  id             String   @id @default(cuid())
+  provider       String
+  serviceOrModel String
+  operationType  String
+  relatedType    String?
+  relatedId      String?
+  modelRunId     String?
+  estimatedAmount Float?
+  actualAmount   Float?
+  currency       String   @default("JPY")
+  recordedAt     DateTime @default(now())
+  metadata       Json?
+  createdAt      DateTime @default(now())
+
+  modelRun ModelRun? @relation(fields: [modelRunId], references: [id], onDelete: SetNull)
+
+  @@index([recordedAt])
+  @@index([relatedType, relatedId])
+}
+
+model BudgetSetting {
+  id               String          @id @default(cuid())
+  scopeType        BudgetScopeType
+  softLimit        Float
+  hardLimit        Float
+  warningThreshold Float
+  stopThreshold    Float
+  currency         String          @default("JPY")
+  enabled          Boolean         @default(true)
+  metadata         Json?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  @@unique([scopeType, currency])
+}
+
+model PromptDefinition {
+  id                String    @id @default(cuid())
+  identifier        String
+  version           String
+  taskType          String
+  body              String
+  systemInstruction String?
+  inputTemplate     String?
+  outputSchema      Json?
+  enabled           Boolean   @default(true)
+  effectiveFrom     DateTime  @default(now())
+  metadata          Json?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([identifier, version])
+  @@index([taskType, enabled])
+}
+
+model OperatorJob {
+  id             String            @id @default(cuid())
+  jobType        ResearchJobType
+  status         ResearchJobStatus @default(PENDING)
+  priority       Int               @default(100)
+  runAfter       DateTime?
+  lockedAt       DateTime?
+  lockedBy       String?
+  attempts       Int               @default(0)
+  maxAttempts    Int               @default(3)
+  idempotencyKey String?           @unique
+  payload        Json
+  result         Json?
+  error          String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  completedAt    DateTime?
+
+  @@index([status, runAfter, priority])
+  @@index([jobType, status])
+}
+
+/// P5: normalized metrics rolled up from AnalyticsSnapshot rows
+model AnalyticsAggregate {
+  id                  String   @id @default(cuid())
+  contentId           String?
+  contentVersionId    String?
+  publicationTargetId String?
+  platform            String
+  windowStart         DateTime
+  windowEnd           DateTime
+  impressions         Float?
+  views               Float?
+  clicks              Float?
+  ctr                 Float?
+  engagement          Float?
+  likes               Float?
+  reposts             Float?
+  comments            Float?
+  bookmarks           Float?
+  articleOpens        Float?
+  readTimeSeconds     Float?
+  externalClicks      Float?
+  publicationAgeHours Float?
+  sampleSnapshotCount Int      @default(0)
+  normalizedMetrics   Json
+  platformMetrics     Json?
+  sourceSnapshotIds   Json
+  metadata            Json?
+  createdAt           DateTime @default(now())
+
+  evaluations Evaluation[]
+  experimentResults ExperimentResult[]
+
+  @@index([contentId, platform, createdAt])
+  @@index([platform, windowEnd])
+}
+
+/// P5: content/channel evaluation (deterministic first, optional LLM)
+model Evaluation {
+  id                   String   @id @default(cuid())
+  contentId            String
+  contentVersionId     String?
+  analyticsAggregateId String?
+  platform             String?
+  overallScore         Float
+  seoScore             Float
+  ctrScore             Float
+  contentScore         Float
+  engagementScore      Float
+  ctaQuality           Float
+  headlineQuality      Float
+  freshness            Float
+  confidence           Float
+  evaluationReason     String
+  strengths            Json
+  weaknesses           Json
+  recommendations      Json
+  deterministicPayload Json?
+  llmPayload           Json?
+  modelRunId           String?
+  status               String   @default("COMPLETED")
+  createdAt            DateTime @default(now())
+
+  analyticsAggregate AnalyticsAggregate? @relation(fields: [analyticsAggregateId], references: [id], onDelete: SetNull)
+  findings           EvaluationFinding[]
+  experimentResults  ExperimentResult[]
+
+  @@index([contentId, createdAt])
+  @@index([platform, createdAt])
+  @@index([overallScore])
+}
+
+model EvaluationFinding {
+  id           String   @id @default(cuid())
+  evaluationId String
+  category     String
+  severity     String
+  code         String
+  message      String
+  evidence     Json?
+  createdAt    DateTime @default(now())
+
+  evaluation Evaluation @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+
+  @@index([evaluationId, category])
+}
+
+/// P5: channel-agnostic experiment (not auto-published; human approval required)
+model Experiment {
+  id               String    @id @default(cuid())
+  contentId        String
+  contentVersionId String?
+  name             String
+  hypothesis       String
+  status           String    @default("DRAFT")
+  platform         String?
+  approvedAt       DateTime?
+  approvedBy       String?
+  metadata         Json?
+  modelRunId       String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  variants ExperimentVariant[]
+  results  ExperimentResult[]
+
+  @@index([contentId, status])
+  @@index([status, createdAt])
+}
+
+model ExperimentVariant {
+  id               String   @id @default(cuid())
+  experimentId     String
+  label            String
+  variantType      String
+  payload          Json
+  contentVersionId String?
+  status           String   @default("PROPOSED")
+  createdAt        DateTime @default(now())
+
+  experiment Experiment         @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+  results    ExperimentResult[]
+
+  @@unique([experimentId, label])
+  @@index([experimentId, variantType])
+}
+
+model ExperimentResult {
+  id                   String    @id @default(cuid())
+  experimentId         String
+  variantId            String
+  evaluationId         String?
+  analyticsAggregateId String?
+  metrics              Json
+  score                Float?
+  winner               Boolean   @default(false)
+  notes                String?
+  completedAt          DateTime?
+  createdAt            DateTime  @default(now())
+
+  experiment         Experiment          @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+  variant            ExperimentVariant   @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  evaluation         Evaluation?         @relation(fields: [evaluationId], references: [id], onDelete: SetNull)
+  analyticsAggregate AnalyticsAggregate? @relation(fields: [analyticsAggregateId], references: [id], onDelete: SetNull)
+
+  @@index([experimentId, winner])
+}
+
+/// P5/P6: durable learning knowledge with governance
+model LearningRule {
+  id                   String    @id @default(cuid())
+  ruleType             String
+  statement            String
+  confidence           Float
+  sampleCount          Int
+  successRate          Float?
+  minimumSampleCount   Int       @default(1)
+  minimumConfidence    Float     @default(0.5)
+  minimumSuccessRate   Float     @default(0.4)
+  applicablePlatform   String?
+  applicableContentType String?
+  applicableGenre      String?
+  applicableProvider   String?
+  validFrom            DateTime  @default(now())
+  validUntil           DateTime?
+  approvedBy           String?
+  approvedAt           DateTime?
+  suspendedAt          DateTime?
+  deactivatedAt        DateTime?
+  deactivationReason   String?
+  supersedesRuleId     String?
+  sourceEvaluationIds  Json
+  sourceExperimentIds  Json?
+  status               String    @default("PROPOSED")
+  metadata             Json?
+  modelRunId           String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  supersedes   LearningRule?  @relation("RuleSupersede", fields: [supersedesRuleId], references: [id], onDelete: SetNull)
+  supersededBy LearningRule[] @relation("RuleSupersede")
+  applications LearningRuleApplication[]
+  conflictsAsA LearningRuleConflict[] @relation("ConflictRuleA")
+  conflictsAsB LearningRuleConflict[] @relation("ConflictRuleB")
+
+  @@index([ruleType, status])
+  @@index([confidence, sampleCount])
+  @@index([status, applicablePlatform])
+}
+
+/// P5: injection into next Strategy generation only (never mutates published ContentVersion)
+model StrategyFeedback {
+  id               String   @id @default(cuid())
+  topicCandidateId String?
+  strategyId       String?
+  learningRuleIds  Json
+  evaluationIds    Json
+  experimentIds    Json
+  feedbackPayload  Json
+  modelRunId       String?
+  createdAt        DateTime @default(now())
+
+  @@index([topicCandidateId, createdAt])
+  @@index([strategyId])
+}
+
+/// P6: analytics file/API import batch
+model AnalyticsImportBatch {
+  id             String   @id @default(cuid())
+  source         String
+  platform       String?
+  format         String
+  sourceFileHash String?
+  fileName       String?
+  status         String   @default("PENDING")
+  rowCount       Int      @default(0)
+  acceptedCount  Int      @default(0)
+  duplicateCount Int      @default(0)
+  rejectedCount  Int      @default(0)
+  unmatchedCount Int      @default(0)
+  validationIssues Json?
+  metadata       Json?
+  importedAt     DateTime @default(now())
+  createdAt      DateTime @default(now())
+
+  rows AnalyticsImportRow[]
+
+  @@unique([sourceFileHash])
+  @@index([status, importedAt])
+  @@index([platform, importedAt])
+}
+
+model AnalyticsImportRow {
+  id                   String   @id @default(cuid())
+  batchId              String
+  rowIndex             Int
+  rowHash              String
+  externalPublicationId String?
+  measuredAt           DateTime?
+  rawMetrics           Json
+  normalizedMetrics    Json?
+  unit                 String?
+  attributionWindowHours Int?
+  duplicateStatus      String   @default("unique")
+  validationIssues     Json?
+  attributionStatus    String   @default("unmatched")
+  snapshotId           String?
+  metadata             Json?
+  createdAt            DateTime @default(now())
+
+  batch        AnalyticsImportBatch  @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  attributions AnalyticsAttribution[]
+
+  @@unique([batchId, rowHash])
+  @@index([attributionStatus, createdAt])
+  @@index([externalPublicationId])
+}
+
+model AnalyticsAttribution {
+  id                   String   @id @default(cuid())
+  importRowId          String?
+  snapshotId           String?
+  status               String
+  confidence           Float
+  matchReason          String
+  publicationRecordId  String?
+  publicationTargetId  String?
+  contentVersionId     String?
+  contentId            String?
+  productLinkId        String?
+  experimentVariantId  String?
+  platformAccount      String?
+  candidates           Json?
+  reviewedBy           String?
+  reviewedAt           DateTime?
+  metadata             Json?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  importRow AnalyticsImportRow? @relation(fields: [importRowId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([contentId])
+  @@index([publicationTargetId])
+}
+
+/// P6: future affiliate conversion boundary (CSV/API). Revenue metrics stay separate from engagement.
+model AffiliateResult {
+  id                 String    @id @default(cuid())
+  provider           String
+  transactionId      String?
+  clickedAt          DateTime?
+  convertedAt        DateTime?
+  productId          String?
+  productMatchKey    String?
+  normalUrl          String?
+  affiliateUrl       String?
+  orderAmount        Float?
+  commissionAmount   Float?
+  currency           String    @default("JPY")
+  status             String    @default("pending")
+  cancelled          Boolean   @default(false)
+  contentId          String?
+  contentVersionId   String?
+  publicationTargetId String?
+  productLinkId      String?
+  attributionMetadata Json?
+  importBatchId      String?
+  sourceFileHash     String?
+  rowHash            String?
+  metadata           Json?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@unique([provider, transactionId])
+  @@index([productMatchKey, convertedAt])
+  @@index([contentId, convertedAt])
+  @@index([status, convertedAt])
+}
+
+model LearningRuleApplication {
+  id               String   @id @default(cuid())
+  strategyId       String
+  learningRuleId   String
+  applicationType  String
+  appliedField     String?
+  promptVersion    String?
+  modelRunId       String?
+  applicationReason String?
+  createdAt        DateTime @default(now())
+
+  learningRule LearningRule @relation(fields: [learningRuleId], references: [id], onDelete: Cascade)
+
+  @@index([strategyId, createdAt])
+  @@index([learningRuleId, createdAt])
+}
+
+model LearningRuleConflict {
+  id               String   @id @default(cuid())
+  ruleAId          String
+  ruleBId          String
+  conflictType     String
+  reason           String
+  status           String   @default("manual_review_required")
+  resolution       String?
+  resolvedBy       String?
+  resolvedAt       DateTime?
+  metadata         Json?
+  createdAt        DateTime @default(now())
+
+  ruleA LearningRule @relation("ConflictRuleA", fields: [ruleAId], references: [id], onDelete: Cascade)
+  ruleB LearningRule @relation("ConflictRuleB", fields: [ruleBId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@unique([ruleAId, ruleBId, conflictType])
+}
+
+/// P6: daily operations orchestration (reuses OperatorJob patterns; dedicated cycle tracking)
+model OperationJob {
+  id             String    @id @default(cuid())
+  cycleType      String
+  status         String    @default("PENDING")
+  idempotencyKey String?   @unique
+  payload        Json
+  result         Json?
+  error          String?
+  errorClass     String?
+  retryable      Boolean   @default(false)
+  attempts       Int       @default(0)
+  maxAttempts    Int       @default(3)
+  operatorJobId  String?
+  startedAt      DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  checkpoints OperationCheckpoint[]
+
+  @@index([cycleType, status])
+  @@index([status, createdAt])
+}
+
+model OperationCheckpoint {
+  id              String   @id @default(cuid())
+  operationJobId  String
+  stepKey         String
+  status          String
+  reusableRefs    Json?
+  output          Json?
+  error           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  operationJob OperationJob @relation(fields: [operationJobId], references: [id], onDelete: Cascade)
+
+  @@unique([operationJobId, stepKey])
+  @@index([operationJobId, status])
+}
+
+model AuditEvent {
+  id           String   @id @default(cuid())
+  eventType    String
+  actor        String
+  targetType   String
+  targetId     String
+  action       String
+  summary      String
+  details      Json?
+  relatedJobId String?
+  createdAt    DateTime @default(now())
+
+  @@index([eventType, createdAt])
+  @@index([targetType, targetId, createdAt])
+  @@index([actor, createdAt])
+}
+
+/// P7: internal operations console user (password hash only — never plaintext)
+model AdminUser {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  displayName  String
+  /// bcrypt / scrypt hash — never store plaintext passwords
+  passwordHash String
+  role         String    @default("VIEWER")
+  active       Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  sessions  AdminSession[]
+  decisions ApprovalDecision[]
+
+  @@index([role, active])
+}
+
+model AdminSession {
+  id        String   @id @default(cuid())
+  userId    String
+  /// sha256 of opaque session token (raw token never stored)
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  revokedAt DateTime?
+
+  user AdminUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+/// Non-secret operational settings editable from Admin Console
+model SystemSetting {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       Json
+  description String?
+  updatedBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+/// Affiliate / analytics CSV mapping profiles (sample profiles marked isSample)
+model ProviderMappingProfile {
+  id              String   @id @default(cuid())
+  profileKey      String   @unique
+  provider        String
+  label           String
+  isSample        Boolean  @default(true)
+  columnMapping   Json
+  statusMapping   Json
+  currencyMapping Json
+  dateFormat      String   @default("ISO8601")
+  notes           String?
+  metadata        Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([provider, isSample])
+}
+
+/// Explicit approval decisions for audit (complements AuditEvent)
+model ApprovalDecision {
+  id          String   @id @default(cuid())
+  targetType  String
+  targetId    String
+  decision    String
+  reason      String?
+  actorUserId String
+  actorEmail  String
+  correlationId String?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  actor AdminUser @relation(fields: [actorUserId], references: [id], onDelete: Cascade)
+
+  @@index([targetType, targetId, createdAt])
+  @@index([actorUserId, createdAt])
+}
+
+/// External article structure observation — features only, never full article body
+model ArticleStructureObservation {
+  id               String   @id @default(cuid())
+  sourceDocumentId String?
+  sourceUrl        String
+  sourceDomain     String
+  contentHash      String
+  articleTypeHint  String?
+  /// Structural features only (counts, positions, enums, short pattern labels)
+  features         Json
+  confidence       Float?
+  observedAt       DateTime @default(now())
+  createdAt        DateTime @default(now())
+  metadata         Json?
+
+  sourceDocument SourceDocument? @relation(fields: [sourceDocumentId], references: [id], onDelete: SetNull)
+
+  @@index([sourceDomain, observedAt])
+  @@index([contentHash])
+  @@index([articleTypeHint, observedAt])
+  @@index([sourceDocumentId])
+}
+
+/// Article format registry — structural specs + governance, not prose templates
+model ArticleFormatDefinition {
+  id                   String                @id @default(cuid())
+  formatKey            String                @unique
+  formatCategory       ContentFormatCategory
+  displayName          String
+  status               String                @default("PROPOSED")
+  /// Structural generation/gate contract (productCount, sections, cta, …)
+  spec                 Json
+  externalPriorWeight  Float                 @default(0.5)
+  ownPerformanceWeight Float                 @default(0)
+  effectiveWeight      Float                 @default(0.5)
+  sampleExternal       Int                   @default(0)
+  sampleOwn            Int                   @default(0)
+  domainDiversity      Int                   @default(0)
+  confidence           Float?
+  metricsSummary       Json?
+  /// Observation ids that contributed to this format proposal
+  derivedFromObservationIds Json?
+  linkedLearningRuleId String?
+  approvedBy           String?
+  approvedAt           DateTime?
+  suspendedAt          DateTime?
+  metadata             Json?
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+
+  @@index([status, effectiveWeight])
+  @@index([formatCategory, status])
+  @@index([linkedLearningRuleId])
+}
+
+/// Editorial Brain: multi-step plan→generate→validate→review→decision trace root (not a single LLM call)
+model EditorialBrainRun {
+  id                      String   @id @default(cuid())
+  /// BLOG | X (extension: future channel ids without Core rewrite)
+  channel                 String
+  status                  String   @default("RUNNING")
+  /// SHADOW | ACTIVE — Foundation uses SHADOW (no production reject/publish authority)
+  mode                    String   @default("SHADOW")
+  topicId                 String?
+  strategyId              String?
+  contentId               String?
+  contentVersionId        String?
+  formatKey               String?
+  contentType             String?
+  structurePatternId      String?
+  editorialPatternId      String?
+  claimProfile            String?
+  selectedClaimIds        Json?
+  retrievedExperienceIds  Json?
+  corePlan                Json?
+  channelPlan             Json?
+  generatorModelRunIds    Json?
+  validatorResults        Json?
+  reviewResult            Json?
+  repairAttempts          Json?
+  /// PASS | TARGETED_REPAIR | REPLAN | FULL_REGEN | ESCALATE | SKIPPED
+  brainDecision           String?
+  /// Existing system decision for comparison (e.g. GENERATED_OK | VALIDATION_FAILED)
+  legacyDecision          String?
+  finalDecision           String?
+  failureCodes            Json?
+  publishRef              String?
+  performanceRef          String?
+  errorDetail             String?
+  metadata                Json?
+  startedAt               DateTime @default(now())
+  completedAt             DateTime?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  experiences EditorialExperience[]
+
+  @@index([channel, createdAt])
+  @@index([mode, status, createdAt])
+  @@index([contentVersionId])
+  @@index([strategyId, createdAt])
+  @@index([formatKey, channel, createdAt])
+  @@index([claimProfile, createdAt])
+}
+
+/// Append-only editorial execution experience (does NOT auto-promote to LearningRule)
+model EditorialExperience {
+  id                 String   @id @default(cuid())
+  /// CORE | CHANNEL
+  scope              String
+  channel            String
+  formatKey          String?
+  contentType        String?
+  claimProfile       String?
+  structurePatternId String?
+  editorialPatternId String?
+  planSummary        Json?
+  validatorSummary   Json?
+  reviewSummary      Json?
+  failureCodes       Json?
+  outcome            String?
+  /// SYSTEM_VALIDATOR | BRAIN_REVIEW | HUMAN_FEEDBACK | PERFORMANCE | OTHER_APPROVED_SOURCE
+  sourceType         String
+  confidence         Float    @default(0.3)
+  sampleEvidence     Int      @default(1)
+  brainRunId         String?
+  contentVersionId   String?
+  modelRunIds        Json?
+  performanceRef     String?
+  lesson             Json?
+  metadata           Json?
+  createdAt          DateTime @default(now())
+
+  brainRun EditorialBrainRun? @relation(fields: [brainRunId], references: [id], onDelete: SetNull)
+
+  @@index([scope, channel, createdAt])
+  @@index([formatKey, channel, createdAt])
+  @@index([claimProfile, createdAt])
+  @@index([structurePatternId, createdAt])
+  @@index([editorialPatternId, createdAt])
+  @@index([sourceType, createdAt])
+  @@index([brainRunId])
+  @@index([contentVersionId])
+  @@index([confidence, createdAt])
+}
+
+/// Ephemeral upload reference — raw file body is NOT stored by default
+model FileUploadReference {
+  id           String   @id @default(cuid())
+  purpose      String
+  fileName     String?
+  contentType  String?
+  byteLength   Int?
+  fileHash     String
+  retention    String   @default("ephemeral")
+  previewMeta  Json?
+  createdBy    String?
+  createdAt    DateTime @default(now())
+  expiresAt    DateTime?
+
+  @@index([fileHash, purpose])
+  @@index([createdAt])
+}
+

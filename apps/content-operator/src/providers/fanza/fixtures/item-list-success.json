@@ -1,0 +1,100 @@
+{
+  "request": {
+    "parameters": {
+      "api_id": "[redacted]",
+      "affiliate_id": "[redacted]",
+      "site": "FANZA",
+      "service": "digital",
+      "floor": "videoa",
+      "hits": "2",
+      "offset": "1",
+      "sort": "rank",
+      "output": "json"
+    }
+  },
+  "result": {
+    "status": 200,
+    "result_count": 2,
+    "total_count": 2,
+    "first_position": 1,
+    "items": [
+      {
+        "service_code": "digital",
+        "service_name": "動画",
+        "floor_code": "videoa",
+        "floor_name": "ビデオ",
+        "category_name": "ビデオ (動画)",
+        "content_id": "mizd00320",
+        "product_id": "mizd00320",
+        "title": "令和イチのメスガキ 松本いちか わからせ痴女られ10作品8時間ベスト",
+        "volume": "476",
+        "review": {
+          "count": 13,
+          "average": "5.00"
+        },
+        "URL": "https://video.dmm.co.jp/av/content/?id=mizd00320",
+        "affiliateURL": "https://al.fanza.co.jp/?lurl=https%3A%2F%2Fvideo.dmm.co.jp%2Fav%2Fcontent%2F%3Fid%3Dmizd00320&af_id=example-990&ch=api",
+        "imageURL": {
+          "list": "https://pics.dmm.co.jp/digital/video/mizd00320/mizd00320pt.jpg",
+          "small": "https://pics.dmm.co.jp/digital/video/mizd00320/mizd00320ps.jpg",
+          "large": "https://pics.dmm.co.jp/digital/video/mizd00320/mizd00320pl.jpg"
+        },
+        "sampleImageURL": {
+          "sample_s": {
+            "image": [
+              "https://pics.dmm.co.jp/digital/video/mizd00320/mizd00320-1.jpg"
+            ]
+          },
+          "sample_l": {
+            "image": [
+              "https://pics.dmm.co.jp/digital/video/mizd00320/mizd00320jp-1.jpg"
+            ]
+          }
+        },
+        "prices": {
+          "price": "100~",
+          "list_price": "300~",
+          "deliveries": {
+            "delivery": [
+              {
+                "type": "stream",
+                "price": "100",
+                "list_price": "300"
+              }
+            ]
+          }
+        },
+        "date": "2023-03-17 10:00:00",
+        "iteminfo": {
+          "genre": [
+            { "id": 6012, "name": "4時間以上作品" },
+            { "id": 1031, "name": "痴女" }
+          ],
+          "maker": [{ "id": 1509, "name": "ムーディーズ" }],
+          "actress": [
+            { "id": 1054998, "name": "松本いちか", "ruby": "まつもといちか" }
+          ],
+          "label": [{ "id": 2341, "name": "MOODYZ Best" }],
+          "series": [{ "id": 1006, "name": "GETシリーズ" }],
+          "director": [{ "id": 1, "name": "テスト監督" }]
+        }
+      },
+      {
+        "service_code": "digital",
+        "service_name": "動画",
+        "floor_code": "videoa",
+        "floor_name": "ビデオ",
+        "category_name": "ビデオ (動画)",
+        "content_id": "sample00001",
+        "product_id": "sample00001",
+        "title": "サンプル作品（レビューなし）",
+        "URL": "https://video.dmm.co.jp/av/content/?id=sample00001",
+        "affiliateURL": "https://al.fanza.co.jp/?lurl=https%3A%2F%2Fvideo.dmm.co.jp%2Fav%2Fcontent%2F%3Fid%3Dsample00001&af_id=example-990&ch=api",
+        "date": "2024-01-01 10:00:00",
+        "iteminfo": {
+          "maker": [{ "id": 1, "name": "サンプルメーカー" }]
+        }
+      }
+    ]
+  }
+}

@@ -4,13 +4,22 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    ignores: ["**/dist/**", "**/node_modules/**"],
+    ignores: [
+      "**/dist/**",
+      "**/node_modules/**",
+      "**/.next/**",
+      "**/next-env.d.ts",
+      "**/vitest.config.ts",
+      "packages/database/prisma/seed.ts",
+      "packages/database/scripts/**",
+      "**/fixtures/**",
+    ],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   prettier,
   {
-    files: ["**/*.ts", "**/*.mts", "**/*.cts"],
+    files: ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"],
     languageOptions: {
       parserOptions: {
         projectService: true,

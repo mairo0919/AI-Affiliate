@@ -8,6 +8,28 @@ on:
 jobs:
   ci:
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: ai_affiliate
+          POSTGRES_USER: ai_affiliate
+          POSTGRES_PASSWORD: ai_affiliate_dev
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ai_affiliate -d ai_affiliate"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://ai_affiliate:ai_affiliate_dev@localhost:5432/ai_affiliate?schema=public
+      NODE_ENV: test
+      LOG_LEVEL: error
+      # DMM credentials intentionally unset — CI must not call real DMM API
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -26,8 +48,46 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      - name: Generate Prisma Client
+        run: pnpm db:generate
+
+      - name: Migrate
+        run: pnpm db:migrate
+
       - name: Lint
         run: pnpm lint
 
       - name: Build
         run: pnpm build
+
+      - name: Test
+        run: pnpm test
+
+      - name: Verticals
+        run: |
+          pnpm p45:vertical
+          pnpm p5:vertical
+          pnpm p6:vertical
+          pnpm p7:vertical
+          pnpm p8:vertical
+          pnpm p9:vertical
+          pnpm production:check
+
+      - name: Install Playwright Chromium
+        run: pnpm --filter @ai-affiliate/e2e install:browsers
+
+      - name: Build Admin Web for E2E
+        run: pnpm --filter @ai-affiliate/admin-web build
+        env:
+          NEXT_PUBLIC_ADMIN_API_URL: http://127.0.0.1:8788
+
+      - name: Browser E2E
+        run: pnpm e2e
+        env:
+          ADMIN_BOOTSTRAP_EMAIL: admin@localhost
+          ADMIN_BOOTSTRAP_PASSWORD: change-me-admin
+          ADMIN_FORCE_MOCK_ADAPTERS: "true"
+          ADMIN_CORS_ORIGIN: http://127.0.0.1:3001
+          NEXT_PUBLIC_ADMIN_API_URL: http://127.0.0.1:8788
+          LLM_MODE: mock
+          BLOGGER_MODE: mock

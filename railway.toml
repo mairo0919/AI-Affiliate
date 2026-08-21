@@ -1,0 +1,9 @@
+# AI-Affiliate Factory — Railway production (scheduler worker)
+# Prefer existing SchedulerPipeline; do not add a parallel cron framework.
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10

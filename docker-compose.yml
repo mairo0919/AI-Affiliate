@@ -1,5 +1,23 @@
 services:
-  research-agent:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ai-affiliate-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  content-operator:
     build:
       context: .
       dockerfile: Dockerfile
@@ -8,4 +26,59 @@ services:
         PNPM_VERSION: "11.17.0"
     env_file:
       - .env
+    environment:
+      APP_ROLE: content-operator
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+      NODE_ENV: ${NODE_ENV:-production}
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
+    profiles:
+      - app
+      - full
+
+  admin-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      APP_ROLE: admin-api
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+      ADMIN_API_HOST: 0.0.0.0
+      ADMIN_API_PORT: 8788
+      NODE_ENV: ${NODE_ENV:-production}
+    ports:
+      - "8788:8788"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles:
+      - admin
+      - full
+
+  admin-web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      APP_ROLE: admin-web
+      PORT: 3001
+      NEXT_PUBLIC_ADMIN_API_URL: ${NEXT_PUBLIC_ADMIN_API_URL:-http://localhost:8788}
+      NODE_ENV: ${NODE_ENV:-production}
+    ports:
+      - "3001:3001"
+    depends_on:
+      - admin-api
+    restart: unless-stopped
+    profiles:
+      - admin
+      - full
+
+volumes:
+  postgres_data:

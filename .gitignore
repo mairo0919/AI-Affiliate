@@ -6,3 +6,5 @@ dist
 coverage
 .turbo
 *.tsbuildinfo
+.next
+apps/admin-web/next-env.d.ts

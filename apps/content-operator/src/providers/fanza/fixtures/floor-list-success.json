@@ -1,0 +1,27 @@
+{
+  "request": {
+    "parameters": {
+      "api_id": "[redacted]",
+      "affiliate_id": "[redacted]",
+      "output": "json"
+    }
+  },
+  "result": {
+    "site": [
+      {
+        "name": "FANZA（アダルト）",
+        "code": "FANZA",
+        "service": [
+          {
+            "name": "動画",
+            "code": "digital",
+            "floor": [
+              { "id": "43", "name": "ビデオ", "code": "videoa" },
+              { "id": "44", "name": "素人", "code": "videoc" }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

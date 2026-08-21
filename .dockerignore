@@ -9,3 +9,13 @@ coverage
 docs
 scripts
 README.md
+**/node_modules
+apps/admin-web/.next
+apps/admin-web/out
+**/.turbo
+**/.cache
+**/coverage
+playwright-report
+test-results
+.tmp
+tmp

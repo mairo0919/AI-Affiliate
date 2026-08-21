@@ -1,0 +1,10 @@
+{
+  "request": {
+    "parameters": {
+      "api_id": "[redacted]",
+      "affiliate_id": "[redacted]",
+      "output": "json"
+    }
+  },
+  "result": "Invalid API ID or Affiliate ID"
+}
