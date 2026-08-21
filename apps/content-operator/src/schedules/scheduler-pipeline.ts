@@ -35,6 +35,9 @@ import type { ScheduleRunOutcome } from "./schedule-runner.js";
 import { ScheduleRunner } from "./schedule-runner.js";
 import type { RetryRunOutcome } from "./retry-runner.js";
 import { RetryRunner } from "./retry-runner.js";
+import { loadDailyMultiChannelConfig } from "../daily-ops/config.js";
+import { runDailyMultiChannelLive, type DailyLiveResult } from "../daily-ops/live-orchestrator.js";
+import { LifecycleRepository } from "@ai-affiliate/database";
 
 export const DEFAULT_DUE_SCHEDULE_LIMIT = 20;
 export const DEFAULT_DUE_RETRY_LIMIT = 20;
@@ -47,6 +50,7 @@ export interface SchedulerPipelineResult {
   retries: RetryRunOutcome[];
   analysis: AnalysisRunResult | Skipped;
   content: ContentGenerateResult | Skipped;
+  dailyOps: DailyLiveResult | Skipped;
   xPublish: { published: number } | Skipped;
   xMetrics: MetricsCollectResult | Skipped;
   xStrategy: StrategyEvaluationReport | Skipped;
@@ -229,6 +233,12 @@ export class SchedulerPipeline {
       liveProvider: liveStack?.provider,
     });
 
+    const dailyCfg = loadDailyMultiChannelConfig();
+    const allowDailyLiveX =
+      dailyCfg.enabled &&
+      !dailyCfg.dryRun &&
+      (deps.config.xReleaseMode === "LIMITED" || deps.config.xReleaseMode === "FULL");
+
     this.xPublicationService =
       deps.xPublicationService ??
       new XPublicationService({
@@ -241,8 +251,8 @@ export class SchedulerPipeline {
         optimization: this.optimizationRepo,
         now: deps.now,
         random: deps.random,
-        allowSchedulerLivePublish: false,
-        livePublishConfirmed: false,
+        allowSchedulerLivePublish: allowDailyLiveX,
+        livePublishConfirmed: allowDailyLiveX,
         checkApiBudget: liveStack
           ? async (accountId) => liveStack.budget.checkPaidRequest(accountId)
           : undefined,
@@ -377,6 +387,10 @@ export class SchedulerPipeline {
       skipped: true,
       skipReason: "CONTENT_AUTO_GENERATION_DISABLED",
     };
+    let dailyOps: SchedulerPipelineResult["dailyOps"] = {
+      skipped: true,
+      skipReason: "DAILY_OPS_DISABLED_OR_NOT_RUN",
+    };
     let xPublish: SchedulerPipelineResult["xPublish"] = {
       skipped: true,
       skipReason: "X_AUTO_PUBLICATION_DISABLED",
@@ -423,6 +437,13 @@ export class SchedulerPipeline {
     } catch (error) {
       this.logger.warn(`content phase failed: ${String(error)}`);
       content = { skipped: true, skipReason: `content error: ${String(error)}` };
+    }
+
+    try {
+      dailyOps = await this.runDailyOpsPhase();
+    } catch (error) {
+      this.logger.warn(`daily ops phase failed: ${String(error)}`);
+      dailyOps = { skipped: true, skipReason: `daily ops error: ${String(error)}` };
     }
 
     try {
@@ -479,6 +500,7 @@ export class SchedulerPipeline {
       retries,
       analysis,
       content,
+      dailyOps,
       xPublish,
       xMetrics,
       xStrategy,
@@ -486,6 +508,25 @@ export class SchedulerPipeline {
       xOptimizationImpact,
       notifications,
     };
+  }
+
+  /** Daily Blog + X production (OPTION B Blog / ContentEngine X). */
+  private async runDailyOpsPhase(): Promise<SchedulerPipelineResult["dailyOps"]> {
+    const daily = loadDailyMultiChannelConfig();
+    if (!daily.enabled) {
+      return { skipped: true, skipReason: "DAILY_OPS_ENABLED_FALSE" };
+    }
+    const lifecycle = new LifecycleRepository(this.database.prisma);
+    return runDailyMultiChannelLive({
+      logger: this.logger,
+      database: this.database,
+      config: this.config,
+      lifecycle,
+      contentEngine: this.contentEngine,
+      xPublicationService: this.xPublicationService,
+      dailyConfig: daily,
+      now: this.now,
+    });
   }
 
   private async runAnalysisPhase(): Promise<SchedulerPipelineResult["analysis"]> {

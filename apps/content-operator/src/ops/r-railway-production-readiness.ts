@@ -5,6 +5,9 @@
  *   npx tsx src/ops/r-railway-production-readiness.ts
  *   railway run -s scheduler -- npx tsx src/ops/r-railway-production-readiness.ts
  */
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { loadConfig } from "@ai-affiliate/config";
 import { createDatabaseClient } from "@ai-affiliate/database";
 import { loadDailyMultiChannelConfig } from "../daily-ops/config.js";
@@ -106,6 +109,12 @@ async function main() {
     }
   }
 
+  const pipelineSrc = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "../schedules/scheduler-pipeline.ts"),
+    "utf8",
+  );
+  const dailyWired = pipelineSrc.includes("runDailyOpsPhase");
+
   const blockers: string[] = [];
   if (!presence.DATABASE_URL) blockers.push("DATABASE_URL");
   if (!db.ok) blockers.push("DB_CONNECT");
@@ -117,13 +126,13 @@ async function main() {
   if (flags.dailyOpsDryRun) blockers.push("DAILY_OPS_DRY_RUN_TRUE");
   if (!flags.bloggerAllowDirectPublish) blockers.push("BLOGGER_DIRECT_PUBLISH_DISABLED");
   if (!flags.xAutoPublicationEnabled) blockers.push("X_AUTO_PUBLICATION_DISABLED");
-  blockers.push("DAILY_BLOG_PHASE_NOT_WIRED_TO_SCHEDULER_PIPELINE");
+  if (!dailyWired) blockers.push("DAILY_BLOG_PHASE_NOT_WIRED_TO_SCHEDULER_PIPELINE");
   blockers.push("RAILWAY_FIRST_BLOG_X_PRODUCTION_RUN_PENDING");
 
   const report = {
     round: "railway-production",
     presence,
-    flags,
+    flags: { ...flags, dailyPipelineWired: dailyWired },
     db,
     bloggerToken: {
       ok: bloggerToken.ok,
