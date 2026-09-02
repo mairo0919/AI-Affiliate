@@ -24,3 +24,23 @@ export {
   toItemListParams,
   computeNextOffset,
 } from "./fanza-query.js";
+export {
+  extractFanzaPageEvidenceFromHtml,
+  mergeItemListAndPageImages,
+  toSourceDocumentPageEvidenceMeta,
+  withMergedItemListCatalog,
+  mergeCanonicalCatalog,
+  FANZA_PAGE_EVIDENCE_SOURCE,
+} from "./fanza-page-evidence.js";
+export type {
+  FanzaPageEvidence,
+  PageEvidenceImage,
+  MergedProductImageEvidence,
+  PageCatalogEvidence,
+  CatalogFieldProvenance,
+} from "./fanza-page-evidence.js";
+export { fetchFanzaPageEvidence } from "./fanza-page-evidence-fetch.js";
+export type {
+  FetchFanzaPageEvidenceOptions,
+  PageEvidenceFetchResult,
+} from "./fanza-page-evidence-fetch.js";

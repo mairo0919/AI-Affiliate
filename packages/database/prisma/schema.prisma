@@ -1454,6 +1454,7 @@ enum PublicationPlatform {
   X
   NOTE
   THREADS
+  WORDPRESS
   OTHER
 }
 

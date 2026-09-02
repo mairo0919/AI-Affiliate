@@ -6,15 +6,25 @@ import type { StructureImageLayout } from "../article-pattern/structure-pattern.
 export const BLOG_META_NOTE_CLASS = "blog-meta-note";
 export const BLOG_META_NOTE_STYLE = "font-size:10px;line-height:1.5;";
 
+/** Theme hooks — presentation only; do not change content meaning. */
+export const BLOG_HERO_CLASS = "blog-hero";
+export const BLOG_SAMPLE_CLASS = "blog-sample";
+export const BLOG_CTA_CLASS = "blog-cta";
+
 /** Spacing so consecutive figures do not look glued together. */
 export const BLOG_FIGURE_STYLE = "margin:1.25em 0;";
 
+/** Sample images render at half width (hero stays full width). Theme may override. */
+export const BLOG_SAMPLE_IMG_STYLE = "width:50%;max-width:100%;height:auto;display:block;";
+
 export function formatBloggerHtml(input: {
   title: string;
-  lead: string;
+  /** Legacy-only; omit or empty on new leadless writes. */
+  lead?: string | null;
   sections: Array<{ heading?: string | null; paragraphs: string[]; lists?: string[] }>;
   cta: { label: string; url: string | null };
   images?: ArticleImage[];
+  /** Legacy structure-pattern hint — R62 product layout ignores placement hints. */
   imageLayout?: StructureImageLayout | null;
   disclosure?: string;
   adultNotice?: string;
@@ -25,71 +35,33 @@ export function formatBloggerHtml(input: {
   const blocks: string[] = [];
   const hero = (input.images ?? []).find((img) => img.role === "hero");
   const auxiliaries = (input.images ?? []).filter((img) => img.role === "auxiliary");
-  const layout = input.imageLayout ?? {
-    heroPosition: "before_lead" as const,
-    auxiliaryPosition: "after_first_section" as const,
-    preferredImageCount: Math.max(1, (input.images ?? []).length || 2),
-  };
 
-  // Layout: hero → lead → sample → body(+samples) → remaining samples → CTA
-  if (hero && layout.heroPosition === "before_lead") {
-    blocks.push(renderFigure(hero));
+  // 1. Main image (full width)
+  if (hero) {
+    blocks.push(renderHeroFigure(hero));
   }
 
-  blocks.push(`<p>${escapeHtml(input.lead)}</p>`);
-
-  if (hero && layout.heroPosition === "after_lead") {
-    blocks.push(renderFigure(hero));
+  // 2. Legacy lead paragraph only when present (old ContentVersions).
+  // New leadless writes go Hero → Body directly — never invent lead from summary.
+  if (typeof input.lead === "string" && input.lead.trim()) {
+    blocks.push(`<p>${escapeHtml(input.lead.trim())}</p>`);
   }
 
-  const auxQueue = [...auxiliaries];
-
-  // First sample immediately after lead (product-intro rhythm).
-  if (auxQueue.length > 0) {
-    blocks.push(renderFigure(auxQueue.shift()!));
+  // 3. Product description — single prose block (no section headings)
+  for (const p of collectBodyParagraphs(input.sections)) {
+    blocks.push(`<p>${escapeHtml(p)}</p>`);
   }
 
-  const bodyParaTotal = input.sections.reduce(
-    (n, s) => n + s.paragraphs.filter((p) => p.trim()).length,
-    0,
-  );
-  const insertAfter = new Set(planAuxiliaryInsertIndexes(bodyParaTotal, auxQueue.length));
-  let bodyParaIndex = 0;
+  // 4. Mid CTA (before sample gallery)
+  blocks.push(renderCtaBlock(input.cta));
 
-  for (const section of input.sections) {
-    const heading = section.heading?.trim();
-    if (heading) {
-      blocks.push(`<h2>${escapeHtml(heading)}</h2>`);
-    }
-    for (const p of section.paragraphs) {
-      blocks.push(`<p>${escapeHtml(p)}</p>`);
-      bodyParaIndex += 1;
-      if (insertAfter.has(bodyParaIndex) && auxQueue.length > 0) {
-        blocks.push(renderFigure(auxQueue.shift()!));
-        insertAfter.delete(bodyParaIndex);
-      }
-    }
-    if (section.lists?.length) {
-      blocks.push("<ul>");
-      for (const item of section.lists) {
-        blocks.push(`<li>${escapeHtml(item)}</li>`);
-      }
-      blocks.push("</ul>");
-    }
+  // 5. Sample images (half width); no figcaption unless image has grounded caption SSOT
+  for (const image of auxiliaries) {
+    blocks.push(renderSampleFigure(image));
   }
 
-  // Remaining samples before CTA (may be consecutive; figure margin separates them).
-  while (auxQueue.length > 0) {
-    blocks.push(renderFigure(auxQueue.shift()!));
-  }
-
-  if (input.cta.url) {
-    blocks.push(
-      `<p><a href="${escapeAttr(input.cta.url)}">${escapeHtml(input.cta.label)}</a></p>`,
-    );
-  } else {
-    blocks.push(`<p>${escapeHtml(input.cta.label)}（リンク準備中）</p>`);
-  }
+  // 6. Bottom CTA
+  blocks.push(renderCtaBlock(input.cta));
 
   const freshness = input.freshnessDisclaimer ?? FRESHNESS_DISCLAIMER;
   const disclosure = input.disclosure ?? "本記事はアフィリエイト広告を含む場合があります。";
@@ -105,8 +77,22 @@ export function formatBloggerHtml(input: {
   return html;
 }
 
+/** Merge section paragraphs into one explanation block (headings/lists excluded). */
+export function collectBodyParagraphs(
+  sections: Array<{ paragraphs?: string[] }>,
+): string[] {
+  const out: string[] = [];
+  for (const section of sections) {
+    for (const p of section.paragraphs ?? []) {
+      const trimmed = p.trim();
+      if (trimmed) out.push(trimmed);
+    }
+  }
+  return out;
+}
+
 /**
- * Place up to N auxiliaries after body paragraphs (not 1:1 required).
+ * Place up to N auxiliaries after body paragraphs (legacy interleaved layout helper).
  * Extra auxiliaries are appended by the caller before CTA.
  */
 export function planAuxiliaryInsertIndexes(
@@ -136,12 +122,40 @@ function renderMetaNote(text: string): string {
   return `<p class="${BLOG_META_NOTE_CLASS}" style="${BLOG_META_NOTE_STYLE}">${escapeHtml(text)}</p>`;
 }
 
-function renderFigure(image: ArticleImage): string {
+function renderCtaBlock(cta: { label: string; url: string | null }): string {
+  if (cta.url) {
+    return `<p class="${BLOG_CTA_CLASS}"><a href="${escapeAttr(cta.url)}">${escapeHtml(cta.label)}</a></p>`;
+  }
+  return `<p class="${BLOG_CTA_CLASS}">${escapeHtml(cta.label)}（リンク準備中）</p>`;
+}
+
+function renderHeroFigure(image: ArticleImage): string {
   return [
-    `<figure style="${BLOG_FIGURE_STYLE}">`,
+    `<figure class="${BLOG_HERO_CLASS}" style="${BLOG_FIGURE_STYLE}">`,
     `<img src="${escapeAttr(image.sourceUrl)}" alt="${escapeAttr(image.alt)}" loading="lazy" />`,
     "</figure>",
   ].join("");
+}
+
+function renderSampleFigure(image: ArticleImage): string {
+  const groundedCaption = groundedImageCaption(image);
+  const captionBlock = groundedCaption
+    ? `<figcaption>${escapeHtml(groundedCaption)}</figcaption>`
+    : "";
+  return [
+    `<figure class="${BLOG_SAMPLE_CLASS}" style="${BLOG_FIGURE_STYLE}">`,
+    `<img src="${escapeAttr(image.sourceUrl)}" alt="${escapeAttr(image.alt)}" loading="lazy" style="${BLOG_SAMPLE_IMG_STYLE}" />`,
+    captionBlock,
+    "</figure>",
+  ].join("");
+}
+
+/** Only explicit grounded caption SSOT on ArticleImage — no list/alt projection. */
+function groundedImageCaption(image: ArticleImage): string | null {
+  const raw = (image as ArticleImage & { groundedCaption?: string | null }).groundedCaption;
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 function escapeHtml(value: string): string {

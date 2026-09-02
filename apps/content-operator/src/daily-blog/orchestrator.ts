@@ -51,7 +51,6 @@ export interface DailyOrchestratorInput {
     defer: boolean;
     claimValidationPass: boolean;
     integrityPass: boolean;
-    brainDecision: string;
     formatterPass: boolean;
     imagePipelinePass: boolean;
     bloggerAuthPass: boolean;
@@ -175,7 +174,6 @@ export function runDailyBlogOrchestratorDry(
       defer: true,
       claimValidationPass: false,
       integrityPass: false,
-      brainDecision: null,
       formatterPass: false,
       affiliateUrlValid: false,
       imagePipelinePass: false,
@@ -225,7 +223,6 @@ export function runDailyBlogOrchestratorDry(
     defer: sim.defer ?? false,
     claimValidationPass: sim.claimValidationPass ?? true,
     integrityPass: sim.integrityPass ?? true,
-    brainDecision: sim.brainDecision ?? "PASS",
     formatterPass: sim.formatterPass ?? true,
     affiliateUrlValid: affiliateCheck.ok,
     imagePipelinePass: sim.imagePipelinePass ?? selected.sampleImageCount >= input.config.minSampleImages,
@@ -235,7 +232,7 @@ export function runDailyBlogOrchestratorDry(
     autoPublishEnabled: input.config.enabled,
     allowDirectPublish: sim.allowDirectPublish ?? false,
   });
-  log.brainDecision = sim.brainDecision ?? "PASS";
+  log.brainDecision = null;
   log.publishResult = publishGate.decision === "DRY_RUN_OK" ? "DRY_RUN_OK" : "HELD";
   if (publishGate.failureCodes[0]) log.failureCode = publishGate.failureCodes[0];
 

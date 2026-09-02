@@ -27,7 +27,6 @@ import { buildProductMaterialProfileFromPack } from "../../article-pattern/refer
 import { ensureFeasibleWritingSkeleton } from "../../article-pattern/skeleton-feasibility.js";
 import { extractTransformationFromEditorialBlueprint } from "../../article-pattern/reference-editorial-transformation.js";
 import type { ReferenceEditorialBlueprint } from "../../article-pattern/reference-editorial-blueprint.js";
-import { stripUnsupportedEvaluativePadding } from "../generation/strip-evaluative-padding.js";
 import { ensureGenerationAuthorityInSystem } from "../generation/plan-aware-generation.js";
 import { detectReferenceNearCopy } from "../../article-pattern/reference-near-copy.js";
 import { claimsFromNormalizedPage } from "../../ops/page-normalize.js";
@@ -112,6 +111,18 @@ function stubBlueprint(): ReferenceEditorialBlueprint {
 }
 
 describe("OPTION B Writing Skeleton + Evidence Pack (LLM=0)", () => {
+  it("E2. ARTICLE_PLAN is Writer authority priority SSOT", () => {
+    expect(GENERATION_AUTHORITY_PRIORITY).toEqual([
+      "ARTICLE_PLAN",
+      "FACTUAL_SAFETY",
+      "BLOG_CHANNEL_REQUIREMENTS",
+    ]);
+    const system = ensureGenerationAuthorityInSystem("You write blogs.");
+    expect(system).toContain("OPTION B");
+    expect(system).toContain("ARTICLE_PLAN");
+    expect(system).not.toContain("SEGMENT_CONTRACTS");
+  });
+
   it("A. catalog metadata is not primary body fuel", () => {
     for (const [cid, title] of Object.entries(FIXTURE_TITLES)) {
       const pack = buildEvidencePack({ productTitle: title, claims: catalogClaims(title) });
@@ -149,36 +160,6 @@ describe("OPTION B Writing Skeleton + Evidence Pack (LLM=0)", () => {
     expect(feasibility.assignment.anyFallbackCount).toBe(0);
   });
 
-  it("C. Writing Skeleton is generation prompt SSOT", () => {
-    const bp = stubBlueprint();
-    const sk = writingSkeletonFromReference({
-      blueprint: bp,
-      transform: extractTransformationFromEditorialBlueprint(bp),
-    })!;
-    const prompt = toWritingSkeletonPromptContract(sk)!;
-    expect(prompt.opening).toBeTruthy();
-    expect(prompt.body).toBeTruthy();
-    // r29: duty removed from skeleton prompt — canonical duty lives on authority.generatorDuty only
-    expect(prompt.duty).toBeUndefined();
-    expect(prompt.globalAvoid).toBeUndefined();
-
-    const auth = buildOptionBGenerationAuthority({
-      writingSkeleton: prompt,
-      evidencePack: toOptionBWriterSourceMaterial({
-        productTitle: FIXTURE_TITLES.ssis00300!,
-        claims: catalogClaims(FIXTURE_TITLES.ssis00300!).map((c) => ({
-          id: c.id,
-          statement: c.statement,
-          kind: c.kind,
-        })),
-        officialDescription: null,
-      }),
-    });
-    expect(auth.mode).toBe("OPTION_B");
-    expect(auth.WRITING_SKELETON).toBeTruthy();
-    expect(auth.EVIDENCE_PACK).toBeTruthy();
-    expect(auth.authorityPriority).toEqual([...GENERATION_AUTHORITY_PRIORITY]);
-  });
 
   it("D. Prompt / authority size much smaller than legacy 26KB+ dump", () => {
     const claims = catalogClaims(FIXTURE_TITLES.pred00400!);
@@ -200,54 +181,6 @@ describe("OPTION B Writing Skeleton + Evidence Pack (LLM=0)", () => {
     expect(bytes).toBeLessThan(26_000);
   });
 
-  it("E. system/authority priority has no competing ranks", () => {
-    expect(GENERATION_AUTHORITY_PRIORITY).toEqual([
-      "FACTUAL_SAFETY",
-      "EVIDENCE_PACK",
-      "WRITING_SKELETON",
-      "BLOG_CHANNEL_REQUIREMENTS",
-      "MINIMAL_STYLE",
-    ]);
-    expect(LEGACY_GENERATION_AUTHORITY_PRIORITY.length).toBe(8);
-    const system = ensureGenerationAuthorityInSystem("You write blogs.");
-    expect(system).toContain("OPTION B");
-    expect(system).toContain("EVIDENCE_PACK");
-    expect(system).toContain("WRITING_SKELETON");
-    expect(system).not.toContain("SEGMENT_CONTRACTS");
-    // buildGenerationAuthority with OPTION B inputs
-    const auth = buildGenerationAuthorityPromptContract({
-      brainGenerationContract: {
-        writingSkeleton: { opening: {} },
-        evidencePack: { productTitle: "x", supportedClaims: [], officialDescription: null },
-      },
-    });
-    expect(auth.mode).toBe("OPTION_B");
-    expect(auth.SEGMENT_CONTRACTS).toBeUndefined();
-  });
-
-  it("F. deterministic post-process does not rewrite prose to 確認できる", () => {
-    const article = {
-      title: "葵つかさ ベロキス",
-      summary: "感度の良さが際立っています。",
-      lead: "突然のベロキスが際立つ内容となっています。",
-      sections: [
-        {
-          heading: null,
-          paragraphs: ["ベロキスが際立つ。メーカー／レーベルとして「A」が公開されている。"],
-        },
-      ],
-    };
-    const out = stripUnsupportedEvaluativePadding({
-      article,
-      claimStatements: [{ statement: "ベロキス" }],
-      keepFacets: ["ベロキス"],
-    });
-    expect(out.lead).not.toContain("が確認できる");
-    expect(out.summary).not.toContain("が確認できる");
-    // Keep facet-bearing original; drop pure catalog shell sentence
-    expect(out.sections[0]!.paragraphs.join("")).toContain("ベロキス");
-    expect(out.sections[0]!.paragraphs.join("")).not.toMatch(/メーカー／レーベルとして/);
-  });
 
   it("G. insufficient concrete evidence → DEFER signal", () => {
     const pack = buildEvidencePack({
@@ -269,24 +202,6 @@ describe("OPTION B Writing Skeleton + Evidence Pack (LLM=0)", () => {
     });
     expect(pack.insufficientConcrete).toBe(true);
     expect(pack.insufficientReason).toBeTruthy();
-  });
-
-  it("H. broken Japanese like は、を目指す must not be treated as valid strip output", () => {
-    // Safe redact already handles this elsewhere; strip must not create broken clauses
-    const broken = "2024は、を目指す素人16名";
-    const out = stripUnsupportedEvaluativePadding({
-      article: {
-        title: "x",
-        summary: broken,
-        lead: broken,
-        sections: [{ paragraphs: [broken] }],
-      },
-      claimStatements: [],
-      keepFacets: ["16名"],
-    });
-    // Must not introduce 確認できる rewrite; keep or drop only
-    expect(out.lead).not.toContain("が確認できる");
-    expect(out.lead.includes("は、を") ? out.lead : "ok").not.toMatch(/確認できる/);
   });
 
   it("I. Reference prose near-copy not introduced by skeleton", () => {

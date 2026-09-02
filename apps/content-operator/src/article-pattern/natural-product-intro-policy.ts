@@ -1,29 +1,88 @@
 /**
- * OPTION B — natural FANZA-style product intro policy (LLM=0 SSOT).
+ * OPTION B — evidence-grounded natural product-intro Writer policy (LLM=0 SSOT).
  *
- * r29: Generator receives only OPTION_B_GENERATOR_POLICY (one short line).
- * Longer policy objects below remain for tests / Brain / docs — not injected into Generator walls.
+ * GOOD BASELINE restore (R77 / mizd00320 quality bar):
+ * ARTICLE_PLAN facts are the factual BOUNDARY, not a checklist to exhaust in minimal words.
+ * Writer forms natural FANZA-style product intro prose within that boundary.
  */
 
-/** Single Generator-facing policy (MERGE of prior natural / grounded / length / scope walls). */
-export const OPTION_B_GENERATOR_POLICY =
-  "EvidencePackの事実だけを使い、自然な日本語の商品紹介を書く。必要な具体情報を選び、新しい情報がある限り自然に展開する。事実を捏造しない。";
+/**
+ * Natural product-intro Writer system — restored toward R77 capability.
+ * No banned-word lists. No invent-outside-Evidence. No catalog readouts.
+ */
+export const OPTION_B_WRITER_SYSTEM = [
+  "You are a Japanese Writer writing a single-product FANZA introduction from ARTICLE_PLAN facts only.",
+  "ARTICLE_PLAN slot facts[] are your only allowed concrete-fact material (the factual boundary). Cover their meaning correctly. Do not invent concrete facts, scenes, quantities, performers, or themes absent from the plan.",
+  "Coverage ≠ expansion: every planned fact in title.facts / body.facts must be expressed in that slot, but each fact does NOT need its own sentence or paragraph. Related facts that share one reader-relevant information axis (same scene family, same trait cluster, quantity/duration together, cast names together) MUST be woven into the same sentence or paragraph. For EXACT_SURFACE keep the surface identity; for SEMANTIC_PRESERVE a clear paraphrase of the same concrete meaning is OK. Do not omit planned facts to shorten the article.",
+  "For long compound scene / trait / play-style facts, coverage means more than a bare checklist drop: weave them so a reader understands the recorded content those facts describe. For short work-theme tags (e.g. 人妻 / NTR / 痴女 as planned facts), coverage means membership or recorded variety only (含む・収録・要素). Do NOT invent emotions, psychology, narrative roles, plot, causal stories, or situation detail from genre knowledge. Do not invent scenes, actions, reactions, evaluations, or details not supported by ARTICLE_PLAN facts. Do not expand merely to increase length.",
+  "When presentationPurpose or factPurposes appear on ARTICLE_PLAN / ARTICLE_PLAN_EXECUTION, use them only as a hint for how to group and explain the assigned facts (PRODUCT_IDENTITY / COLLECTION_SCOPE / SCENE_VARIETY / PERFORMER_TRAIT_IN_WORK / PLAY_STYLE / QUANTITY_SCALE). They are not new facts.",
+  "Long compound planned facts are already dense — weave them with related facts; do not re-expand each into a longer evaluative sentence. Do NOT treat facts as a bare checklist of one-word drops, and do NOT treat facts as a mandate to elaborate each item independently.",
+  "When ARTICLE_PLAN_EXECUTION is present, obey executionMode / mustPreserve / notAllowed for identity-critical facts (performer names, quantities, durations, distinctive product terms). Use informationAxis (when present) to group body facts. Elsewhere you may use natural grammar, connectives, paraphrase within SEMANTIC_PRESERVE, and combine related planned facts into coherent sentences.",
+  "Article shape (leadless): (1) title — identify the product with planned title facts; (2) body — explain planned body facts in natural Japanese, grouping related axes. Do not emit a separate lead field. Do not restate the same axis wholesale across consecutive paragraphs.",
+  "materialDepth=rich means: do not omit independent information axes that are present in body.facts. It does NOT mean write longer, open a new paragraph per fact, add a wrap-up, or invent evaluative glue. Evaluative wording is allowed only when that exact evaluative meaning is already present in planned facts.",
+  "Follow ARTICLE_PLAN.materialDepth: rich — cover independent axes without catalog listing or per-fact inflation; standard — necessary and sufficient prose; scarce — stay short when few facts are assigned. Never use fixed character or paragraph quotas.",
+  "Title: use only title.facts surfaces as noun/label building blocks. Compose one natural Japanese product title that identifies the work and its main form or feature — with 助詞/読点 (e.g. の・と・——), not a space-separated keyword list and not unfinished clause fragments (〜を迎え). Do not paste sentence fragments. Do not invent modifiers absent from title.facts. Prefer product identity + main characteristic as readable prose. Title is not body prose. Do not mechanically concatenate every title.fact when one already covers another’s meaning.",
+  "TERMINATION (hard stop): After every planned title/body fact is realized in natural prose, stop immediately. Do not add a concluding sentence, summary, recommendation, reader invitation, selling-point wrap-up, or evaluative closer whose meaning is not already required by ARTICLE_PLAN. The last body sentence may be an ordinary factual sentence — no need to “締める”. If few facts remain, a short article is correct. Do not pad to look like a longer review.",
+  "Forbidden: catalog/DB readouts (公式ページで確認できる, 出演している点も特徴), purchase urgency, and concrete claims not supported by ARTICLE_PLAN facts.",
+  "If purpose / coreAngle / reader-job fields appear on the plan, ignore them as required essay structure — write from the facts only. presentationPurpose / factPurposes remain allowed as presentation hints.",
+  "Do not output a lead field. Do not use summary as article prose.",
+].join(" ");
+/** @deprecated r114 — Planner owns stop via ArticlePlan; not Writer-projected. */
+export const OPTION_B_SLOT_STOP_CONDITION =
+  "stop_when_planned_facts_fully_developed_in_prose" as const;
 
-/** Structural sample derived from the user-provided mizd quality bar (NOT fixed copy). */
+/** @deprecated r114 — kept for internal skeleton alignment; not injected into Writer prompt. */
+export const OPTION_B_REALIZATION_COMPLETE_DUTY =
+  "Stop each slot when planned facts are fully developed in prose, not at minimal mention.";
+
+/**
+ * Internal slot purpose ids (skeleton / NATURAL_PRODUCT_INTRO_STRUCTURE).
+ * Not projected as Writer essay notes (r114).
+ */
+export const OPTION_B_WRITER_SLOT_SPEECH = {
+  title: {
+    purpose: "who_plus_core",
+    note: "internal",
+  },
+  lead: {
+    purpose: "opening_facts",
+    note: "internal",
+  },
+  body: {
+    purpose: "body_facts",
+    note: "internal",
+  },
+} as const;
+
+/** @deprecated r114 — not Writer-injected */
+export const OPTION_B_EVIDENCE_VOICE_RULE =
+  "Internal: facts only; do not inherit overview speech act.";
+
+/** @deprecated r114 — alias of OPTION_B_WRITER_SYSTEM for transitional imports */
+export const OPTION_B_GENERATOR_POLICY = OPTION_B_WRITER_SYSTEM;
+
+/** @deprecated r114 */
+export const OPTION_B_GENERATOR_POLICY_SCARCE = OPTION_B_WRITER_SYSTEM;
+
+/**
+ * Internal structure sample id (legacy). Writer-visible shape key is
+ * WRITER_VISIBLE_ARTICLE_SHAPE — do not project this name into prompts.
+ */
 export const NATURAL_PRODUCT_INTRO_STRUCTURE = {
   schemaVersion: 1 as const,
+  /** Internal legacy id — not Writer-visible (r110). */
   name: "natural_product_intro",
   source: "user_quality_bar_mizd00320",
   slots: [
     {
       id: "opening",
-      purpose: "name_the_product_with_its_clearest_feature",
-      note: "Lead: product overall content/composition.",
+      purpose: OPTION_B_WRITER_SLOT_SPEECH.lead.purpose,
+      note: OPTION_B_WRITER_SLOT_SPEECH.lead.note,
     },
     {
       id: "body_content",
-      purpose: "compose_concrete_evidence_into_natural_intro",
-      note: "Advance to concrete content not yet used.",
+      purpose: OPTION_B_WRITER_SLOT_SPEECH.body.purpose,
+      note: OPTION_B_WRITER_SLOT_SPEECH.body.note,
     },
     {
       id: "ending_audience",
@@ -40,59 +99,8 @@ export const NATURAL_PRODUCT_INTRO_STRUCTURE = {
   densityNote: OPTION_B_GENERATOR_POLICY,
 } as const;
 
-/**
- * @deprecated Generator no longer injects this wall (r29). Retained for tests/Brain docs.
- */
-export const EVIDENCE_DRIVEN_LENGTH_POLICY = {
-  principle: "ARTICLE_LENGTH_EQUALS_EVIDENCE_DRIVEN",
-  minimalSufficientMeans:
-    "Each paragraph/sentence must carry new concrete information or a clear editorial role — not 'write as short as possible'.",
-  richEvidenceGuidance:
-    "When many distinct concrete families exist, compose a natural multi-paragraph product intro. Do not shrink for 'brevity'.",
-  thinEvidenceGuidance: "When concrete families are few, stop once they are used — do not pad.",
-  informationProgression: [
-    "P1: overall product content / composition",
-    "P2: advance to concrete recorded scenes / quantities / settings / traits",
-    "P3 (optional): Evidence-based product placement only if new info remains",
-  ] as const,
-  paddingForbidden: [
-    "reintroduce_performer_name_without_new_fact",
-    "restate_title_or_series_label_as_development",
-    "repeat_that_it_is_a_best_collection",
-    "restate_same_quantity_or_duration_family",
-    "empty_connecting_sentence_with_no_new_info",
-    "empty_evaluation_sentence_with_no_new_info",
-    "reuse_same_evidence_family_to_fill_length",
-  ] as const,
-  notGoals: [
-    "write_as_short_as_possible",
-    "force_one_paragraph_when_evidence_is_rich",
-    "fixed_paragraph_count",
-  ] as const,
-} as const;
-
-/**
- * @deprecated Generator no longer injects this wall (r29). Retained for tests/docs.
- */
-export const GROUNDED_PROMOTION_POLICY = {
-  allowedWhenGrounded: [
-    "魅せる",
-    "楽しめる",
-    "見どころ",
-    "魅力",
-    "まとめた",
-    "詰め込んだ",
-    "収録",
-  ],
-  forbidEvaluationOnlySentence: true,
-  examplesUngroundedForbid: [
-    "刺激的なシーンが多数収録",
-    "魅力を存分に味わえる",
-    "見逃せない作品",
-  ],
-  seriesPersonaRule:
-    "TITLE_LABEL / SERIES_CONCEPT / PRODUCT_PERSONA are product-scoped. Quote as work/series/concept — never performer reputation.",
-} as const;
+/** Writer-visible articleShape — natural product intro within Evidence/Plan boundary. */
+export const WRITER_VISIBLE_ARTICLE_SHAPE = "natural_product_intro" as const;
 
 /** Semantic attribution scope — classification stays in semantic-evidence.ts; not a Generator wall. */
 export const TITLE_SERIES_PERSONA_SCOPE = {
@@ -118,55 +126,9 @@ export const TITLE_SERIES_PERSONA_SCOPE = {
     "代表的な",
     "彼女の個性としての",
   ] as const,
+  seriesPersonaRule:
+    "TITLE_LABEL / SERIES_CONCEPT / PRODUCT_PERSONA are product-scoped. Quote as work/series/concept — never performer reputation.",
 } as const;
-
-/** @deprecated Not injected into Generator (r29). Kept for tests / observe helpers. */
-export const NATURAL_INTRO_FORBIDDEN_NARRATION = [
-  "公開ページで確認できる",
-  "公開ページ上で確認できる",
-  "出演している点も特徴です",
-  "収録作品数は",
-  "作品内容の概要",
-  "メーカー／レーベルとして",
-  "販売／配信状態は",
-  "という特徴を持つキャラクターが登場",
-  "の要素も見られます",
-  "AVAILABLE",
-  "SUPPORTED",
-] as const;
-
-/** Internal skeleton avoid tags — not dumped per-slot into Generator (r29). */
-export const NATURAL_INTRO_GLOBAL_AVOID = [
-  "catalog_metadata_as_body_fuel",
-  "db_field_readout_narration",
-  "force_use_every_evidence_item",
-  "same_quantity_or_duration_restated_across_paragraphs",
-  "same_performer_or_identity_restated_across_paragraphs",
-  "meta_section_headings_like_作品内容の概要",
-  "generic_feature_shell",
-  "availability_as_development",
-  "maker_only_paragraph",
-  "title_restatement_as_development",
-  "same_fact_paraphrase_padding",
-  "mechanical_evidence_readout",
-  "ungrounded_evaluation_only_sentence",
-  "series_persona_expanded_as_feature_character_appears",
-  "title_label_elevated_to_performer_reputation",
-  "title_label_elevated_to_character_trait_evaluation",
-  "compress_rich_evidence_to_one_paragraph_for_brevity",
-  "shorter_is_better_as_goal",
-  "pad_with_empty_connecting_or_evaluation_sentences",
-  "reuse_evidence_family_to_fill_length",
-] as const;
-
-/** @deprecated Unused at runtime (r28 DEAD). Kept for docs. */
-export const OPTION_B_BRAIN_PRIORITIES = [
-  "factual_grounding_no_contradiction",
-  "no_same_fact_repetition",
-  "information_progression_across_paragraphs",
-  "reads_as_ordinary_product_intro",
-  "not_unnatural_ai_catalog_prose",
-] as const;
 
 export type NaturalIntroReferenceNote = {
   url: string;

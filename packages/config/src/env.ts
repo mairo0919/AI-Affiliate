@@ -262,6 +262,15 @@ export interface AppConfig {
   bloggerOAuthTokenUrl: string;
   bloggerOAuthRedirectUri: string;
   bloggerOAuthScopes: string;
+  /** mock | api — WordPress REST (Application Password) */
+  wordpressMode: "mock" | "api";
+  wordpressBaseUrl: string | undefined;
+  wordpressUsername: string | undefined;
+  wordpressApplicationPassword: string | undefined;
+  wordpressDefaultPublishMode: "draft" | "publish";
+  wordpressAllowDirectPublish: boolean;
+  wordpressAllowExternalRequests: boolean;
+  wordpressApiNamespace: string;
   /** P7 Admin API / Console */
   adminApiPort: number;
   adminApiHost: string;
@@ -1000,6 +1009,25 @@ export function loadConfig(options?: { requireDatabaseUrl?: boolean }): AppConfi
       process.env.BLOGGER_OAUTH_REDIRECT_URI ?? "http://localhost:8787/oauth/blogger/callback",
     bloggerOAuthScopes:
       process.env.BLOGGER_OAUTH_SCOPES ?? "https://www.googleapis.com/auth/blogger",
+    wordpressMode:
+      (process.env.WORDPRESS_MODE ?? "mock").trim().toLowerCase() === "api" ? "api" : "mock",
+    wordpressBaseUrl: process.env.WORDPRESS_BASE_URL?.trim() || undefined,
+    wordpressUsername: process.env.WORDPRESS_USERNAME?.trim() || undefined,
+    wordpressApplicationPassword: process.env.WORDPRESS_APPLICATION_PASSWORD?.trim() || undefined,
+    wordpressDefaultPublishMode:
+      (process.env.WORDPRESS_DEFAULT_PUBLISH_MODE ?? "draft").trim().toLowerCase() === "publish"
+        ? "publish"
+        : "draft",
+    wordpressAllowDirectPublish: parseBooleanEnv(
+      process.env.WORDPRESS_ALLOW_DIRECT_PUBLISH,
+      false,
+    ),
+    wordpressAllowExternalRequests: parseBooleanEnv(
+      process.env.WORDPRESS_ALLOW_EXTERNAL_REQUESTS,
+      false,
+    ),
+    wordpressApiNamespace:
+      process.env.WORDPRESS_API_NAMESPACE?.trim() || "wp/v2",
     adminApiPort: parsePositiveInt(process.env.ADMIN_API_PORT, 8788),
     adminApiHost: process.env.ADMIN_API_HOST?.trim() || "127.0.0.1",
     adminSessionTtlHours: parsePositiveInt(process.env.ADMIN_SESSION_TTL_HOURS, 12),

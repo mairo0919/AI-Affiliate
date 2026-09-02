@@ -1,0 +1,75 @@
+<!-- wp:template-part {"slug":"header","area":"header"} /-->
+
+<!-- wp:group {"tagName":"main","className":"otonaselect-single","style":{"spacing":{"padding":{"top":"var:preset|spacing|60","bottom":"var:preset|spacing|60","left":"var:preset|spacing|50","right":"var:preset|spacing|50"},"blockGap":"var:preset|spacing|60"}},"layout":{"type":"constrained","contentSize":"40rem"}} -->
+<main class="wp-block-group otonaselect-single" style="padding-top:var(--wp--preset--spacing--60);padding-right:var(--wp--preset--spacing--50);padding-bottom:var(--wp--preset--spacing--60);padding-left:var(--wp--preset--spacing--50)">
+	<!-- wp:group {"tagName":"article","className":"otonaselect-article","style":{"spacing":{"blockGap":"var:preset|spacing|40"}},"layout":{"type":"constrained"}} -->
+	<article class="wp-block-group otonaselect-article">
+		<!-- wp:post-title {"level":1,"fontSize":"x-large","className":"otonaselect-single-title"} /-->
+
+		<!-- wp:group {"className":"otonaselect-post-meta","style":{"spacing":{"blockGap":"var:preset|spacing|30"}},"layout":{"type":"flex","flexWrap":"wrap","verticalAlignment":"center"}} -->
+		<div class="wp-block-group otonaselect-post-meta">
+			<!-- wp:post-date {"format":"Y年n月j日","fontSize":"small"} /-->
+
+			<!-- wp:post-terms {"term":"category","fontSize":"small"} /-->
+
+			<!-- wp:post-terms {"term":"post_tag","fontSize":"small"} /-->
+		</div>
+		<!-- /wp:group -->
+
+		<!-- wp:separator {"textColor":"line","backgroundColor":"line","className":"is-style-wide otonaselect-article-rule"} -->
+		<hr class="wp-block-separator has-text-color has-line-color has-alpha-channel-opacity has-line-background-color has-background is-style-wide otonaselect-article-rule"/>
+		<!-- /wp:separator -->
+
+		<!-- wp:post-content {"className":"otonaselect-post-content","layout":{"type":"constrained"}} /-->
+	</article>
+	<!-- /wp:group -->
+
+	<!-- wp:group {"className":"otonaselect-after-content","style":{"spacing":{"blockGap":"var:preset|spacing|60","margin":{"top":"var:preset|spacing|70"},"padding":{"top":"var:preset|spacing|60"}},"border":{"top":{"color":"var:preset|color|line","width":"1px"}}},"layout":{"type":"constrained"}} -->
+	<div class="wp-block-group otonaselect-after-content" style="border-top-color:var(--wp--preset--color--line);border-top-width:1px;margin-top:var(--wp--preset--spacing--70);padding-top:var(--wp--preset--spacing--60)">
+		<!-- wp:template-part {"slug":"sponsor"} /-->
+
+		<!-- wp:group {"className":"otonaselect-related-section","style":{"spacing":{"blockGap":"var:preset|spacing|40"}},"layout":{"type":"constrained"}} -->
+		<div class="wp-block-group otonaselect-related-section">
+			<!-- wp:heading {"level":2,"fontSize":"large","className":"otonaselect-after-heading"} -->
+			<h2 class="wp-block-heading has-large-font-size otonaselect-after-heading">関連記事</h2>
+			<!-- /wp:heading -->
+
+			<!-- wp:query {"queryId":30,"query":{"perPage":3,"pages":0,"offset":0,"postType":"post","order":"desc","orderBy":"date","author":"","search":"","exclude":[],"sticky":"","inherit":false},"className":"otonaselect-related","layout":{"type":"constrained"}} -->
+			<div class="wp-block-query otonaselect-related">
+				<!-- wp:post-template {"layout":{"type":"default"}} -->
+					<!-- wp:group {"style":{"spacing":{"padding":{"top":"var:preset|spacing|40","bottom":"var:preset|spacing|40"},"blockGap":"var:preset|spacing|20"},"border":{"bottom":{"color":"var:preset|color|line","width":"1px"}}},"layout":{"type":"constrained"}} -->
+					<div class="wp-block-group" style="border-bottom-color:var(--wp--preset--color--line);border-bottom-width:1px;padding-top:var(--wp--preset--spacing--40);padding-bottom:var(--wp--preset--spacing--40)">
+						<!-- wp:post-title {"isLink":true,"fontSize":"large"} /-->
+
+						<!-- wp:post-date {"format":"Y年n月j日","fontSize":"small"} /-->
+					</div>
+					<!-- /wp:group -->
+				<!-- /wp:post-template -->
+
+				<!-- wp:query-no-results -->
+					<!-- wp:paragraph {"textColor":"muted","fontSize":"small","className":"otonaselect-related-empty"} -->
+					<p class="has-muted-color has-text-color has-small-font-size otonaselect-related-empty">いま表示できる関連記事はありません。</p>
+					<!-- /wp:paragraph -->
+				<!-- /wp:query-no-results -->
+			</div>
+			<!-- /wp:query -->
+		</div>
+		<!-- /wp:group -->
+
+		<!-- wp:group {"className":"otonaselect-single-nav","style":{"spacing":{"margin":{"top":"var:preset|spacing|50"},"blockGap":"var:preset|spacing|30"}},"layout":{"type":"flex","flexWrap":"wrap","justifyContent":"space-between"}} -->
+		<div class="wp-block-group otonaselect-single-nav" style="margin-top:var(--wp--preset--spacing--50)">
+			<!-- wp:post-navigation-link {"type":"previous","label":"前の記事","arrow":"arrow"} /-->
+
+			<!-- wp:paragraph {"fontSize":"small","className":"otonaselect-back-top"} -->
+			<p class="has-small-font-size otonaselect-back-top"><a href="/">トップへ戻る</a></p>
+			<!-- /wp:paragraph -->
+
+			<!-- wp:post-navigation-link {"label":"次の記事","arrow":"arrow"} /-->
+		</div>
+		<!-- /wp:group -->
+	</div>
+	<!-- /wp:group -->
+</main>
+<!-- /wp:group -->
+
+<!-- wp:template-part {"slug":"footer","area":"footer"} /-->

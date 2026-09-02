@@ -197,6 +197,7 @@
     "production:diagnose": "node dist/cli.js production-diagnose",
     "llm:test": "node dist/cli.js llm-test",
     "blogger:create-test-draft": "node dist/cli.js blogger-create-test-draft",
+    "wordpress:live:publish": "node dist/ops/wordpress-live-publish.js",
     "ops:daily-status": "node dist/cli.js ops-daily-status",
     "test": "vitest run",
     "start:scheduler": "node dist/scheduler-worker.js",

@@ -18,6 +18,80 @@ export interface MockLLMUsageRecord {
   at: Date;
 }
 
+function readArticlePlan(input: Record<string, unknown>): {
+  titleFacts: string[];
+  bodyFacts: string[];
+} | null {
+  const authority = (input.generationAuthority ?? input.brainGenerationContract ?? {}) as Record<
+    string,
+    unknown
+  >;
+  const layers = (authority.layers ?? {}) as Record<string, unknown>;
+  const plan =
+    (layers.ARTICLE_PLAN as Record<string, unknown> | undefined) ??
+    (authority.ARTICLE_PLAN as Record<string, unknown> | undefined) ??
+    (input.ARTICLE_PLAN as Record<string, unknown> | undefined) ??
+    (input.articlePlan as Record<string, unknown> | undefined);
+  if (!plan || typeof plan !== "object") return null;
+  const title = plan.title as { facts?: unknown } | undefined;
+  const body = plan.body as Array<{ facts?: unknown }> | undefined;
+  const titleFacts = Array.isArray(title?.facts)
+    ? title!.facts!.filter((f): f is string => typeof f === "string" && f.trim().length > 0)
+    : [];
+  const bodyFacts = Array.isArray(body)
+    ? body.flatMap((b) =>
+        Array.isArray(b?.facts)
+          ? b.facts!.filter((f): f is string => typeof f === "string" && f.trim().length > 0)
+          : [],
+      )
+    : [];
+  if (titleFacts.length === 0 && bodyFacts.length === 0) return null;
+  return { titleFacts, bodyFacts };
+}
+
+/** Leadless ArticlePlan-faithful mock article for OPTION B compliance tests. */
+function buildMockArticleFromArticlePlan(
+  input: Record<string, unknown>,
+  fallbackTitle: string,
+  ctaUrl: string | null,
+  claimIds: string[],
+): Record<string, unknown> {
+  const plan = readArticlePlan(input);
+  const titleFacts = plan?.titleFacts?.length ? plan.titleFacts : [fallbackTitle];
+  const bodyFacts = plan?.bodyFacts?.length ? plan.bodyFacts : [`${fallbackTitle}の公開情報`];
+  const title =
+    titleFacts.length === 1
+      ? titleFacts[0]!
+      : titleFacts.length >= 2
+        ? `${titleFacts[0]}の${titleFacts.slice(1).join("・")}`
+        : fallbackTitle;
+  // One paragraph per body fact (exact surface) so plan-fact matching stays EXACT.
+  const paragraphs = bodyFacts.map((f) => `${f}。`);
+  return {
+    title,
+    summary: bodyFacts.slice(0, 2).join(" / "),
+    sections: [
+      {
+        heading: null,
+        paragraphs,
+        lists: [],
+      },
+    ],
+    cta: {
+      label: "商品ページを見る",
+      url: ctaUrl,
+    },
+    sourceReferences: [],
+    seoTitle: title,
+    metaDescription: bodyFacts.slice(0, 2).join("。"),
+    labels: ["catalog"],
+    warnings: [],
+    usedClaimIds: claimIds,
+    usedProductLinkIds: Array.isArray(input.productLinkIds) ? input.productLinkIds : [],
+    articleFormat: input.articleFormat ?? "new-release",
+  };
+}
+
 /**
  * Structured Mock LLM for P4.5 generation/review/revision paths.
  * Legacy callers still get a generic echo for unknown task types.
@@ -84,40 +158,9 @@ export class MockLLMProvider implements LLMProvider {
           errorClass: "schema_mismatch",
         });
       }
+      const planArticle = buildMockArticleFromArticlePlan(request.input, title, ctaUrl, claimIds);
       return this.record(request, {
-        output: {
-          title: `${title} の公開情報まとめ`,
-          summary: `${title} の確認できる事実と購入導線を整理。`,
-          lead: `${title} は公開カタログ上で確認できる項目がある。`,
-          sections: [
-            {
-              heading: "確認できる情報",
-              paragraphs: [
-                `${title} について、公開ページで確認できた事実だけを整理する。`,
-                "確認できない内容は断定しない。価格・発売日・出演者などは根拠がある場合のみ記載する。",
-              ],
-              lists: ["公開情報を優先", "レビューと事実を区別"],
-            },
-            {
-              heading: "注意",
-              paragraphs: ["18歳未満は対象外です。アフィリエイト広告を含む場合があります。"],
-            },
-          ],
-          cta: {
-            label: "商品ページを見る",
-            url: ctaUrl,
-          },
-          sourceReferences: [],
-          seoTitle: `${title} 概要`,
-          metaDescription: `${title} の概要と注意点。`,
-          labels: ["catalog", "overview"],
-          warnings: [],
-          usedClaimIds: claimIds,
-          usedProductLinkIds: Array.isArray(request.input.productLinkIds)
-            ? request.input.productLinkIds
-            : [],
-          articleFormat: request.input.articleFormat ?? "new-release",
-        },
+        output: planArticle,
         structuredOutputValid: true,
       });
     }

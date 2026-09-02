@@ -6,6 +6,7 @@ import type { DatabaseClient } from "@ai-affiliate/database";
 import { tokyoDateString } from "../daily-blog/idempotency.js";
 import type { ChannelPublicationRecord } from "./channel-duplicate.js";
 import type { MixHistoryEntry } from "./content-mix.js";
+import { normalizeMixSlot } from "./content-mix.js";
 import type { XPostRoute } from "./x-route.js";
 
 function asRecord(v: unknown): Record<string, unknown> {
@@ -112,7 +113,6 @@ export async function loadRecentMixHistory(
   prisma: DatabaseClient["prisma"],
   limit = 14,
 ): Promise<MixHistoryEntry[]> {
-  // Approximate mix history from recent blog publications' platformMetadata.mixSlot
   const rows = await prisma.publicationTarget.findMany({
     where: { platform: "BLOGGER", publishedAt: { not: null } },
     orderBy: { publishedAt: "desc" },
@@ -122,13 +122,8 @@ export async function loadRecentMixHistory(
   const out: MixHistoryEntry[] = [];
   for (const r of rows) {
     const meta = asRecord(r.platformMetadata);
-    const slot = meta.mixSlot;
-    if (
-      slot === "RECENT_PRODUCT" ||
-      slot === "MID_PRODUCT" ||
-      slot === "OLDER_PRODUCT" ||
-      slot === "RANKING"
-    ) {
+    const slot = normalizeMixSlot(meta.mixSlot ?? meta.blogMixSlot);
+    if (slot) {
       out.push({
         slot,
         at: r.publishedAt?.toISOString() ?? new Date().toISOString(),
@@ -136,6 +131,55 @@ export async function loadRecentMixHistory(
     }
   }
   return out;
+}
+
+export async function loadRecentXMixHistory(
+  prisma: DatabaseClient["prisma"],
+  limit = 14,
+): Promise<MixHistoryEntry[]> {
+  const rows = await prisma.xPublication.findMany({
+    where: { status: { in: ["PUBLISHED", "PARTIALLY_PUBLISHED"] }, publishedAt: { not: null } },
+    orderBy: { publishedAt: "desc" },
+    take: limit,
+    select: { publishedAt: true, strategyVersion: true },
+  });
+  const out: MixHistoryEntry[] = [];
+  for (const r of rows) {
+    const parts = (r.strategyVersion ?? "").split("|");
+    let slot = null as ReturnType<typeof normalizeMixSlot>;
+    for (const p of parts) {
+      slot = normalizeMixSlot(p);
+      if (slot) break;
+    }
+    if (slot) {
+      out.push({
+        slot,
+        at: r.publishedAt?.toISOString() ?? new Date().toISOString(),
+      });
+    }
+  }
+  return out;
+}
+
+/** Actress keys from recent BLOG publications (soft diversity). */
+export async function loadRecentBlogActressKeys(
+  prisma: DatabaseClient["prisma"],
+  limit = 20,
+): Promise<string[]> {
+  const rows = await prisma.publicationTarget.findMany({
+    where: { platform: "BLOGGER", status: { in: ["PUBLISHED", "DRAFT"] } },
+    orderBy: { publishedAt: "desc" },
+    take: limit,
+    select: { platformMetadata: true },
+  });
+  const keys: string[] = [];
+  for (const r of rows) {
+    const meta = asRecord(r.platformMetadata);
+    if (typeof meta.actressKey === "string" && meta.actressKey.trim()) {
+      keys.push(meta.actressKey.trim());
+    }
+  }
+  return [...new Set(keys)];
 }
 
 export async function loadRecentXRoutes(

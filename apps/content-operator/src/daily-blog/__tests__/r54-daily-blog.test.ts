@@ -28,10 +28,15 @@ import { buildXHandoffPayload } from "../x-handoff.js";
 import { canStartLlmGeneration, createBudgetState } from "../budget.js";
 
 describe("r54 daily-blog (LLM=0)", () => {
-  it("validates affiliate URL without synthesizing", () => {
+  it("validates CTA URL without synthesizing (product URL allowed until af_id)", () => {
     expect(validateFanzaAffiliateUrl(null).failureCode).toBe("AFFILIATE_URL_MISSING");
     expect(
-      validateFanzaAffiliateUrl("https://www.dmm.co.jp/digital/videoa/-/detail/=/cid=mizd00320/").ok,
+      validateFanzaAffiliateUrl("https://www.dmm.co.jp/digital/videoa/-/detail/=/cid=mizd00320/")
+        .ok,
+    ).toBe(true);
+    expect(
+      validateFanzaAffiliateUrl("https://www.dmm.co.jp/digital/videoa/-/detail/=/cid=mizd00320/")
+        .hasAffiliateIdHint,
     ).toBe(false);
     expect(
       validateFanzaAffiliateUrl(
@@ -106,14 +111,13 @@ describe("r54 daily-blog (LLM=0)", () => {
     expect(sel.selected?.canonicalId).toBe("bbb002");
   });
 
-  it("publish gate requires Brain PASS and blocks without direct publish flag", () => {
+  it("publish gate holds on safety fail; dry-run without direct publish stays DRY_RUN_OK", () => {
     const held = evaluatePublishGate({
       schemaPass: true,
       defer: false,
       claimValidationPass: true,
       integrityPass: true,
-      brainDecision: "TARGETED_REPAIR",
-      formatterPass: true,
+      formatterPass: false,
       affiliateUrlValid: true,
       imagePipelinePass: true,
       bloggerAuthPass: true,
@@ -123,12 +127,12 @@ describe("r54 daily-blog (LLM=0)", () => {
       allowDirectPublish: true,
     });
     expect(held.decision).toBe("HOLD");
+    expect(held.failureCodes).toContain("FORMATTER_FAIL");
     const dry = evaluatePublishGate({
       schemaPass: true,
       defer: false,
       claimValidationPass: true,
       integrityPass: true,
-      brainDecision: "PASS",
       formatterPass: true,
       affiliateUrlValid: true,
       imagePipelinePass: true,
@@ -140,6 +144,25 @@ describe("r54 daily-blog (LLM=0)", () => {
     });
     expect(dry.decision).toBe("DRY_RUN_OK");
     expect(dry.allowPublish).toBe(false);
+  });
+
+  it("publish gate does not require Brain decision (R117)", () => {
+    const gate = evaluatePublishGate({
+      schemaPass: true,
+      defer: false,
+      claimValidationPass: true,
+      integrityPass: true,
+      formatterPass: true,
+      affiliateUrlValid: true,
+      imagePipelinePass: true,
+      bloggerAuthPass: true,
+      duplicate: false,
+      dryRun: false,
+      autoPublishEnabled: true,
+      allowDirectPublish: true,
+    });
+    expect(gate.decision).toBe("PUBLISH");
+    expect(gate.failureCodes).not.toContain("BRAIN_NOT_PASS");
   });
 
   it("ranking slot is configurable and freezes ranks deterministically", () => {

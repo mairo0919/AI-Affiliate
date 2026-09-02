@@ -48,7 +48,7 @@ export type EditorialExecutionPlan = {
     note: string;
   };
   richStrategy: {
-    mode: "sequential_new_detail" | "compressed";
+    mode: "compose_assigned_slots" | "compressed";
     preferDenseEditorialPattern: boolean;
     note: string;
   };
@@ -89,10 +89,10 @@ export function buildEditorialExecutionPlan(input: {
       readerFunction:
         b.generation?.readerFunction ??
         (b.role === "interest_development"
-          ? "develop_confirmed_scene_or_trait_so_reader_wants_to_know_more"
+          ? "carry_reader_through_what_happens_from_evidence"
           : b.role === "cta_bridge"
             ? "bridge_from_established_interest_to_cta"
-            : "advance_with_new_supported_detail"),
+            : "advance_with_new_supported_content_detail"),
       transitionFunction:
         b.generation?.transitionFunction ?? "advance_interest_to_next_supported_detail",
       maxNewClaims: b.generation?.maxNewClaims ?? 2,
@@ -106,7 +106,7 @@ export function buildEditorialExecutionPlan(input: {
   if (sectionRoles.length === 0 && !input.omitInterestDevelopment) {
     sectionRoles.push({
       role: "interest_development",
-      readerFunction: "develop_confirmed_scene_or_trait_so_reader_wants_to_know_more",
+      readerFunction: "carry_reader_through_what_happens_from_evidence",
       transitionFunction: "deepen_hook_without_repeating_it",
       maxNewClaims: depth === "rich" ? 3 : 2,
       optional: false,
@@ -125,9 +125,11 @@ export function buildEditorialExecutionPlan(input: {
 
   const informationProgression: string[] = [
     `open:${editorial?.opening.strategy ?? "strongest_concrete_trait"}`,
-    ...(input.omitInterestDevelopment
-      ? ["body:omit_or_minimal_non_catalog_line"]
-      : ["body:new_supported_detail_each_paragraph"]),
+    ...(depth === "scarce"
+      ? ["body:one_unused_concrete_then_stop"]
+      : input.omitInterestDevelopment
+        ? ["body:omit_or_minimal_non_catalog_line"]
+        : ["body:compose_assigned_slot_facts"]),
     `summary:${editorial?.summaryRole ?? "list_snippet_not_body_restatement"}`,
     input.omitCtaBridge ? "cta:widget_only" : "cta:bridge_from_interest",
   ];
@@ -148,7 +150,9 @@ export function buildEditorialExecutionPlan(input: {
     materialDepth: depth,
     openingStrategy: editorial?.opening.strategy ?? "strongest_concrete_trait",
     developmentStrategy:
-      editorial?.development.strategy ?? "deepen_interest_with_new_supported_detail",
+      depth === "scarce"
+        ? "short_dense_stop_when_concrete_exhausted"
+        : (editorial?.development.strategy ?? "compose_assigned_evidence_into_content_prose"),
     informationProgression,
     sectionRoles: input.omitCtaBridge
       ? sectionRoles.filter((s) => s.role !== "cta_bridge")
@@ -166,16 +170,16 @@ export function buildEditorialExecutionPlan(input: {
       preferDeferWhenNoConcreteBody: true,
       note:
         scarceMode === "short_dense"
-          ? "Few concrete facts: keep article short and dense. Do not pad body with maker/availability/独占-only. If no concrete body facet remains after lead, prefer DEFER over catalog filler."
+          ? "Few concrete facts: keep article short and dense. Stop when unused concrete evidence is exhausted. Do not pad with evaluation or maker/availability/独占-only. Prefer DEFER over filler."
           : "Use only unused concrete facets in body; never catalog padding.",
     },
     richStrategy: {
-      mode: depth === "rich" ? "sequential_new_detail" : "compressed",
+      mode: depth === "rich" ? "compose_assigned_slots" : "compressed",
       preferDenseEditorialPattern: depth === "rich",
       note:
         depth === "rich"
-          ? "Multiple concrete facets available: unfold them in order (lead strongest trait → body next unused facets). One new supported angle per paragraph."
-          : "Standard depth: 1–2 body advances beyond lead is enough.",
+          ? "Compose each slot's assignedFacts into evidence-grounded work-content prose. Do not enumerate leftover evidence in sequence. Fulfill the slot plan, then stop."
+          : "Standard depth: compose assigned opening/body facts as work content; one body advance beyond lead is enough.",
     },
     repetitionPolicy: {
       style: "no_cross_role_restatement",
@@ -199,6 +203,7 @@ export function buildEditorialExecutionPlan(input: {
     ],
     generatorDuty: [
       "Execute EDITORIAL_PLAN using only FACTS (supported contributions).",
+      "Describe work content from facts — do not write as external SKU reviewer.",
       "Do not invent facts, evaluations, social proof, or catalog padding.",
       "Do not copy competitor wording (none is provided — patterns are abstract strategies only).",
       "Lead uses openingStrategy + lead required contributions only.",

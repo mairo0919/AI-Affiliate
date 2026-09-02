@@ -1,6 +1,6 @@
 /**
- * Deterministic Generator-side Plan Compliance (pre-persist).
- * Semantic inference/filler remain Brain Reviewer's job.
+ * Deterministic claim-id / provenance compliance (pre-persist).
+ * OPTION B Blogger skips this path; retained for allowlist clamp helpers.
  */
 
 import type { BrainGenerationInputContract } from "./generation-input-contract.js";
@@ -34,9 +34,6 @@ function omittedHits(used: string[], omitted: Set<string>): string[] {
   return [...new Set(used.filter((id) => omitted.has(id)))];
 }
 
-/**
- * Validate provenance + role allowlists against the generation contract.
- */
 export function checkPlanCompliance(input: {
   contract: BrainGenerationInputContract;
   provenance: ArticleProvenance | null;
@@ -44,11 +41,16 @@ export function checkPlanCompliance(input: {
   requireProvenance: boolean;
 }): PlanComplianceResult {
   const findings: PlanComplianceFinding[] = [];
-  const { contract } = input;
-  const allow = contract.roleAllowlist;
+  const allow = input.contract.roleAllowlist;
   const omitted = new Set(allow.omittedClaimIds);
-  const selected = new Set(contract.corePlan.selectedClaimIds);
-  const universe = new Set([...selected, ...allow.omittedClaimIds]);
+  const universe = new Set([
+    ...allow.titleAllowedClaimIds,
+    ...allow.leadAllowedClaimIds,
+    ...allow.developmentAllowedClaimIds,
+    ...allow.summaryAllowedClaimIds,
+    ...allow.ctaAllowedClaimIds,
+    ...allow.omittedClaimIds,
+  ]);
 
   if (input.requireProvenance && !input.provenance) {
     findings.push({
@@ -77,15 +79,13 @@ export function checkPlanCompliance(input: {
     checks.push({
       role: "cta",
       used: prov.cta.claimIdsUsed,
-      allowed: allow.ctaAllowedClaimIds.length
-        ? allow.ctaAllowedClaimIds
-        : [], // empty allowlist → no claim use in CTA
+      allowed: allow.ctaAllowedClaimIds,
     });
   }
 
   for (const c of checks) {
     const allowedSet = new Set(c.allowed);
-    const roleViolations = c.used.filter((id) => !allowedSet.has(id) && selected.has(id));
+    const roleViolations = c.used.filter((id) => !allowedSet.has(id) && universe.has(id));
     if (roleViolations.length > 0) {
       findings.push({
         code: "ROLE_CLAIM_VIOLATION",
@@ -122,23 +122,6 @@ export function checkPlanCompliance(input: {
     });
   }
 
-  // Plan-level: same claimId must not be allocated to both opening and development
-  const planOpening = new Set(
-    contract.corePlan.claimAllocation.filter((a) => a.role === "opening").map((a) => a.claimId),
-  );
-  const planDev = contract.corePlan.claimAllocation
-    .filter((a) => a.role === "development" || a.role === "support")
-    .map((a) => a.claimId);
-  const planOverlap = planDev.filter((id) => planOpening.has(id));
-  if (planOverlap.length > 0) {
-    findings.push({
-      code: "ALLOCATION_OVERLAP",
-      message: "Plan opening/development allocation overlap",
-      claimIds: planOverlap,
-    });
-  }
-
-  // Runtime: same claimId used in both lead and a development section
   const leadUsed = new Set(prov.lead.claimIdsUsed);
   const sectionUsed = [...new Set(prov.sections.flatMap((s) => s.claimIdsUsed))];
   const runtimeOverlap = sectionUsed.filter((id) => leadUsed.has(id));
@@ -157,7 +140,6 @@ export function checkPlanCompliance(input: {
     });
   }
 
-  // Soft: empty provenance on all segments when required
   if (input.requireProvenance && allProvenanceClaimIds(prov).length === 0) {
     findings.push({
       code: "PROVENANCE_MISSING",

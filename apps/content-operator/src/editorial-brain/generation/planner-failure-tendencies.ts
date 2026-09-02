@@ -92,16 +92,52 @@ export function summarizePlanFailureTendencies(
   return hints.slice(0, maxHints);
 }
 
+/** OPTION B Writer-safe wording — same failureClass keys, no contribution/segment ids. */
+const OPTION_B_WRITER_CONSTRAINT_BY_CLASS: Record<string, string> = {
+  LEAD_BODY_OVERLAP:
+    "Do not restate lead facets in body; advance with unused concrete evidence only.",
+  FORBIDDEN_CONTRIBUTION_REUSED:
+    "Do not restate lead-used facts in body; each paragraph needs new concrete evidence.",
+  STRUCTURAL_PROGRESSION_FAILURE:
+    "Each body paragraph must introduce a new supported concrete fact not yet used in lead.",
+  REQUIRED_CONTRIBUTION_MISSING:
+    "Every required concrete fact for a segment must appear in that segment text.",
+  PLAN_EXECUTION_FAILED:
+    "Follow WRITING_SKELETON progression before style; do not free-write around the plan.",
+  GENERATION_PLAN_UNDERUSE:
+    "Prefer distinct concrete evidence across body paragraphs instead of padding.",
+  REPETITION:
+    "Avoid repeating the same facet across lead and body; advance information.",
+  SEMANTIC_CONTRIBUTION_REUSE:
+    "Do not restate semantically equivalent lead facts (incl. scene stems) in body.",
+  COMPOSITE_COMPONENT_RESTATEMENT:
+    "If lead used a duration+scene composite, do not restate either component alone in body.",
+  PROVENANCE_CONTRADICTION:
+    "Do not claim body facts that contradict what lead already established.",
+  REPEATED_PLAN_EXECUTION_FAILURE:
+    "Same plan-failure signature already occurred — change evidence selection, not paraphrase.",
+};
+
+export function projectWriterExperienceConstraints(
+  hints: PlannerFailureTendencyHint[],
+  max = 3,
+): Array<{ failureClass: string; constraint: string }> {
+  return hints.slice(0, max).map((h) => ({
+    failureClass: h.failureClass,
+    constraint:
+      OPTION_B_WRITER_CONSTRAINT_BY_CLASS[h.failureClass] ?? h.executionConstraint.slice(0, 200),
+  }));
+}
+
 export function formatTendencyHintsForAuthority(
   hints: PlannerFailureTendencyHint[],
 ): Record<string, unknown> | null {
   if (!hints.length) return null;
   return {
     note: "Past generation outcomes for similar pattern/failure class — constraints only, not prose to copy.",
-    hints: hints.map((h) => ({
-      failureClass: h.failureClass,
-      sampleCount: h.sampleCount,
-      constraint: h.executionConstraint,
+    hints: projectWriterExperienceConstraints(hints, 3).map((h, i) => ({
+      ...h,
+      sampleCount: hints[i]?.sampleCount ?? 1,
     })),
   };
 }

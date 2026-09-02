@@ -4,10 +4,11 @@
  */
 
 import type { EvidencePack, EvidencePackItem } from "./evidence-pack.js";
+import { packItemSemanticFamilyId } from "./evidence-pack.js";
 import type { WritingSkeleton } from "./writing-skeleton.js";
 import {
-  classifySemanticEvidence,
   roleCompatibleClasses,
+  semanticClassToBlueprintType,
 } from "./semantic-evidence.js";
 
 export type SkeletonEvidenceAssignment = {
@@ -40,22 +41,17 @@ export type AssignEvidenceOptions = {
   allowAnyFallback?: boolean;
 };
 
-function itemMeta(item: EvidencePackItem) {
-  return classifySemanticEvidence(item.fact, {
-    sourceType: item.provenance.sourceType,
-    titleIdentityToken:
-      item.provenance.sourceType === "product_title" && item.type !== "product_identity",
-  });
-}
-
 function roleMatches(item: EvidencePackItem, role: string): boolean {
-  const sem = itemMeta(item);
   const allowed = roleCompatibleClasses(role);
   if (allowed.length === 0) {
-    // Unknown role: exact blueprint type match only
     return item.type === role;
   }
-  return allowed.includes(sem.primary);
+  if (item.type === role) return true;
+  if (role === "performer_or_concrete_trait" && item.type === "performer_identity") {
+    return true;
+  }
+  // Match via upstream blueprint type — do not reclassify fact text.
+  return allowed.some((p) => semanticClassToBlueprintType(p) === item.type);
 }
 
 function pick(
@@ -69,23 +65,26 @@ function pick(
   const hit = pool.find((e) => {
     if (usedIds.has(e.id) || e.type === "product_identity") return false;
     if (!roleMatches(e, role)) return false;
-    const fam = itemMeta(e).familyId;
+    const fam = packItemSemanticFamilyId(e);
     if (usedFamilies.has(fam)) return false;
     return true;
   });
   if (hit) {
     usedIds.add(hit.id);
-    usedFamilies.add(itemMeta(hit).familyId);
+    usedFamilies.add(packItemSemanticFamilyId(hit));
     return hit;
   }
   if (!allowAnyFallback) return null;
   const any = pool.find(
-    (e) => !usedIds.has(e.id) && e.type !== "product_identity" && !usedFamilies.has(itemMeta(e).familyId),
+    (e) =>
+      !usedIds.has(e.id) &&
+      e.type !== "product_identity" &&
+      !usedFamilies.has(packItemSemanticFamilyId(e)),
   );
   if (any) {
     counters.anyFallbackCount += 1;
     usedIds.add(any.id);
-    usedFamilies.add(itemMeta(any).familyId);
+    usedFamilies.add(packItemSemanticFamilyId(any));
     return any;
   }
   return null;
@@ -109,9 +108,9 @@ export function assignEvidenceToWritingSkeleton(
       : null);
   if (titlePrimary && !usedIds.has(titlePrimary.id)) {
     usedIds.add(titlePrimary.id);
-    usedFamilies.add(itemMeta(titlePrimary).familyId);
+    usedFamilies.add(packItemSemanticFamilyId(titlePrimary));
   }
-  const titleFam = titlePrimary ? itemMeta(titlePrimary).familyId : null;
+  const titleFam = titlePrimary ? packItemSemanticFamilyId(titlePrimary) : null;
 
   // Opening may reuse title family (same fact family OK for title↔lead); body may not.
   const openingUsedFamilies = new Set(usedFamilies);
@@ -127,7 +126,7 @@ export function assignEvidenceToWritingSkeleton(
       counters,
     ) ??
     // Natural intro: title + opening may share the same clearest fact (do not force a second atom)
-    (skeleton.opening.packaging === "NATURAL_COMPOSE" &&
+    (skeleton.opening.packaging === "COMPOSE_AS_WORK_CONTENT" &&
     titlePrimary &&
     roleMatches(titlePrimary, skeleton.opening.primaryEvidenceRole)
       ? titlePrimary
@@ -135,12 +134,12 @@ export function assignEvidenceToWritingSkeleton(
   // Recompute family locks from assigned ids (title family stays locked for body)
   usedFamilies.clear();
   for (const e of pool) {
-    if (usedIds.has(e.id)) usedFamilies.add(itemMeta(e).familyId);
+    if (usedIds.has(e.id)) usedFamilies.add(packItemSemanticFamilyId(e));
   }
   // If opening reused title primary, keep family locked for body
   if (openingPrimary) {
     usedIds.add(openingPrimary.id);
-    usedFamilies.add(itemMeta(openingPrimary).familyId);
+    usedFamilies.add(packItemSemanticFamilyId(openingPrimary));
   }
 
   const openingSupporting: EvidencePackItem[] = [];
@@ -173,12 +172,12 @@ export function assignEvidenceToWritingSkeleton(
     ? null
     : pool.find((e) => {
         if (usedIds.has(e.id) || e.type === "product_identity") return false;
-        const fam = itemMeta(e).familyId;
+        const fam = packItemSemanticFamilyId(e);
         return !usedFamilies.has(fam);
       }) ?? null;
   if (endingPrimary) {
     usedIds.add(endingPrimary.id);
-    usedFamilies.add(itemMeta(endingPrimary).familyId);
+    usedFamilies.add(packItemSemanticFamilyId(endingPrimary));
   }
 
   return {

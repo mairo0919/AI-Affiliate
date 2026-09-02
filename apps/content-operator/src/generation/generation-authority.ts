@@ -1,24 +1,21 @@
 /**
  * Generation authority SSOT — OPTION B (primary).
  *
- * Priority (higher cannot be overridden by lower) — JSON only; not restated as prompt walls:
- * 1. FACTUAL / SAFETY
- * 2. EVIDENCE_PACK (WHAT — product title / Claims / official description)
- * 3. WRITING_SKELETON (HOW — light progression hint)
- * 4. BLOG_CHANNEL_REQUIREMENTS
- * 5. MINIMAL_STYLE
- *
- * r29: Brain-overlapping duty flags removed. Canonical generatorDuty = 1 string.
+ * r114: Writer-visible SSOT is ARTICLE_PLAN only (Planner-owned WHAT/ORDER/DEPTH/STOP).
+ * EvidencePack / WritingSkeleton soft HOW are not Writer-injected.
+ * R151: ARTICLE_PLAN_EXECUTION must reach Writer whenever ARTICLE_PLAN exists.
  */
 
-import { OPTION_B_GENERATOR_POLICY } from "../article-pattern/natural-product-intro-policy.js";
+import {
+  buildArticlePlanExecutionContract,
+  toWriterExecutionContractView,
+} from "../article-pattern/plan-execution-contract.js";
+import { toWriterVisibleArticlePlan } from "../article-pattern/leadless-article.js";
 
 export const GENERATION_AUTHORITY_PRIORITY = [
+  "ARTICLE_PLAN",
   "FACTUAL_SAFETY",
-  "EVIDENCE_PACK",
-  "WRITING_SKELETON",
   "BLOG_CHANNEL_REQUIREMENTS",
-  "MINIMAL_STYLE",
 ] as const;
 
 /** @deprecated r15 path — kept for tests/compat; not injected into Generator when OPTION B is active */
@@ -35,6 +32,22 @@ export const LEGACY_GENERATION_AUTHORITY_PRIORITY = [
 
 export type GenerationAuthorityRank = (typeof GENERATION_AUTHORITY_PRIORITY)[number];
 
+/** Structured regen correction item — Writer-visible on attempt 2+ only. */
+export type PlanRegenViolation = {
+  code: string;
+  slot: "title" | "lead" | "body" | "article";
+  fact: string;
+  reason: string;
+  /** R151 — missing required anchors from execution contract */
+  missingAnchors?: string[];
+  /** R151 — missing required semantic relations */
+  missingRelations?: string[];
+  /** R151 — unexpected meaning detected (optional) */
+  unexpectedMeaning?: string[];
+  /** Exact Writer sentence that triggered BLOCKING (eval/overreach) — delete, do not rewrite Plan */
+  unsupportedSentence?: string;
+};
+
 export type PlanViolationFeedback = {
   attempt: number;
   violatedSegments: string[];
@@ -47,34 +60,106 @@ export type PlanViolationFeedback = {
   failureClass?: string;
   failureSignature?: string;
   note: string;
+  /** r141 — corrective regen payload derived from Compliance findings + ArticlePlan facts */
+  violations?: PlanRegenViolation[];
+  instruction?: string;
 };
 
-function pickOptionB(
+function pickArticlePlan(
   contract: Record<string, unknown>,
-): {
-  writingSkeleton: Record<string, unknown> | null;
-  evidencePack: Record<string, unknown> | null;
-} {
+): Record<string, unknown> | null {
   const layers =
     typeof contract.layers === "object" && contract.layers
       ? (contract.layers as Record<string, unknown>)
       : {};
-  const writingSkeleton =
-    (contract.writingSkeleton as Record<string, unknown> | undefined) ??
-    (layers.WRITING_SKELETON as Record<string, unknown> | undefined) ??
+  const plan =
+    (contract.articlePlan as Record<string, unknown> | undefined) ??
+    (contract.ARTICLE_PLAN as Record<string, unknown> | undefined) ??
+    (layers.ARTICLE_PLAN as Record<string, unknown> | undefined) ??
     null;
-  const evidencePack =
-    (contract.evidencePack as Record<string, unknown> | undefined) ??
-    (layers.EVIDENCE_PACK as Record<string, unknown> | undefined) ??
-    null;
-  return { writingSkeleton, evidencePack };
+  return plan && typeof plan === "object" ? plan : null;
+}
+
+function planLooksExecutable(plan: Record<string, unknown>): boolean {
+  const title = plan.title as { facts?: unknown } | undefined;
+  const body = plan.body;
+  // Leadless: lead may be absent or empty; title + body are required.
+  return Array.isArray(title?.facts) && Array.isArray(body);
 }
 
 /**
- * OPTION B Generator authority — small, non-competing SSOT.
- * Reviewer-only walls stay out of this object.
+ * R151 reconnect — if CONTRACT forgot ARTICLE_PLAN_EXECUTION, derive from plan.
+ * Prevents Writer-facing EXEC drop when only ARTICLE_PLAN was attached.
+ */
+export function resolveArticlePlanExecution(
+  plan: Record<string, unknown>,
+  explicit?: unknown[] | null,
+): unknown[] {
+  if (Array.isArray(explicit) && explicit.length > 0) return explicit;
+  if (Array.isArray(plan.execution) && (plan.execution as unknown[]).length > 0) {
+    return plan.execution as unknown[];
+  }
+  if (!planLooksExecutable(plan)) return Array.isArray(explicit) ? explicit : [];
+  const lead = (plan.lead as { facts?: string[] } | undefined) ?? { facts: [] };
+  return toWriterExecutionContractView(
+    buildArticlePlanExecutionContract({
+      title: plan.title as { facts: string[] },
+      lead: { facts: Array.isArray(lead.facts) ? lead.facts : [] },
+      body: plan.body as Array<{ facts: string[] }>,
+    }),
+  );
+}
+
+/**
+ * OPTION B Writer authority — ARTICLE_PLAN only (r114).
  */
 export function buildOptionBGenerationAuthority(input: {
+  articlePlan: Record<string, unknown>;
+  planViolationFeedback?: PlanViolationFeedback | null;
+  /** R151 — structured per-contribution execution contract */
+  articlePlanExecution?: unknown[] | null;
+  channel?: {
+    ctaRequired?: boolean;
+    disclosureSystemAppended?: boolean;
+    language?: string;
+  };
+}): Record<string, unknown> {
+  const writerPlan = toWriterVisibleArticlePlan(input.articlePlan);
+  const execution = resolveArticlePlanExecution(
+    {
+      ...writerPlan,
+      // EXEC builder tolerates empty lead; keep shape if absent.
+      lead: (writerPlan.lead as { facts: string[] } | undefined) ?? { facts: [] },
+      title: writerPlan.title as { facts: string[] },
+      body: writerPlan.body as Array<{ facts: string[] }>,
+    },
+    input.articlePlanExecution,
+  );
+  return {
+    mode: "OPTION_B",
+    authorityPriority: [...GENERATION_AUTHORITY_PRIORITY],
+    rule: "ARTICLE_PLAN is the sole Writer execution SSOT. Realize slot facts; do not invent concrete facts absent from the plan; do not re-select materials. ARTICLE_PLAN_EXECUTION defines what each fact must preserve. Leadless: no lead slot — opening materials are in body.",
+    ARTICLE_PLAN: writerPlan,
+    ARTICLE_PLAN_EXECUTION: execution.length > 0 ? execution : null,
+    FACTUAL_SAFETY: {
+      noInventedFacts: true,
+      noFabricatedSocialProof: true,
+      noInventedImageUrls: true,
+    },
+    BLOG_CHANNEL_REQUIREMENTS: {
+      language: input.channel?.language ?? "ja",
+      ctaAppendedBySystem: true,
+      disclosureAppendedBySystem: input.channel?.disclosureSystemAppended !== false,
+    },
+    planViolationFeedback: input.planViolationFeedback ?? null,
+  };
+}
+
+/**
+ * @deprecated r114 — use buildOptionBGenerationAuthority({ articlePlan }).
+ * Kept for transitional call sites that still pass skeleton+pack; builds nothing soft.
+ */
+export function buildOptionBGenerationAuthorityLegacySkeleton(input: {
   writingSkeleton: Record<string, unknown>;
   evidencePack: Record<string, unknown>;
   planViolationFeedback?: PlanViolationFeedback | null;
@@ -84,32 +169,23 @@ export function buildOptionBGenerationAuthority(input: {
     language?: string;
   };
 }): Record<string, unknown> {
+  void input.writingSkeleton;
+  void input.evidencePack;
   return {
-    mode: "OPTION_B",
+    mode: "TRANSITION_MINIMAL",
     authorityPriority: [...GENERATION_AUTHORITY_PRIORITY],
-    rule: "Lower ranks must not override higher ranks. Style never weakens FACTUAL or EVIDENCE_PACK. Do not invent facts. Do not pad with catalog metadata.",
+    rule: "ARTICLE_PLAN missing — do not invent. Prefer DEFER.",
+    ARTICLE_PLAN: null,
     FACTUAL_SAFETY: {
-      useOnlySupportedFacts: true,
       noInventedFacts: true,
       noFabricatedSocialProof: true,
-      noCompetitorProseCopy: true,
-      noCatalogShellPadding: true,
-    },
-    EVIDENCE_PACK: input.evidencePack,
-    WRITING_SKELETON: input.writingSkeleton,
-    BLOG_CHANNEL_REQUIREMENTS: {
-      language: input.channel?.language ?? "ja",
-      ctaWidgetRequired: input.channel?.ctaRequired !== false,
-      disclosureAppendedBySystem: input.channel?.disclosureSystemAppended !== false,
       noInventedImageUrls: true,
-      noDuplicateFreshnessNotice: true,
     },
-    MINIMAL_STYLE: {
+    BLOG_CHANNEL_REQUIREMENTS: {
       language: "ja",
-      articleShape: "natural_product_intro",
+      ctaAppendedBySystem: true,
+      disclosureAppendedBySystem: true,
     },
-    /** Canonical single duty — not duplicated into prompt / skeleton / pack (r29). */
-    generatorDuty: [OPTION_B_GENERATOR_POLICY],
     planViolationFeedback: input.planViolationFeedback ?? null,
   };
 }
@@ -121,11 +197,27 @@ export function buildGenerationAuthorityPromptContract(input: {
   planViolationFeedback?: PlanViolationFeedback | null;
   plannerFailureTendencies?: Record<string, unknown> | null;
 }): Record<string, unknown> {
-  const { writingSkeleton, evidencePack } = pickOptionB(input.brainGenerationContract);
-  if (writingSkeleton && evidencePack) {
+  void input.editorialPatternSummary;
+  void input.structurePatternSummary;
+  void input.plannerFailureTendencies;
+
+  const articlePlan = pickArticlePlan(input.brainGenerationContract);
+  if (articlePlan) {
+    const layers =
+      typeof input.brainGenerationContract.layers === "object" &&
+      input.brainGenerationContract.layers
+        ? (input.brainGenerationContract.layers as Record<string, unknown>)
+        : {};
+    const explicit = Array.isArray(articlePlan.execution)
+      ? (articlePlan.execution as unknown[])
+      : Array.isArray(input.brainGenerationContract.ARTICLE_PLAN_EXECUTION)
+        ? (input.brainGenerationContract.ARTICLE_PLAN_EXECUTION as unknown[])
+        : Array.isArray(layers.ARTICLE_PLAN_EXECUTION)
+          ? (layers.ARTICLE_PLAN_EXECUTION as unknown[])
+          : null;
     return buildOptionBGenerationAuthority({
-      writingSkeleton,
-      evidencePack,
+      articlePlan,
+      articlePlanExecution: explicit,
       planViolationFeedback: input.planViolationFeedback,
     });
   }
@@ -133,31 +225,20 @@ export function buildGenerationAuthorityPromptContract(input: {
   return {
     mode: "TRANSITION_MINIMAL",
     authorityPriority: [...GENERATION_AUTHORITY_PRIORITY],
-    rule: "OPTION B inputs missing — use FACTUAL_SAFETY only; do not invent. Prefer DEFER over catalog padding.",
+    rule: "ARTICLE_PLAN missing — use FACTUAL_SAFETY only; do not invent. Prefer DEFER over catalog padding.",
+    ARTICLE_PLAN: null,
+    ARTICLE_PLAN_EXECUTION: null,
     FACTUAL_SAFETY: {
-      useOnlySupportedFacts: true,
       noInventedFacts: true,
       noFabricatedSocialProof: true,
-      noCompetitorProseCopy: true,
-      noCatalogShellPadding: true,
+      noInventedImageUrls: true,
     },
-    EVIDENCE_PACK: null,
-    WRITING_SKELETON: null,
     BLOG_CHANNEL_REQUIREMENTS: {
       language: "ja",
-      ctaWidgetRequired: true,
+      ctaAppendedBySystem: true,
       disclosureAppendedBySystem: true,
     },
-    MINIMAL_STYLE: { language: "ja", articleShape: "natural_product_intro" },
     planViolationFeedback: input.planViolationFeedback ?? null,
-    legacyAdvisory: {
-      note: "Legacy SEGMENT/REFERENCE layers demoted; not authoritative for generation.",
-      hadSegmentContracts: Boolean(
-        (input.brainGenerationContract.layers as Record<string, unknown> | undefined)
-          ?.SEGMENT_CONTRACTS ?? input.brainGenerationContract.segmentContracts,
-      ),
-    },
-    generatorDuty: ["Use only SUPPORTED facts. Do not invent. Do not pad with catalog shells."],
   };
 }
 

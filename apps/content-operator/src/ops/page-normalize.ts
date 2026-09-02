@@ -4,6 +4,8 @@
  * Caller must NOT persist the raw HTML permanently.
  */
 
+import { classifyPublicPage } from "./page-classification.js";
+
 export type PublicPageType =
   | "product"
   | "official"
@@ -32,6 +34,9 @@ export interface NormalizedPublicPage {
   normalizedText: string;
   /** Candidate related public URLs discovered on-page (bounded) */
   relatedPublicUrls: string[];
+  /** From page-classification — used by browser fallback gate. */
+  canUseAsProductSource: boolean;
+  classificationReason: string | null;
 }
 
 const MAX_RELATED = 5;
@@ -73,6 +78,14 @@ export function normalizePublicHtml(input: {
   const images = extractImages(input.html, sourceUrl).slice(0, 8);
   const related = extractRelatedUrls(input.html, sourceUrl).slice(0, MAX_RELATED);
 
+  const classification = classifyPublicPage({
+    html: input.html,
+    url: sourceUrl,
+    title,
+    text,
+    hasProductSignals: Boolean(maker || series || performer || release || price),
+  });
+
   const normalizedLines = [
     productOrTopicName ? `name: ${productOrTopicName}` : null,
     summary ? `summary: ${summary}` : null,
@@ -110,6 +123,8 @@ export function normalizePublicHtml(input: {
     observedAt: (input.observedAt ?? new Date()).toISOString(),
     normalizedText: truncate(normalizedLines, MAX_NORMALIZED),
     relatedPublicUrls: related,
+    canUseAsProductSource: classification.canUseAsProductSource,
+    classificationReason: classification.reason,
   };
 }
 

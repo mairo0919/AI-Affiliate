@@ -186,6 +186,36 @@ export type {
   ReferenceMaterialRequirements,
 } from "./reference-type-profile.js";
 export {
+  extractPerformerEntitiesFromPageMeta,
+  normalizePerformerDisplayName,
+  performerEntityKey,
+} from "./performer-identity.js";
+export type { PerformerEntity, PerformerEntitySource } from "./performer-identity.js";
+export type {
+  PerformerRepresentation,
+  PerformerRepresentationMode,
+  PerformerRepresentationSourceConfidence,
+} from "./performer-representation.js";
+export {
+  buildPerformerRepresentation,
+  buildCombinedLabel,
+  buildNeutralMultiLabel,
+  detectDualHost,
+  detectCollectionShape,
+  detectEnsembleShape,
+  dualHostLeadCoversFacts,
+  representationLeadCoversFacts,
+  representationCoverage,
+  extractTitleAttested,
+  extractCountLabelFromSource,
+  hasDualCombinedMention,
+  hasDualHostCue,
+  resolveDualHostLeadFact,
+  resolveRepresentationLeadFact,
+  countRosterNamesInFacts,
+  sourceRosterCoversFacts,
+} from "./performer-representation.js";
+export {
   classifySemanticEvidence,
   buildSemanticFamilyId,
   titleLabelAttributionAllowed,
@@ -194,11 +224,35 @@ export {
 export type { SemanticEvidenceClass } from "./semantic-evidence.js";
 export {
   NATURAL_PRODUCT_INTRO_STRUCTURE,
-  GROUNDED_PROMOTION_POLICY,
   TITLE_SERIES_PERSONA_SCOPE,
-  EVIDENCE_DRIVEN_LENGTH_POLICY,
   OPTION_B_GENERATOR_POLICY,
+  OPTION_B_GENERATOR_POLICY_SCARCE,
+  OPTION_B_WRITER_SYSTEM,
+  OPTION_B_WRITER_SLOT_SPEECH,
+  OPTION_B_EVIDENCE_VOICE_RULE,
+  OPTION_B_SLOT_STOP_CONDITION,
+  OPTION_B_REALIZATION_COMPLETE_DUTY,
+  WRITER_VISIBLE_ARTICLE_SHAPE,
 } from "./natural-product-intro-policy.js";
+export {
+  buildArticlePlan,
+  articlePlanAllFacts,
+  materialDepthFromProfile,
+  ARTICLE_PLAN_JOBS,
+} from "./article-plan.js";
+export type { ArticlePlan, ArticlePlanSlot, ArticlePlanMaterialDepth } from "./article-plan.js";
+export {
+  resolveArticlePurpose,
+  resolveCoreAngle,
+  composeTitleFacts,
+  allocateReaderJobs,
+} from "./article-plan-editorial-frame.js";
+export type {
+  ArticlePurposeId,
+  ArticlePlanPurpose,
+  ArticlePlanCoreAngle,
+  ReaderJobId,
+} from "./article-plan-editorial-frame.js";
 export {
   extractOfficialPageFactAtoms,
   extractAtomsFromPageEvidenceMeta,

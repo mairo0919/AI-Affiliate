@@ -4,13 +4,20 @@
  * Broken Japanese must not reach Brain or ContentVersion persist.
  */
 
+import {
+  isTitleClauseFragment,
+  validateTitleSurfaceRealization,
+} from "../../article-pattern/title-eligibility.js";
+
 export type PostTransformIntegrityFinding = {
   code:
     | "POST_TRANSFORM_INTEGRITY_FAILED"
     | "INCOMPLETE_CLAUSE"
     | "DANGLING_PARTICLE"
     | "EMPTY_SUBJECT"
-    | "FRAGMENT";
+    | "FRAGMENT"
+    | "TITLE_KEYWORD_CONCAT"
+    | "TITLE_UNFINISHED_FRAGMENT";
   message: string;
   evidence?: string;
 };
@@ -28,13 +35,31 @@ const SENTENCE_START_PARTICLE_RE = /(?:^|[。．\n])\s*(?:を|に|で|と|へ)[\
 const EMPTY_TOPIC_RE = /(?:^|[。．\n])\s*(?:\d{2,4})?は、を/;
 const DANGLING_PREDICATE_RE = /(?:を目指す|として|による|に対し|について)(?:[。．]|$)/;
 const FRAGMENT_RE = /^[、。．・…\s]+$/;
+/** Compact SOURCE/Plan title facts — valid EXACT_SURFACE, not broken fragments. */
+const COMPACT_QUANTITY_TITLE_RE = /^\d+\s*(?:時間|分|回|発|名|人|本|作品|タイトル|cm)$/u;
+
+function isFragmentOrTooShort(text: string, role: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  if (FRAGMENT_RE.test(t)) return true;
+  const compact = t.replace(/\s+/g, "");
+  // R152 — title EXACT_SURFACE may be short (e.g. 「2時間」). Length<4 is not corruption.
+  if (role === "title") {
+    return compact.length < 2;
+  }
+  // summary often mirrors title via fillOptionBArticleDefaults — same exemption
+  if (role === "summary" && COMPACT_QUANTITY_TITLE_RE.test(compact)) {
+    return false;
+  }
+  return compact.length < 4;
+}
 
 function checkText(text: string, role: string): PostTransformIntegrityFinding[] {
   const findings: PostTransformIntegrityFinding[] = [];
   const t = (text ?? "").trim();
   if (!t) return findings;
 
-  if (FRAGMENT_RE.test(t) || t.replace(/\s+/g, "").length < 4) {
+  if (isFragmentOrTooShort(t, role)) {
     findings.push({
       code: "FRAGMENT",
       message: `${role} is fragment/too short after transform`,
@@ -78,18 +103,57 @@ function checkText(text: string, role: string): PostTransformIntegrityFinding[] 
       evidence: t.slice(0, 60),
     });
   }
+  if (role === "title") {
+    const surface = validateTitleSurfaceRealization(t);
+    if (!surface.ok) {
+      for (const code of surface.codes) {
+        if (code === "TITLE_UNFINISHED_FRAGMENT") {
+          findings.push({
+            code: "TITLE_UNFINISHED_FRAGMENT",
+            message: "title has unfinished clause fragment",
+            evidence: t.slice(0, 80),
+          });
+        } else if (code === "TITLE_KEYWORD_CONCAT") {
+          findings.push({
+            code: "TITLE_KEYWORD_CONCAT",
+            message: "title looks like bare keyword concatenation without Japanese linkage",
+            evidence: t.slice(0, 80),
+          });
+        } else if (code === "EMPTY_TITLE") {
+          findings.push({
+            code: "FRAGMENT",
+            message: "title empty after transform",
+            evidence: t.slice(0, 40),
+          });
+        }
+      }
+    }
+    // Extra: clause fragment anywhere inside title (not only trailing)
+    if (isTitleClauseFragment(t) || /を迎え/.test(t)) {
+      if (!findings.some((f) => f.code === "TITLE_UNFINISHED_FRAGMENT")) {
+        findings.push({
+          code: "TITLE_UNFINISHED_FRAGMENT",
+          message: "title embeds unfinished clause fragment",
+          evidence: t.slice(0, 80),
+        });
+      }
+    }
+  }
   return findings;
 }
 
 export function validatePostTransformIntegrity(input: {
   title?: string;
-  lead: string;
+  /** Legacy-only; omit on leadless writes. */
+  lead?: string | null;
   sections: Array<{ paragraphs: string[] }>;
   summary?: string;
 }): PostTransformIntegrityResult {
   const findings: PostTransformIntegrityFinding[] = [];
   if (input.title) findings.push(...checkText(input.title, "title"));
-  findings.push(...checkText(input.lead, "lead"));
+  if (typeof input.lead === "string" && input.lead.trim()) {
+    findings.push(...checkText(input.lead, "lead"));
+  }
   if (input.summary) findings.push(...checkText(input.summary, "summary"));
   for (let i = 0; i < input.sections.length; i++) {
     for (let j = 0; j < (input.sections[i]?.paragraphs.length ?? 0); j++) {

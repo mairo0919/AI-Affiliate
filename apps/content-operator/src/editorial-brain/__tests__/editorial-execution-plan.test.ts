@@ -200,19 +200,17 @@ describe("editorial execution plan wiring", () => {
       corePlan: core,
       channelPlan: buildBlogChannelPlan(core),
       claims,
-      editorialExecution: execution,
     });
     const prompt = toBrainGenerationPromptContract(contract);
     expect(prompt.layers).toBeTruthy();
-    const layers = prompt.layers as { FACTS: unknown; EDITORIAL_PLAN: unknown; SEGMENT_CONTRACTS: unknown };
+    const layers = prompt.layers as { FACTS: unknown };
     expect(layers.FACTS).toBeTruthy();
-    expect(layers.EDITORIAL_PLAN).toBeTruthy();
-    expect(layers.SEGMENT_CONTRACTS).toBeTruthy();
+    expect((prompt.layers as Record<string, unknown>).SEGMENT_CONTRACTS).toBeUndefined();
     const plan = toEditorialExecutionPromptContract(execution);
     expect(plan.openingStrategy).toBe("strongest_concrete_trait");
     expect(Array.isArray(prompt.priority) ? prompt.priority.join(" ") : String(prompt.priority)).toMatch(
-      /WRITING_SKELETON|EVIDENCE_PACK/,
+      /ARTICLE_PLAN|FACTUAL/,
     );
-    expect(prompt.segmentExecution).toBeTruthy();
+    expect(prompt.segmentExecution).toBeUndefined();
   });
 });

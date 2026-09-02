@@ -280,6 +280,56 @@ export class ResearchRepository {
       },
     });
   }
+
+  /**
+   * Upsert page-derived sample/package image URLs onto an existing ResearchItem.
+   * URL + type only — no binary. Safe to call repeatedly (idempotent upsert).
+   */
+  async upsertImagesForExternalId(input: {
+    externalId: string;
+    images: Array<{
+      imageType: string;
+      sourceUrl: string;
+      size?: string | null;
+      usageStatus?: SharedImageUsageStatus;
+      usageNote?: string | null;
+    }>;
+  }): Promise<{ researchItemId: string | null; upserted: number }> {
+    const item = await this.prisma.researchItem.findFirst({
+      where: { externalId: input.externalId },
+      select: { id: true },
+    });
+    if (!item) return { researchItemId: null, upserted: 0 };
+    let upserted = 0;
+    for (const image of input.images) {
+      const url = image.sourceUrl?.trim();
+      if (!url) continue;
+      await this.prisma.researchImage.upsert({
+        where: {
+          researchItemId_imageType_sourceUrl: {
+            researchItemId: item.id,
+            imageType: image.imageType,
+            sourceUrl: url,
+          },
+        },
+        create: {
+          researchItemId: item.id,
+          imageType: image.imageType,
+          sourceUrl: url,
+          size: image.size ?? null,
+          usageStatus: toImageUsageStatus(image.usageStatus ?? "REQUIRES_CONFIRMATION"),
+          usageNote: image.usageNote ?? null,
+        },
+        update: {
+          size: image.size ?? null,
+          usageStatus: toImageUsageStatus(image.usageStatus ?? "REQUIRES_CONFIRMATION"),
+          usageNote: image.usageNote ?? null,
+        },
+      });
+      upserted += 1;
+    }
+    return { researchItemId: item.id, upserted };
+  }
 }
 
 export type ResearchItemForAnalysis = Prisma.ResearchItemGetPayload<{

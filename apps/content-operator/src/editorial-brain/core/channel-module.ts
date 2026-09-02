@@ -3,11 +3,13 @@
  * Future channels add a module; Core stays unchanged unless a true shared concept appears.
  */
 
+import { blogChannelModule } from "../channels/blog/adapter.js";
+import { xChannelModule } from "../channels/x/adapter.js";
 import type { ChannelEditorialPlan, CoreEditorialPlan, EditorialChannelId } from "./types.js";
 
-/** Channel-specific Brain capabilities — avoid Core `if channel === "X"` scatter. */
+/** Channel-specific capabilities — avoid Core `if channel === "X"` scatter. */
 export type ChannelBrainCapabilities = {
-  /** Bounded targeted repair implemented for this channel. */
+  /** Bounded targeted repair — runtime removed R118; historical lifecycle compat only. */
   targetedRepair: boolean;
 };
 
@@ -21,6 +23,11 @@ const registry = new Map<EditorialChannelId, ChannelEditorialModule>();
 
 export function registerChannelModule(mod: ChannelEditorialModule): void {
   registry.set(mod.channel, mod);
+}
+
+export function ensureChannelModulesRegistered(): void {
+  if (!registry.has("BLOG")) registerChannelModule(blogChannelModule);
+  if (!registry.has("X")) registerChannelModule(xChannelModule);
 }
 
 export function getChannelModule(channel: EditorialChannelId): ChannelEditorialModule {

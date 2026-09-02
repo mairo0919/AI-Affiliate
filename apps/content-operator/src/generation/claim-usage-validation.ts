@@ -112,7 +112,7 @@ export function validateArticleAgainstClaimUsagePlan(
   const expansionRatio =
     claimUnits > 0 ? Number((bodyUnits / Math.max(80, claimUnits)).toFixed(3)) : 0;
   const paragraphCount =
-    (article.lead.trim() ? 1 : 0) +
+    ((article.lead ?? "").trim() ? 1 : 0) +
     article.sections.reduce((acc, s) => acc + Math.max(1, s.paragraphs.length), 0);
 
   // Decision 2: char/paragraph budgets are soft guidance / observability — not quality hard gates.
@@ -156,7 +156,7 @@ export function detectV6FailureClasses(article: BloggerArticleStructured): strin
   ].join("\n");
 
   // Semantic repetition heuristic: distinctive katakana/kanji facets reused lead→body
-  const lead = article.lead;
+  const lead = article.lead ?? "";
   const rest = article.sections.flatMap((s) => s.paragraphs).join("");
   const facets = [
     ...(lead.match(/[\u30a0-\u30ff]{3,}/g) ?? []),

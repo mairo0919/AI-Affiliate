@@ -12,6 +12,7 @@ import {
 import { MockAffiliateProvider } from "../adapters/affiliate/mock-affiliate-provider.js";
 import { createLLMProvider } from "../adapters/llm/create-llm-provider.js";
 import { createBloggerPublisherFromConfig } from "../adapters/publisher/blogger-api-publisher.js";
+import { createWordPressPublisherFromConfig } from "../adapters/publisher/wordpress-api-publisher.js";
 import { MockPublisher } from "../adapters/publisher/mock-publisher.js";
 import { NoopNotificationAdapter, type LLMProvider, type PublisherAdapter } from "../adapters/types.js";
 import { ContentLifecycleService } from "../lifecycle/lifecycle-service.js";
@@ -57,9 +58,10 @@ export interface AdminStack {
   contentComparison: ContentComparisonService;
   generation: ContentGenerationService;
   llm: LLMProvider;
-  publishers: { BLOGGER: PublisherAdapter; X: PublisherAdapter };
+  publishers: { BLOGGER: PublisherAdapter; X: PublisherAdapter; WORDPRESS: PublisherAdapter };
   usingMockLlm: boolean;
   usingMockBlogger: boolean;
+  usingMockWordPress: boolean;
   disconnect: () => Promise<void>;
 }
 
@@ -94,13 +96,22 @@ export async function createAdminStack(options?: {
     !config.llmApiKey;
   const usingMockBlogger =
     forceMock || config.bloggerMode !== "api" || !config.bloggerAllowExternalRequests;
+  const usingMockWordPress =
+    forceMock || config.wordpressMode !== "api" || !config.wordpressAllowExternalRequests;
 
   const llm = usingMockLlm ? createLLMProvider({ ...config, llmMode: "mock" }) : createLLMProvider(config);
-  const publishers: { BLOGGER: PublisherAdapter; X: PublisherAdapter } = {
+  const publishers: {
+    BLOGGER: PublisherAdapter;
+    X: PublisherAdapter;
+    WORDPRESS: PublisherAdapter;
+  } = {
     BLOGGER: usingMockBlogger
       ? new MockPublisher("BLOGGER")
       : createBloggerPublisherFromConfig(config),
     X: new MockPublisher("X"),
+    WORDPRESS: usingMockWordPress
+      ? new MockPublisher("WORDPRESS")
+      : createWordPressPublisherFromConfig(config),
   };
 
   const lifecycle = new ContentLifecycleService({
@@ -192,6 +203,7 @@ export async function createAdminStack(options?: {
     publishers,
     usingMockLlm,
     usingMockBlogger,
+    usingMockWordPress,
     disconnect: () => database.disconnect(),
   };
 }

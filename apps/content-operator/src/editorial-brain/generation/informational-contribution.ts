@@ -1,9 +1,9 @@
 /**
  * Informational contribution model — facet-level allocation beyond claimId alone.
- * Reuses assertion-extract facets; no product-specific rules.
+ * Reuses text-surface facets; no product-specific rules.
  */
 
-import { extractTextFacets } from "../shadow/assertion-extract.js";
+import { extractTextFacets } from "./text-surface.js";
 import type { ClaimStatementRef } from "./generation-input-contract.js";
 
 export type InformationalContribution = {

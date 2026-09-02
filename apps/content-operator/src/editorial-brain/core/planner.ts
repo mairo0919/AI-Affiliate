@@ -4,7 +4,7 @@
  */
 
 import { buildClaimProfileFingerprint } from "./claim-profile.js";
-import { extractTextFacets } from "../shadow/assertion-extract.js";
+import { extractTextFacets } from "../generation/text-surface.js";
 import type {
   ClaimAllocation,
   CoreEditorialPlan,

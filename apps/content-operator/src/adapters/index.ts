@@ -31,6 +31,12 @@ export {
   BloggerPublisherError,
   createBloggerPublisherFromConfig,
 } from "./publisher/blogger-api-publisher.js";
+export {
+  WordPressApiPublisher,
+  WordPressPublisherError,
+  createWordPressPublisherFromConfig,
+  wordpressCredentialsPresent,
+} from "./publisher/wordpress-api-publisher.js";
 export { MockLLMProvider } from "./llm/mock-llm-provider.js";
 export type { MockLLMUsageRecord, MockLLMBehavior } from "./llm/mock-llm-provider.js";
 export { OpenAiCompatibleLLMProvider } from "./llm/openai-compatible-provider.js";

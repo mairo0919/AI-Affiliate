@@ -24,7 +24,8 @@ const sectionHeadingSchema = z.preprocess((value) => {
 export const bloggerArticleSchema = z.object({
   title: z.string().min(1),
   summary: z.string().min(1),
-  lead: z.string().min(1),
+  /** Legacy-only. New OPTION B writes must omit this key (see stripArticleLeadKey). */
+  lead: z.string().min(1).optional(),
   sections: z
     .array(
       z.object({
@@ -313,7 +314,6 @@ export const reviewOutputSchema = z.object({
 export const BLOGGER_ARTICLE_REQUIRED_KEYS = [
   "title",
   "summary",
-  "lead",
   "sections",
   "cta",
   "seoTitle",
@@ -328,17 +328,50 @@ export const BLOGGER_ARTICLE_REQUIRED_KEYS = [
 /**
  * OPTION B LLM required keys only (r29 DELETE-FIRST).
  * summary/seo/labels/etc. are filled post-LLM for DB/Brain compat — not Generator-required.
+ * Leadless write: no lead field (opening materials live in sections[0]).
  */
-export const OPTION_B_LLM_REQUIRED_KEYS = ["title", "lead", "sections", "cta"] as const;
+export const OPTION_B_LLM_REQUIRED_KEYS = ["title", "sections"] as const;
 
-/** Fill persistence/Brain fields when OPTION B LLM omits them. */
+export const OPTION_B_CTA_DEFAULT_LABEL = "詳細を確認";
+
+/** r114 — CTA is system-owned; inject before zod parse. */
+export function applyOptionBDeterministicCta(
+  raw: Record<string, unknown>,
+  ctaUrl: string | null | undefined,
+): Record<string, unknown> {
+  return {
+    ...raw,
+    cta: {
+      label: OPTION_B_CTA_DEFAULT_LABEL,
+      url: typeof ctaUrl === "string" && ctaUrl.trim() ? ctaUrl.trim() : null,
+    },
+  };
+}
+
+/** Fill persistence/Brain fields when OPTION B LLM omits them. Never invent lead. */
 export function fillOptionBArticleDefaults(
   raw: Record<string, unknown>,
 ): Record<string, unknown> {
   const title = typeof raw.title === "string" ? raw.title.trim() : "";
-  const lead = typeof raw.lead === "string" ? raw.lead.trim() : "";
   const summaryRaw = typeof raw.summary === "string" ? raw.summary.trim() : "";
-  const summary = summaryRaw || lead.slice(0, 120) || title || "商品紹介";
+  // summary is DB/SEO metadata only — not a lead substitute / body opening fallback.
+  const firstBodyPara = (() => {
+    const sections = Array.isArray(raw.sections) ? raw.sections : [];
+    for (const s of sections) {
+      if (!s || typeof s !== "object") continue;
+      const paras = (s as { paragraphs?: unknown }).paragraphs;
+      if (!Array.isArray(paras)) continue;
+      for (const p of paras) {
+        if (typeof p === "string" && p.trim()) return p.trim();
+      }
+    }
+    return "";
+  })();
+  const summary =
+    summaryRaw ||
+    title ||
+    (firstBodyPara.length > 120 ? firstBodyPara.slice(0, 120) : firstBodyPara) ||
+    "商品紹介";
   const seoTitle =
     typeof raw.seoTitle === "string" && raw.seoTitle.trim()
       ? raw.seoTitle.trim()
@@ -347,13 +380,24 @@ export function fillOptionBArticleDefaults(
     typeof raw.metaDescription === "string" && raw.metaDescription.trim()
       ? raw.metaDescription.trim()
       : summary.slice(0, 160);
+  const cta =
+    raw.cta && typeof raw.cta === "object" && !Array.isArray(raw.cta)
+      ? (raw.cta as { label?: string; url?: string | null })
+      : { label: OPTION_B_CTA_DEFAULT_LABEL, url: null };
+  const { lead: _legacyLeadIgnored, ...withoutLead } = raw;
   return {
-    ...raw,
+    ...withoutLead,
     title: title || "商品紹介",
-    lead: lead || summary,
     summary,
     seoTitle,
     metaDescription,
+    cta: {
+      label:
+        typeof cta.label === "string" && cta.label.trim()
+          ? cta.label.trim()
+          : OPTION_B_CTA_DEFAULT_LABEL,
+      url: cta.url ?? null,
+    },
     labels: Array.isArray(raw.labels) ? raw.labels : [],
     sourceReferences: Array.isArray(raw.sourceReferences) ? raw.sourceReferences : [],
     warnings: Array.isArray(raw.warnings) ? raw.warnings : [],
@@ -362,7 +406,7 @@ export function fillOptionBArticleDefaults(
   };
 }
 
-/** Slim JSON Schema for OPTION B Generator — display fields only. */
+/** Slim JSON Schema for OPTION B Generator — display fields only (no cta — r114; no lead). */
 export function getOptionBBloggerArticleLlmJsonSchema(): Record<string, unknown> {
   return {
     type: "object",
@@ -370,7 +414,6 @@ export function getOptionBBloggerArticleLlmJsonSchema(): Record<string, unknown>
     required: [...OPTION_B_LLM_REQUIRED_KEYS],
     properties: {
       title: { type: "string" },
-      lead: { type: "string" },
       sections: {
         type: "array",
         minItems: 1,
@@ -384,33 +427,24 @@ export function getOptionBBloggerArticleLlmJsonSchema(): Record<string, unknown>
           required: ["paragraphs"],
         },
       },
-      cta: {
-        type: "object",
-        properties: {
-          label: { type: "string" },
-          url: { type: ["string", "null"] },
-        },
-        required: ["label", "url"],
-      },
     },
   };
 }
 
 export function getOptionBBloggerArticleContractExample(): Record<string, unknown> {
+  // r114 — JSON structure only; CTA is system-appended; leadless write
   return {
-    title: "出演者名のベスト作品集",
-    lead: "出演者のシリーズ作品をまとめたベスト集です。",
+    title: "車内での調教——小栗みゆ",
     sections: [
       {
         heading: null,
-        paragraphs: ["収録規模や具体的なシーン要素など、公開事実を自然に紹介する。"],
+        paragraphs: [
+          "車内で調教が続く。",
+          "指が忍び込む。",
+        ],
         lists: [],
       },
     ],
-    cta: {
-      label: "作品ページで詳細を確認",
-      url: "https://example.invalid/product",
-    },
   };
 }
 
@@ -929,7 +963,11 @@ export function structuredToPlainBody(
   if (hero?.sourceUrl) {
     parts.push(`![${hero.alt ?? "商品画像"}](${hero.sourceUrl})`, "");
   }
-  parts.push(article.lead, "");
+  // Legacy-only: include lead when present on old ContentVersions.
+  // New writes omit lead — body sections carry overview.
+  if (typeof article.lead === "string" && article.lead.trim()) {
+    parts.push(article.lead, "");
+  }
   for (let i = 0; i < article.sections.length; i++) {
     const section = article.sections[i]!;
     const heading = section.heading?.trim();

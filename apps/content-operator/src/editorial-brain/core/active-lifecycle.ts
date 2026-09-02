@@ -40,6 +40,8 @@ export type BrainLifecycleRecord = {
 };
 
 export const MAX_ACTIVE_REPAIR_ATTEMPTS = 1 as const;
+/** Historical repair budget constant — repair runtime removed in R118; lifecycle read compat only. */
+export const MAX_TARGETED_REPAIR_ATTEMPTS = 1 as const;
 
 /**
  * Map Brain review/repair outcome → terminal lifecycle state (ACTIVE).

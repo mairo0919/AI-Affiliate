@@ -24,9 +24,13 @@ export {
   BLOG_META_NOTE_CLASS,
   BLOG_META_NOTE_STYLE,
   BLOG_FIGURE_STYLE,
+  BLOG_SAMPLE_IMG_STYLE,
+  collectBodyParagraphs,
+  planAuxiliaryInsertIndexes,
 } from "./blogger-formatter.js";
 export {
   resolveArticleImagesForProduct,
+  resolveArticleImagesForResearchItem,
   resolveArticleImagesForTopic,
   resolveImagesForContentVersion,
 } from "./resolve-article-images.js";
@@ -60,6 +64,7 @@ export type {
 } from "./structured-article.js";
 export {
   applyArticleOutputContractToLlmSchema,
+  articleOutputContractFromSectionBounds,
   deriveArticleOutputContract,
   getSectionsCardinalityFromLlmSchema,
   toArticleOutputContractPromptFields,

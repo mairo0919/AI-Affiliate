@@ -50,6 +50,14 @@ export const OPTION_B_LEGACY_CONTROL_INVENTORY: Array<{
   { control: "segmentExecution_legacy_RAW_blocking", classification: "C_OPTION_B_UNNEEDED" },
   { control: "claimUsagePlan_role_allocation", classification: "C_OPTION_B_UNNEEDED" },
   { control: "stripUnsupportedEvaluativePadding_mutation", classification: "D_OPTION_B_DANGEROUS_MUTATION" },
+  { control: "baselineQualityRepair_prose_mutation", classification: "D_OPTION_B_DANGEROUS_MUTATION" },
+  { control: "articlePlanComplianceMutations_sentence_drop", classification: "D_OPTION_B_DANGEROUS_MUTATION" },
+  /**
+   * R102 — pad-only sentence KEEP/DROP after structured output.
+   * Not a rewrite / not stripUnsupportedEvaluativePadding re-enable.
+   * OFF OPTION B generation path (validate→REGENERATE preferred).
+   */
+  { control: "evidenceDrivenPadOnlyGate_sentenceKeepDrop", classification: "C_OPTION_B_UNNEEDED" },
   { control: "schema_provenance_url_policy_grammar", classification: "A_HARD_FACTUAL_SAFETY" },
   { control: "generic_prose_catalog_observe", classification: "B_VALIDATOR_OR_BRAIN" },
   { control: "X_SEGMENT_controls", classification: "E_LEGACY_OR_X_ONLY" },
@@ -60,15 +68,24 @@ export function isOptionBGenerationMode(
 ): boolean {
   if (!contract) return false;
   if (contract.mode === "OPTION_B") return true;
+  if (contract.articlePlan || contract.ARTICLE_PLAN) return true;
   const layers =
     typeof contract.layers === "object" && contract.layers
       ? (contract.layers as Record<string, unknown>)
       : {};
+  if (layers.ARTICLE_PLAN) return true;
   return Boolean(contract.writingSkeleton || layers.WRITING_SKELETON) &&
     Boolean(contract.evidencePack || layers.EVIDENCE_PACK);
 }
 
-/** OPTION B: never mutate generated prose with reservation / strip rewriters. */
+/** OPTION B: never mutate generated prose with reservation / strip / baseline rewriters. */
 export function optionBAllowsPostLlmProseMutation(): false {
+  return false;
+}
+
+/**
+ * R102 pad gate — disabled on OPTION B generation path (use validate→REGENERATE).
+ */
+export function optionBAllowsEvidenceDrivenPadGate(): false {
   return false;
 }

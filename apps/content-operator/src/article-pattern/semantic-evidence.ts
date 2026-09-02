@@ -40,8 +40,9 @@ export type SemanticEvidenceClassification = {
 const SCENE_STEM_RE =
   /(キス|舐め|セックス|ピストン|激ピス|潮|乱交|痴女|わからせ|洗脳|生ハメ|顔面|挿入|絶頂|責め)/;
 const CHARACTER_STEM_RE = /メスガキ|清楚|ギャル|お姉さん|妹|女王様|ドS|ドM|小悪魔/;
-const BODY_TRAIT_RE = /巨乳|美乳|敏感|感度|Hカップ|細身|長身|美脚|デカ尻/;
-const QTY_WORKS_RE = /(\d+)\s*(作品|本番|射精|本)/;
+const BODY_TRAIT_RE =
+  /巨乳|美乳|敏感|感度|Hカップ|細身|長身|美脚|デカ尻|低身長|グラマラスボディ|グラマラス/;
+const QTY_WORKS_RE = /(\d+)\s*(作品|本番|射精|本|コーナー|タイトル)/;
 const QTY_PEOPLE_RE = /(\d+)\s*(名|人)/;
 const DURATION_RE = /(\d+)\s*(時間|分)/;
 const SERIES_RE = /シリーズ|ツアー|イベント|感謝祭/;
@@ -59,6 +60,39 @@ const TITLE_IDENTITY_TOKEN_RE = /^[\u4e00-\u9fffァ-ヶーぁ-ん]{2,12}$/;
 /** Bare stem only (e.g. メスガキ) — not multi-token title phrases. */
 const BARE_CHARACTER_STEM_RE = /^(メスガキ|清楚|ギャル|お姉さん|妹|女王様|ドS|ドM|小悪魔|ギャル妹|小悪魔痴女)$/;
 
+/** Source-backed character/expression stems — concrete trait, not promo wrappers. */
+const CHARACTER_CONCRETE_EXACT_RE =
+  /^(?:生意気|生意気な表情|大人をバカにした表情)$/u;
+
+/**
+ * Compilation / collection scope: one product inventories multiple works or content varieties.
+ * Requires multi-item / multi-unit structure — not the bare verb 収録 alone.
+ */
+export function isCompilationCollectionScope(raw: string): boolean {
+  const f = (raw ?? "").trim();
+  if (!f) return false;
+  if (/全コーナーを収録/u.test(f)) return true;
+  // Multi-theme/content list + collection verb (A・B・Cなどを収録)
+  if (/(?:・|、).{0,48}など.{0,20}を収録$/u.test(f)) return true;
+  // Latest-N titles as the product's contained inventory
+  if (
+    /最新\s*\d+\s*タイトル/u.test(f) &&
+    (/(?:収録|コーナー)/u.test(f) ||
+      /(?:今回は|彼女の).{0,12}最新\s*\d+\s*タイトル/u.test(f) ||
+      /最新\s*\d+\s*タイトルの全コーナー/u.test(f))
+  ) {
+    return true;
+  }
+  // Digit+unit inventory framed as best/compilation contents
+  if (
+    /\d+\s*(?:タイトル|作品|コーナー)/u.test(f) &&
+    /(?:ベスト|総集編|コレクション)/u.test(f) &&
+    /収録/u.test(f)
+  ) {
+    return true;
+  }
+  return false;
+}
 /** Absolute minutes for a duration number+unit pair (8時間 → 480). */
 export function durationNumberUnitToMinutes(n: number, unit: string): number | null {
   if (!Number.isFinite(n) || n < 0) return null;
@@ -192,8 +226,8 @@ export function buildSemanticFamilyId(
     return `DURATION_${normalizeFamilyStem(f)}`;
   }
   if (primary === "SCENE_ACTION") {
-    const stem = f.match(SCENE_STEM_RE)?.[1] ?? f.slice(0, 8);
-    return `SCENE_${normalizeFamilyStem(stem)}`;
+    // Independent scene segments may share a stem (e.g. ピストン) — family by surface, not stem alone.
+    return `SCENE_${normalizeFamilyStem(f.replace(/\s+/g, "").slice(0, 32))}`;
   }
   if (primary === "TITLE_LABEL") {
     return `TITLE_${normalizeFamilyStem(f.slice(0, 16))}`;
@@ -220,8 +254,11 @@ export function buildSemanticFamilyId(
     const name = f.replace(/出演|女優|男優|キャスト|として/g, "").trim() || f;
     return `PERFORMER_${normalizeFamilyStem(name)}`;
   }
-  if (primary === "PRODUCT_FORM") return "PRODUCT_FORM_BEST";
-  if (primary === "SERIES_CONTEXT") return `SERIES_${normalizeFamilyStem(f.slice(0, 12))}`;
+  if (primary === "PRODUCT_FORM") {
+    // Distinguish compilation/best surfaces — a single PRODUCT_FORM_BEST key
+    // collapsed theme-scope / corner-scope / edition labels into one pack slot.
+    return `PRODUCT_FORM_${normalizeFamilyStem(f.slice(0, 24))}`;
+  }  if (primary === "SERIES_CONTEXT") return `SERIES_${normalizeFamilyStem(f.slice(0, 12))}`;
   if (primary === "EVENT") return `EVENT_${normalizeFamilyStem(f.slice(0, 12))}`;
   if (primary === "RELATIONSHIP") return `RELATION_${normalizeFamilyStem(f.slice(0, 12))}`;
   return `UNKNOWN_${normalizeFamilyStem(f.slice(0, 16))}`;
@@ -261,6 +298,16 @@ export function classifySemanticEvidence(
   }
   if (kind === "series") {
     return finish("SERIES_CONTEXT", ["SERIES_CONTEXT"], raw);
+  }
+
+  // Exact character/expression stems (source-backed concrete traits)
+  if (CHARACTER_CONCRETE_EXACT_RE.test(raw)) {
+    return finish("CHARACTER_TRAIT", ["CHARACTER_TRAIT"], raw);
+  }
+
+  // Compilation / collection inventory — prefer PRODUCT_FORM over qty/scene stems
+  if (isCompilationCollectionScope(raw)) {
+    return finish("PRODUCT_FORM", ["PRODUCT_FORM"], raw);
   }
 
   // Reputation phrasing without separate supported performer trait → evaluative reputation

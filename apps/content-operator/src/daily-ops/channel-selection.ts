@@ -1,5 +1,6 @@
 /**
  * Independent Blog vs X candidate selection from a shared FANZA pool.
+ * Content mix slots steer selection; Writer format stays NEW_RELEASE_SINGLE.
  */
 
 import {
@@ -8,7 +9,14 @@ import {
   type DailySelectionResult,
 } from "../daily-blog/selection.js";
 import { isBlockedOnChannel, type ChannelPublicationRecord, type ChannelDuplicateConfig } from "./channel-duplicate.js";
-import { chooseContentMixSlot, slotToAgeBucket, type ContentMixSlot, type ContentMixWeights, type MixHistoryEntry } from "./content-mix.js";
+import {
+  chooseContentMixSlot,
+  slotToAgeBucket,
+  slotToSortMode,
+  type ContentMixSlot,
+  type ContentMixWeights,
+  type MixHistoryEntry,
+} from "./content-mix.js";
 import { classifyReleaseAge, type ReleaseAgeThresholds } from "./release-age.js";
 import { chooseXPostRoute, type XPostRoute, type XRouteDecision } from "./x-route.js";
 
@@ -20,12 +28,15 @@ export interface ChannelSelectionInput {
   pool: ChannelCandidate[];
   mixWeights: ContentMixWeights;
   releaseAge: ReleaseAgeThresholds;
-  recentMix: MixHistoryEntry[];
+  /** Blog mix history (preferred); falls back to recentMix */
+  recentBlogMix?: MixHistoryEntry[];
+  /** X mix history (preferred); falls back to recentMix */
+  recentXMix?: MixHistoryEntry[];
+  /** @deprecated use recentBlogMix / recentXMix */
+  recentMix?: MixHistoryEntry[];
   channelHistory: ChannelPublicationRecord[];
   channelDuplicate: ChannelDuplicateConfig;
   dayKey: string;
-  rankingAllowed: boolean;
-  rankingDue: boolean;
   blogRecentActressKeys?: string[];
   blogRecentMakerKeys?: string[];
   blogRecentSeriesKeys?: string[];
@@ -35,11 +46,17 @@ export interface ChannelSelectionInput {
   minSampleImages: number;
   minEvidenceRichness: number;
   now?: Date;
+  /** @deprecated ranking cadence folded into mix weights — ignored */
+  rankingAllowed?: boolean;
+  rankingDue?: boolean;
 }
 
 export interface ChannelDayPlan {
+  /** Blog mix slot (primary) */
   mixSlot: ContentMixSlot;
   mixReason: string;
+  blogMixSlot: ContentMixSlot;
+  xMixSlot: ContentMixSlot;
   blog: {
     selection: DailySelectionResult;
     blocked: boolean;
@@ -51,6 +68,7 @@ export interface ChannelDayPlan {
     blocked: boolean;
     blockReason: string | null;
     sameProductAsBlog: boolean;
+    sameMixSlotAsBlog: boolean;
   };
 }
 
@@ -72,19 +90,53 @@ function annotateBuckets(
   });
 }
 
+function pickForSlot(
+  pool: ChannelCandidate[],
+  slot: ContentMixSlot,
+  opts: {
+    minTotalScore: number;
+    minSampleImages: number;
+    minEvidenceRichness: number;
+    recentActressKeys: string[];
+    recentMakerKeys: string[];
+    recentSeriesKeys: string[];
+  },
+): DailySelectionResult {
+  return selectDailyProductCandidate(pool, {
+    articlesPerRun: 1,
+    minTotalScore: opts.minTotalScore,
+    minSampleImages: opts.minSampleImages,
+    minEvidenceRichness: opts.minEvidenceRichness,
+    recentActressKeys: opts.recentActressKeys,
+    recentMakerKeys: opts.recentMakerKeys,
+    recentSeriesKeys: opts.recentSeriesKeys,
+    preferAgeBucket: slotToAgeBucket(slot),
+    sortMode: slotToSortMode(slot),
+  });
+}
+
 export function planDailyChannels(input: ChannelSelectionInput): ChannelDayPlan {
   const now = input.now ?? new Date();
   const annotated = annotateBuckets(input.pool, input.releaseAge, now);
-  const mix = chooseContentMixSlot({
-    weights: input.mixWeights,
-    recentSlots: input.recentMix.map((m) => m.slot),
-    rankingAllowed: input.rankingAllowed,
-    rankingDue: input.rankingDue,
-    dayKey: input.dayKey,
-  });
-  const preferBucket = slotToAgeBucket(mix.slot);
+  const blogHistory = (input.recentBlogMix ?? input.recentMix ?? []).map((m) => m.slot);
+  const xHistory = (input.recentXMix ?? input.recentMix ?? []).map((m) => m.slot);
 
-  // Blog selection
+  const blogMix = chooseContentMixSlot({
+    weights: input.mixWeights,
+    recentSlots: blogHistory,
+    dayKey: input.dayKey,
+    channelSalt: "BLOG",
+  });
+
+  // Soft avoid same type as Blog today — do not hard-force difference
+  const xMix = chooseContentMixSlot({
+    weights: input.mixWeights,
+    recentSlots: xHistory,
+    dayKey: input.dayKey,
+    channelSalt: "X",
+    excludeSlot: blogMix.slot,
+  });
+
   const blogPool = annotated.filter((c) => {
     const b = isBlockedOnChannel({
       channel: "BLOG",
@@ -95,15 +147,13 @@ export function planDailyChannels(input: ChannelSelectionInput): ChannelDayPlan 
     });
     return !b.blocked;
   });
-  const blogSelection = selectDailyProductCandidate(blogPool, {
-    articlesPerRun: 1,
+  const blogSelection = pickForSlot(blogPool, blogMix.slot, {
     minTotalScore: input.minTotalScore,
     minSampleImages: input.minSampleImages,
     minEvidenceRichness: input.minEvidenceRichness,
     recentActressKeys: input.blogRecentActressKeys ?? [],
     recentMakerKeys: input.blogRecentMakerKeys ?? [],
     recentSeriesKeys: input.blogRecentSeriesKeys ?? [],
-    preferAgeBucket: mix.slot === "RANKING" ? null : preferBucket,
   });
 
   let blogBlocked = false;
@@ -120,8 +170,9 @@ export function planDailyChannels(input: ChannelSelectionInput): ChannelDayPlan 
     blogBlockReason = b.reason;
   }
 
-  // X selection — independent; may equal blog product
+  const blogCid = blogSelection.selected?.canonicalId ?? null;
   const xPool = annotated.filter((c) => {
+    if (blogCid && c.canonicalId === blogCid) return false; // soft: prefer different product same day
     const b = isBlockedOnChannel({
       channel: "X",
       canonicalId: c.canonicalId,
@@ -131,18 +182,37 @@ export function planDailyChannels(input: ChannelSelectionInput): ChannelDayPlan 
     });
     return !b.blocked;
   });
-  const xSelection = selectDailyProductCandidate(xPool, {
-    articlesPerRun: 1,
+
+  let xSelection = pickForSlot(xPool, xMix.slot, {
     minTotalScore: input.minTotalScore,
-    minSampleImages: Math.min(1, input.minSampleImages), // X needs at least some media feasibility signal
+    minSampleImages: Math.min(1, input.minSampleImages),
     minEvidenceRichness: Math.min(0.2, input.minEvidenceRichness),
     recentActressKeys: input.xRecentActressKeys ?? [],
     recentMakerKeys: [],
     recentSeriesKeys: [],
-    // X mix: slight preference for RECENT when blog took OLDER (soft), else independent mix bucket
-    preferAgeBucket:
-      blogSelection.selected?.releaseAgeBucket === "OLDER" ? "RECENT" : preferBucket === "OLDER" ? "MID" : preferBucket,
   });
+
+  // If soft-exclude emptied X pool, fall back allowing same product
+  if (!xSelection.selected && blogCid) {
+    const xPoolAllowSame = annotated.filter((c) => {
+      const b = isBlockedOnChannel({
+        channel: "X",
+        canonicalId: c.canonicalId,
+        history: input.channelHistory,
+        config: input.channelDuplicate,
+        now,
+      });
+      return !b.blocked;
+    });
+    xSelection = pickForSlot(xPoolAllowSame, xMix.slot, {
+      minTotalScore: input.minTotalScore,
+      minSampleImages: Math.min(1, input.minSampleImages),
+      minEvidenceRichness: Math.min(0.2, input.minEvidenceRichness),
+      recentActressKeys: input.xRecentActressKeys ?? [],
+      recentMakerKeys: [],
+      recentSeriesKeys: [],
+    });
+  }
 
   let xBlocked = false;
   let xBlockReason: string | null = null;
@@ -162,14 +232,17 @@ export function planDailyChannels(input: ChannelSelectionInput): ChannelDayPlan 
     route = chooseXPostRoute({
       affiliateUrl: affiliate,
       publishedBlogUrl: fromPool?.publishedBlogUrl,
-      preferBlogTrafficHint: mix.slot === "RANKING",
+      preferBlogTrafficHint:
+        blogMix.slot === "POPULAR_RANKING" || blogMix.slot === "PERFORMER_RANKING",
       recentRoutes: input.xRecentRoutes,
     });
   }
 
   return {
-    mixSlot: mix.slot,
-    mixReason: mix.reason,
+    mixSlot: blogMix.slot,
+    mixReason: `blog=${blogMix.reason};x=${xMix.reason}`,
+    blogMixSlot: blogMix.slot,
+    xMixSlot: xMix.slot,
     blog: { selection: blogSelection, blocked: blogBlocked, blockReason: blogBlockReason },
     x: {
       selection: xSelection,
@@ -179,6 +252,7 @@ export function planDailyChannels(input: ChannelSelectionInput): ChannelDayPlan 
       sameProductAsBlog:
         Boolean(blogSelection.selected && xSelection.selected) &&
         blogSelection.selected!.canonicalId === xSelection.selected!.canonicalId,
+      sameMixSlotAsBlog: blogMix.slot === xMix.slot,
     },
   };
 }

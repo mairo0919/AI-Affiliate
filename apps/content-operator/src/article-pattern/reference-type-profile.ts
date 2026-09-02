@@ -6,6 +6,9 @@
 import type { ResearchEvidence } from "./research-evidence.js";
 import type { ReferenceEditorialBlueprint } from "./reference-editorial-blueprint.js";
 import type { EvidencePack, EvidencePackItem } from "./evidence-pack.js";
+import { performerEntityKey } from "./performer-identity.js";
+import type { PerformerRepresentation } from "./performer-representation.js";
+import { buildPerformerRepresentation } from "./performer-representation.js";
 import {
   classifySemanticEvidence,
   isDevelopmentFamily,
@@ -16,6 +19,7 @@ import {
 export type ProductMaterialKind =
   | "scarce_material"
   | "standard_single_performer"
+  | "multi_performer"
   | "trait_rich"
   | "scene_rich"
   | "identity_heavy_best_collection"
@@ -43,6 +47,8 @@ export type ProductMaterialProfile = {
   materialDepth: "scarce" | "standard" | "rich";
   /** Derived kind for logging / soft ranking only — hard match uses requirements */
   kind: ProductMaterialKind;
+  /** R145 — semantic representation (mode changes behavior for dual_host only). */
+  performerRepresentation: PerformerRepresentation;
 };
 
 export type ReferenceMaterialRequirements = {
@@ -75,6 +81,7 @@ function emptyProfile(kind: ProductMaterialKind = "scarce_material"): ProductMat
     independentDevelopmentFamilyCount: 0,
     materialDepth: "scarce",
     kind,
+    performerRepresentation: buildPerformerRepresentation({ entities: [] }),
   };
 }
 
@@ -87,13 +94,7 @@ function ingestFact(
   const seen = seenFamilies ?? new Set<string>();
   const c = classifySemanticEvidence(fact, opts);
   if (c.primary === "CATALOG" || c.primary === "EVALUATIVE") return;
-  if (seen.has(c.familyId)) {
-    // Still count performer presence from duplicate performer facts
-    if (c.primary === "PERFORMER_IDENTITY" && profile.performerCount === 0) {
-      profile.performerCount = 1;
-    }
-    return;
-  }
+  if (seen.has(c.familyId)) return;
   seen.add(c.familyId);
 
   switch (c.primary) {
@@ -129,7 +130,6 @@ function ingestFact(
       pushUnique(profile.productFormFamilies, c.familyId);
       break;
     case "PERFORMER_IDENTITY":
-      profile.performerCount += 1;
       pushUnique(profile.contextFamilies, c.familyId);
       break;
     case "UNKNOWN_CONCRETE":
@@ -171,8 +171,6 @@ function ingestFact(
       if (stem) pushUnique(profile.bodyTraitFamilies, `BODY_${stem.toUpperCase()}`);
     } else if (cls === "PRODUCT_FORM") {
       pushUnique(profile.productFormFamilies, "PRODUCT_FORM_BEST");
-    } else if (cls === "PERFORMER_IDENTITY" && profile.performerCount === 0) {
-      profile.performerCount = 1;
     }
   }
 }
@@ -250,8 +248,31 @@ export function deriveKindFromProfile(profile: ProductMaterialProfile): ProductM
   // scene_rich ONLY when unique SCENE families >= 2 (not claim count)
   if (sceneN >= 2) return "scene_rich";
   if (traitN >= 2) return "trait_rich";
-  if (profile.performerCount >= 1) return "standard_single_performer";
+  if (profile.performerCount >= 2) return "multi_performer";
+  if (profile.performerCount === 1) return "standard_single_performer";
   return profile.uniqueConcreteFamilyCount >= 5 ? "trait_rich" : "standard_single_performer";
+}
+
+function countPerformerMetadataEntities(
+  facts: Array<{ fact: string; sourceType?: string | null }>,
+): number {
+  const seen = new Set<string>();
+  for (const f of facts) {
+    if (f.sourceType !== "performer_metadata") continue;
+    const key = performerEntityKey(f.fact);
+    if (key) seen.add(key);
+  }
+  return seen.size;
+}
+
+function applyPerformerEntityCount(
+  profile: ProductMaterialProfile,
+  entityCount: number,
+): ProductMaterialProfile {
+  if (entityCount <= 0) return profile;
+  profile.performerCount = entityCount;
+  profile.kind = deriveKindFromProfile(profile);
+  return profile;
 }
 
 export function buildProductMaterialProfileFromFacts(
@@ -267,7 +288,11 @@ export function buildProductMaterialProfileFromFacts(
   for (const f of facts) {
     ingestFact(profile, f.fact, f, seen);
   }
-  return finalizeProfile(profile);
+  const finalized = finalizeProfile(profile);
+  return applyPerformerEntityCount(
+    finalized,
+    countPerformerMetadataEntities(facts),
+  );
 }
 
 export function buildProductMaterialProfileFromEvidence(
@@ -288,7 +313,7 @@ export function buildProductMaterialProfileFromPack(pack: EvidencePack): Product
   const items: EvidencePackItem[] = [
     ...pack.concreteEvidence.filter((e) => e.generationEligible),
   ];
-  return buildProductMaterialProfileFromFacts(
+  const profile = buildProductMaterialProfileFromFacts(
     items.map((e) => ({
       fact: e.fact,
       sourceType: e.provenance.sourceType,
@@ -296,6 +321,13 @@ export function buildProductMaterialProfileFromPack(pack: EvidencePack): Product
         e.provenance.sourceType === "product_title" && e.type !== "product_identity",
     })),
   );
+  applyPerformerEntityCount(profile, pack.performerItems.length);
+  profile.performerRepresentation = buildPerformerRepresentation({
+    entities: pack.performerItems,
+    productTitle: pack.productIdentity.title,
+    descriptionText: pack.sourceOfficialDescription ?? "",
+  });
+  return profile;
 }
 
 /**
@@ -385,6 +417,16 @@ export function referenceMaterialRequirements(
         minIndependentDevelopmentFamilies: 1,
         minUniqueConcreteFamilies: 1,
       };
+    case "multi_performer":
+      return {
+        kind,
+        minSceneFamilies: 0,
+        minCharacterOrBodyTraits: 0,
+        minPerformerOrCharacter: 2,
+        minQuantityOrDurationOrForm: 0,
+        minIndependentDevelopmentFamilies: 1,
+        minUniqueConcreteFamilies: 1,
+      };
     case "scarce_material":
     default:
       return {
@@ -443,6 +485,11 @@ export function referenceTypeCompatible(
   const soft: Record<ProductMaterialKind, ProductMaterialKind[]> = {
     scarce_material: ["scarce_material"],
     standard_single_performer: ["standard_single_performer", "trait_rich"],
+    multi_performer: [
+      "multi_performer",
+      "long_title_event_or_multi_performer",
+      "identity_heavy_best_collection",
+    ],
     trait_rich: ["trait_rich", "standard_single_performer"],
     // scene_rich only matches scene_rich (no trait_rich soft — was FIRST_LOSS path)
     scene_rich: ["scene_rich"],

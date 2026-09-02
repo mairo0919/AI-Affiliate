@@ -23,12 +23,12 @@ export class MockPublisher implements PublisherAdapter {
   private readonly statuses = new Map<string, PublisherStatusResult>();
 
   constructor(platform: PublicationPlatform) {
-    if (platform !== "BLOGGER" && platform !== "X") {
-      throw new Error(`MockPublisher only supports BLOGGER and X, got ${platform}`);
+    if (platform !== "BLOGGER" && platform !== "X" && platform !== "WORDPRESS") {
+      throw new Error(`MockPublisher only supports BLOGGER, X, and WORDPRESS, got ${platform}`);
     }
     this.platform = platform;
     this.capabilities = {
-      longForm: platform === "BLOGGER",
+      longForm: platform === "BLOGGER" || platform === "WORDPRESS",
       shortForm: platform === "X",
       thread: platform === "X",
       draft: true,
@@ -76,7 +76,8 @@ export class MockPublisher implements PublisherAdapter {
         : {};
     const asDraft = meta.mode === "draft";
     const externalId = this.externalIdFor(input.prepared, asDraft);
-    const path = this.platform === "BLOGGER" ? (asDraft ? "drafts" : "posts") : "status";
+    const path =
+      this.platform === "X" ? "status" : asDraft ? "drafts" : "posts";
     const url = `https://example.invalid/${this.platform.toLowerCase()}/${path}/${externalId}`;
     const status = asDraft ? "DRAFT" : "PUBLISHED";
     const result: PublisherPublishResult = {
@@ -104,7 +105,7 @@ export class MockPublisher implements PublisherAdapter {
     externalId: string;
     prepared: PublisherPrepareResult;
   }): Promise<PublisherPublishResult> {
-    const path = this.platform === "BLOGGER" ? "posts" : "status";
+    const path = this.platform === "X" ? "status" : "posts";
     const url = `https://example.invalid/${this.platform.toLowerCase()}/${path}/${input.externalId}`;
     const result: PublisherPublishResult = {
       externalId: input.externalId,

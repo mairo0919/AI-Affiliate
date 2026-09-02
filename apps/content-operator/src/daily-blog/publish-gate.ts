@@ -1,5 +1,8 @@
 /**
  * Auto-publish gate — ALL must pass before Blogger LIVE publish.
+ *
+ * R117: Brain / Reviewer / brainDecision are NOT publish blockers.
+ * Safety + ops controls only.
  */
 
 export interface PublishGateInput {
@@ -7,11 +10,15 @@ export interface PublishGateInput {
   defer: boolean;
   claimValidationPass: boolean;
   integrityPass: boolean;
-  brainDecision: string | null;
   formatterPass: boolean;
   affiliateUrlValid: boolean;
   imagePipelinePass: boolean;
   bloggerAuthPass: boolean;
+  /**
+   * When set, used instead of bloggerAuthPass (WordPress / future channels).
+   * Failure code becomes CHANNEL_AUTH_FAIL.
+   */
+  channelAuthPass?: boolean;
   duplicate: boolean;
   dryRun?: boolean;
   autoPublishEnabled?: boolean;
@@ -30,11 +37,15 @@ export function evaluatePublishGate(input: PublishGateInput): PublishGateResult 
   if (input.defer) failureCodes.push("DEFER");
   if (!input.claimValidationPass) failureCodes.push("CLAIM_VALIDATION_FAIL");
   if (!input.integrityPass) failureCodes.push("INTEGRITY_FAIL");
-  if (input.brainDecision !== "PASS") failureCodes.push("BRAIN_NOT_PASS");
   if (!input.formatterPass) failureCodes.push("FORMATTER_FAIL");
   if (!input.affiliateUrlValid) failureCodes.push("AFFILIATE_URL_INVALID");
   if (!input.imagePipelinePass) failureCodes.push("IMAGE_PIPELINE_FAIL");
-  if (!input.bloggerAuthPass) failureCodes.push("BLOGGER_AUTH_FAIL");
+  const authPass = input.channelAuthPass ?? input.bloggerAuthPass;
+  if (!authPass) {
+    failureCodes.push(
+      input.channelAuthPass !== undefined ? "CHANNEL_AUTH_FAIL" : "BLOGGER_AUTH_FAIL",
+    );
+  }
   if (input.duplicate) failureCodes.push("DUPLICATE_PRODUCT");
 
   if (failureCodes.length > 0) {

@@ -11,7 +11,10 @@ import { LLMProviderError } from "../adapters/types.js";
 import { evaluatePolicies } from "../lifecycle/policy-engine.js";
 import { XCharacterCounter } from "../x/character-counter.js";
 import { BudgetBlockedError, BudgetGuard } from "./budget-guard.js";
-import { validateClaimsAgainstArticle } from "./claim-validator.js";
+import {
+  attestedSurfacesFromArticlePlan,
+  validateClaimsAgainstArticle,
+} from "./claim-validator.js";
 import { selectClaimsForBloggerPrompt } from "./freshness-disclaimer.js";
 import { assertBloggerGenerationPreflight, GenerationPreflightError } from "./generation-preflight.js";
 import { PromptService } from "./prompt-service.js";
@@ -24,10 +27,16 @@ import {
   summarizeBloggerSchemaValidationError,
   assertSectionHeadingsAgainstStructurePattern,
   fillOptionBArticleDefaults,
+  applyOptionBDeterministicCta,
   type BloggerArticleStructured,
 } from "./structured-article.js";
 import {
+  stripArticleLeadKey,
+  toWriterVisibleArticlePlan,
+} from "../article-pattern/leadless-article.js";
+import {
   applyArticleOutputContractToLlmSchema,
+  articleOutputContractFromSectionBounds,
   deriveArticleOutputContract,
   getSectionsCardinalityFromLlmSchema,
   type ArticleOutputContract,
@@ -47,8 +56,6 @@ import {
   buildClaimUsagePlan,
   toClaimUsagePlanPromptContract,
 } from "./claim-usage-plan.js";
-import { validateArticleAgainstClaimUsagePlan } from "./claim-usage-validation.js";
-import { EditorialBrainShadowService } from "../editorial-brain/index.js";
 import {
   buildEditorialExecutionPlan,
   toCoreEditorialExecutionSlice,
@@ -59,34 +66,32 @@ import {
   buildBrainGenerationInputContract,
   toBrainGenerationPromptContract,
 } from "../editorial-brain/generation/generation-input-contract.js";
-import { normalizeArticleProvenance, clampProvenanceToAllowlist } from "../editorial-brain/generation/provenance.js";
-import { checkPlanCompliance } from "../editorial-brain/generation/plan-compliance.js";
-import { runBoundedBrainRepairOnVersion } from "../editorial-brain/generation/brain-guided-blogger.js";
+import {
+  normalizeArticleProvenance,
+} from "../editorial-brain/generation/provenance.js";
 import type { ArticleProvenance } from "../editorial-brain/generation/provenance.js";
-import type { BrainGuidedGenerateResult } from "../editorial-brain/generation/brain-guided-blogger.js";
+import {
+  articlePlanComplianceAllowsPersist,
+  buildArticlePlanComplianceMeta,
+  buildOptionBArticlePlanRouting,
+  routeArticlePlanFailure,
+  validateArticlePlanCompliance,
+} from "../editorial-brain/generation/article-plan-compliance.js";
+import { validatePostTransformIntegrity } from "../editorial-brain/generation/post-transform-integrity.js";
 import { detectBadInputClaims } from "../editorial-brain/generation/bad-claim-input.js";
+import {
+  MAX_PLAN_EXECUTION_ATTEMPTS,
+  buildArticlePlanViolationFeedback,
+  buildGenerationAttemptTrace,
+  buildPlanViolationRegenNote,
+} from "../editorial-brain/generation/plan-aware-generation.js";
+import type { PlanViolationFeedback } from "./generation-authority.js";
 import {
   buildGenerationAuthorityPromptContract,
   slimClaimUsagePlanForPrompt,
   slimEditorialPatternForPrompt,
   slimStructurePatternForPrompt,
-  type PlanViolationFeedback,
 } from "./generation-authority.js";
-import { validateRawEditorialPlanCompliance } from "../editorial-brain/generation/raw-plan-compliance.js";
-import {
-  safeRedactReservedLead,
-  safeRedactLeadConsumedFromBody,
-} from "../editorial-brain/generation/lead-reservation-redact.js";
-import { validatePostTransformIntegrity } from "../editorial-brain/generation/post-transform-integrity.js";
-import { detectGenericProseViolations } from "../editorial-brain/generation/generic-prose-compliance.js";
-import { routeRawPlanFailure } from "../editorial-brain/generation/raw-failure-routing.js";
-import {
-  MAX_PLAN_EXECUTION_ATTEMPTS,
-  buildPlanViolationFeedback,
-  ensureGenerationAuthorityInSystem,
-  ensureGenerationAuthorityInUserPrompt,
-  extractSegmentContributionProvenance,
-} from "../editorial-brain/generation/plan-aware-generation.js";
 import { retrieveExperiences } from "../editorial-brain/core/retrieval.js";
 import {
   formatTendencyHintsForAuthority,
@@ -97,24 +102,28 @@ import {
   toReferenceGuidedPromptContract,
 } from "../editorial-brain/generation/reference-guided-layer.js";
 import { validateReferenceExecution } from "../editorial-brain/generation/reference-execution-compliance.js";
-import {
-  isOptionBGenerationMode,
-} from "../editorial-brain/generation/option-b-blog-boundary.js";
-import {
-  buildOptionBObservedRawPlanComplianceMeta,
-  buildOptionBSegmentRawRouting,
-  optionBSegmentRawAllowsPersist,
-} from "../editorial-brain/generation/option-b-segment-raw-gate.js";
 import { buildOptionBBloggerGeneratorPrompt } from "../editorial-brain/generation/option-b-blogger-prompt.js";
 import type { ArticlePatternRepository } from "@ai-affiliate/database";
 import {
   toWritingSkeletonPromptContract,
+  brainHowFromEditorialExecution,
 } from "../article-pattern/writing-skeleton.js";
+import {
+  buildArticlePlan,
+  materialDepthFromProfile,
+} from "../article-pattern/article-plan.js";
+import {
+  buildArticlePlanExecutionContract,
+  toWriterExecutionContractView,
+} from "../article-pattern/plan-execution-contract.js";
 import {
   buildEvidencePack,
   evidenceAllowlistIdsFromPack,
   toOptionBWriterSourceMaterial,
+  toOptionBWriterSourceMaterialFromPack,
+  claimStatementsFromPageEvidence,
 } from "../article-pattern/evidence-pack.js";
+import { isWriterCatalogConfirmation } from "../article-pattern/writer-evidence-filter.js";
 import { buildProductMaterialProfileFromPack } from "../article-pattern/reference-type-profile.js";
 import {
   ensureFeasibleWritingSkeleton,
@@ -132,7 +141,9 @@ export interface GenerateBloggerInput {
   claimIds?: string[];
   parentVersionId?: string | null;
   revisionType?: string;
-  /** When true, after initial generation run bounded Brain targeted repair (max 1). SHADOW only. */
+  /**
+   * @deprecated R117 — ignored. Legacy Brain observe/repair removed from production route.
+   */
   brainGuidedRepair?: boolean;
 }
 
@@ -359,7 +370,11 @@ export class ContentGenerationService {
     version: ContentVersion;
     article: BloggerArticleStructured;
     modelRunId: string;
-    brainGuided?: BrainGuidedGenerateResult;
+    publishValidation: {
+      articlePlanCompliancePass: boolean;
+      claimValidationPass: boolean;
+      integrityPass: boolean;
+    };
   }> {
     await this.budget.assertCanSpend(1);
     // Fail-fast before any ModelRun / LLM spend when FK parents are missing.
@@ -451,6 +466,13 @@ export class ContentGenerationService {
       })),
     );
     const badIds = new Set(badSelected.map((b) => b.claimId));
+    // R149 — catalog confirmation shells are not generation fuel (defer, do not invent).
+    const catalogClaimIds = new Set(
+      claimSelectionRaw.selectedClaims
+        .filter((c) => isWriterCatalogConfirmation(c.statement))
+        .map((c) => c.id),
+    );
+    const rejectIds = new Set([...badIds, ...catalogClaimIds]);
     if (badIds.size > 0 && claimSelectionRaw.selectedClaims.every((c) => badIds.has(c.id))) {
       throw new GenerationPreflightError(
         "bad_input_claim",
@@ -459,11 +481,11 @@ export class ContentGenerationService {
     }
     const claimSelection = {
       ...claimSelectionRaw,
-      selectedClaims: claimSelectionRaw.selectedClaims.filter((c) => !badIds.has(c.id)),
-      openingClaimIds: claimSelectionRaw.openingClaimIds.filter((id) => !badIds.has(id)),
+      selectedClaims: claimSelectionRaw.selectedClaims.filter((c) => !rejectIds.has(c.id)),
+      openingClaimIds: claimSelectionRaw.openingClaimIds.filter((id) => !rejectIds.has(id)),
       deferredClaimIds: [
         ...claimSelectionRaw.deferredClaimIds,
-        ...claimSelectionRaw.selectedClaims.filter((c) => badIds.has(c.id)).map((c) => c.id),
+        ...claimSelectionRaw.selectedClaims.filter((c) => rejectIds.has(c.id)).map((c) => c.id),
       ],
     };
     if (claimSelection.openingClaimIds.length === 0 && claimSelection.selectedClaims[0]) {
@@ -553,21 +575,33 @@ export class ContentGenerationService {
         : "bridge_only_if_editorial_value",
     });
     const brainChannelPlan = buildBlogChannelPlan(brainCorePlan);
-    const brainGenerationContract = buildBrainGenerationInputContract({
-      corePlan: brainCorePlan,
-      channelPlan: brainChannelPlan,
-      claims: claimSelection.selectedClaims.map((c) => ({
-        id: c.id,
-        statement: c.statement,
-        kind: c.kind,
-      })),
-      editorialExecution,
-    });
-    let brainGenerationPromptContract = toBrainGenerationPromptContract(brainGenerationContract);
-    const articleOutputContract = deriveArticleOutputContract(selectedStructurePattern);
+    let brainGenerationContract: ReturnType<typeof buildBrainGenerationInputContract>;
+    let brainGenerationPromptContract: Record<string, unknown>;
+    // r79 — always bind section cardinality (Structure Pattern optional)
+    const scarceDepth = editorialExecution.materialDepth === "scarce";
+    const boundMaxSections = scarceDepth
+      ? 1
+      : claimUsagePlan.effectiveMaxArticleSections;
+    const boundMinSections = Math.min(
+      claimUsagePlan.effectiveMinArticleSections,
+      boundMaxSections,
+    );
+    let articleOutputContract: ArticleOutputContract | null =
+      deriveArticleOutputContract(selectedStructurePattern);
     if (articleOutputContract) {
-      articleOutputContract.maxArticleSections = claimUsagePlan.effectiveMaxArticleSections;
-      articleOutputContract.minArticleSections = claimUsagePlan.effectiveMinArticleSections;
+      articleOutputContract.maxArticleSections = Math.min(
+        articleOutputContract.maxArticleSections,
+        boundMaxSections,
+      );
+      articleOutputContract.minArticleSections = Math.min(
+        boundMinSections,
+        articleOutputContract.maxArticleSections,
+      );
+    } else {
+      articleOutputContract = articleOutputContractFromSectionBounds({
+        minArticleSections: boundMinSections,
+        maxArticleSections: boundMaxSections,
+      });
     }
 
     // Reference Blueprint → Writing Skeleton + Evidence Pack (OPTION B Generator SSOT)
@@ -637,21 +671,49 @@ export class ContentGenerationService {
       );
     }
 
-    const writingSkeletonPrompt = toWritingSkeletonPromptContract(writingSkeleton)!;
-    const officialDescription =
-      typeof pageEvidenceMeta?.description?.text === "string"
-        ? pageEvidenceMeta.description.text
-        : null;
-    const evidencePackPrompt = toOptionBWriterSourceMaterial({
+    const writingSkeletonPrompt = toWritingSkeletonPromptContract(
+      writingSkeleton,
+      brainHowFromEditorialExecution(editorialExecution),
+      skeletonAssignment,
+    )!;
+    const evidencePackPrompt = toOptionBWriterSourceMaterialFromPack(evidencePack);
+    const evidenceAllowlistIds = evidenceAllowlistIdsFromPack(evidencePack);
+    const articlePlanBase = buildArticlePlan({
       productTitle: input.productTitle,
+      pack: evidencePack,
+      assignment: skeletonAssignment,
+      materialDepth: materialDepthFromProfile(materialProfile),
+      profile: materialProfile,
+    });
+    const articlePlanExecution = toWriterExecutionContractView(
+      buildArticlePlanExecutionContract(articlePlanBase),
+    );
+    // R151 — attach execution on the plan object so authority pickArticlePlan.execution works.
+    const articlePlan = { ...articlePlanBase, execution: articlePlanExecution };
+
+    // V2 — allow one section per reader job (Formatter still flattens headings).
+    const planBodySlots = Math.max(1, articlePlanBase.body.length);
+    if (articleOutputContract) {
+      articleOutputContract.maxArticleSections = Math.max(
+        articleOutputContract.maxArticleSections,
+        Math.min(planBodySlots, 4),
+      );
+      articleOutputContract.minArticleSections = Math.min(
+        Math.max(1, Math.min(planBodySlots, articleOutputContract.minArticleSections || 1)),
+        articleOutputContract.maxArticleSections,
+      );
+    }
+    brainGenerationContract = buildBrainGenerationInputContract({
+      corePlan: brainCorePlan,
+      channelPlan: brainChannelPlan,
       claims: claimSelection.selectedClaims.map((c) => ({
         id: c.id,
         statement: c.statement,
         kind: c.kind,
       })),
-      officialDescription,
+      articlePlan,
     });
-    const evidenceAllowlistIds = evidenceAllowlistIdsFromPack(evidencePack);
+    brainGenerationPromptContract = toBrainGenerationPromptContract(brainGenerationContract);
 
     // Keep Reference contract for Brain/compliance advisory — NOT Generator dump
     const referenceGuidedPrompt = toReferenceGuidedPromptContract(referenceGuided);
@@ -664,9 +726,16 @@ export class ContentGenerationService {
         brainGenerationPromptContract.layers
           ? (brainGenerationPromptContract.layers as Record<string, unknown>)
           : {};
+      const writerVisiblePlan = toWriterVisibleArticlePlan(
+        articlePlan as unknown as Record<string, unknown>,
+      );
       brainGenerationPromptContract = {
         ...brainGenerationPromptContract,
         mode: "OPTION_B",
+        articlePlan: writerVisiblePlan,
+        ARTICLE_PLAN: writerVisiblePlan,
+        ARTICLE_PLAN_EXECUTION: articlePlanExecution,
+        /** Internal only — not Writer-injected (r114). */
         writingSkeleton: writingSkeletonPrompt,
         evidencePack: evidencePackPrompt,
         /** Internal validation allowlist — not Writer-visible (r43). */
@@ -692,6 +761,8 @@ export class ContentGenerationService {
         },
         layers: {
           ...prevLayers,
+          ARTICLE_PLAN: writerVisiblePlan,
+          ARTICLE_PLAN_EXECUTION: articlePlanExecution,
           WRITING_SKELETON: writingSkeletonPrompt,
           EVIDENCE_PACK: evidencePackPrompt,
           // Legacy advisory only — not injected into Generator authority when OPTION B active
@@ -710,18 +781,15 @@ export class ContentGenerationService {
           referenceSegmentExecution: referenceGuided.segmentExecution,
         },
         priority: [
-          "1_FACTUAL_SAFETY",
-          "2_EVIDENCE_PACK",
-          "3_WRITING_SKELETON",
-          "4_BLOG_CHANNEL_REQUIREMENTS",
-          "5_MINIMAL_STYLE",
+          "1_ARTICLE_PLAN",
+          "2_FACTUAL_SAFETY",
+          "3_BLOG_CHANNEL_REQUIREMENTS",
         ],
         priorityRule:
-          "OPTION B: FACTUAL > EVIDENCE_PACK > WRITING_SKELETON > CHANNEL > style. Catalog metadata is not body fuel.",
+          "OPTION B r114: ARTICLE_PLAN is Writer SSOT. Catalog metadata is not body fuel.",
         rules: [
           ...prevRules,
-          "Use ONLY Evidence Pack concreteEvidence.",
-          "Follow Writing Skeleton progression.",
+          "Realize ARTICLE_PLAN slot facts only.",
           "Never pad with catalogMetadata.",
           "Never copy reference article wording.",
         ],
@@ -732,7 +800,7 @@ export class ContentGenerationService {
     if (brainGenerationContract.insufficientDevelopmentMaterial) {
       throw new GenerationPreflightError(
         "insufficient_editorial_material",
-        "DEFER_INSUFFICIENT_MATERIAL: no concrete body contributions after lead allocation (catalog-only development). Skip generation rather than pad.",
+        "DEFER_INSUFFICIENT_MATERIAL: no concrete body contributions after opening→body allocation (catalog-only development). Skip generation rather than pad.",
       );
     }
 
@@ -828,7 +896,7 @@ export class ContentGenerationService {
 
     // Seed schema from SSOT (includes segmentContributionProvenance); DB schema may be stale.
     const baseSchema = getBloggerArticleLlmJsonSchema();
-    const outputSchema = applyArticleOutputContractToLlmSchema(baseSchema, articleOutputContract);
+    let outputSchema = applyArticleOutputContractToLlmSchema(baseSchema, articleOutputContract);
 
     const modelRun = await this.repo.createModelRun({
       provider: this.llm.providerKey,
@@ -897,14 +965,22 @@ export class ContentGenerationService {
     let brainProvenance: ArticleProvenance | null = null;
     let planViolationFeedback: PlanViolationFeedback | null = null;
     let rawPlanComplianceMeta: Record<string, unknown> | null = null;
+    let articlePlanComplianceMeta: Record<string, unknown> | null = null;
+    let publishValidation = {
+      articlePlanCompliancePass: true,
+      claimValidationPass: true,
+      integrityPass: true,
+    };
     let generationAttempt = 0;
     let finalUserPrompt = "";
     let finalSystemInstruction = "";
     let finalGenerationAuthority: Record<string, unknown> | null = null;
     let priorFailureSignature: string | null = null;
     let rawFailureRoutingMeta: Record<string, unknown> | null = null;
-    /** When STRUCTURAL → regen only; LOCAL may go to targeted repair after persist */
-    let skipTargetedRepairForStructural = true;
+    /** R121 — completion-only DROP meta merged into ArticlePlan compliance */
+    let articlePlanComplianceMutationMeta: Record<string, unknown> | null = null;
+    /** R147 — per-attempt Writer/compliance/regen diagnostics */
+    const generationAttemptTraces: ReturnType<typeof buildGenerationAttemptTrace>[] = [];
 
     try {
       while (generationAttempt < MAX_PLAN_EXECUTION_ATTEMPTS) {
@@ -918,53 +994,20 @@ export class ContentGenerationService {
         });
         finalGenerationAuthority = generationAuthority;
 
-        const optionBPrompt = isOptionBGenerationMode(
-          brainGenerationPromptContract as Record<string, unknown>,
-        );
-        let systemInstruction: string;
-        let userPrompt: string;
-        if (optionBPrompt) {
-          // OPTION B production: single authority — no raw claims / SEGMENT / claimUsage walls
-          const slim = buildOptionBBloggerGeneratorPrompt({
-            productTitle: input.productTitle,
-            ctaUrl: input.ctaUrl ?? "",
-            articleFormat,
-            generationAuthority,
-            planViolationNote: planViolationFeedback
-              ? JSON.stringify({
-                  codes: planViolationFeedback.codes,
-                  violatedSegments: planViolationFeedback.violatedSegments,
-                  note: planViolationFeedback.note,
-                })
-              : null,
-          });
-          systemInstruction = slim.systemInstruction;
-          userPrompt = slim.userPrompt;
-        } else {
-          const rendered = this.prompts.render(prompt, {
-            productTitle: input.productTitle,
-            ctaUrl: input.ctaUrl ?? "",
-            articleFormat,
-            formatSpec: formatSpec ?? {},
-            writingPolicy,
-            generationAuthority,
-            structurePattern: slimStructure ?? {},
-            editorialPattern: slimEditorial ?? {},
-            claimUsagePlan: slimClaimUsage ?? {},
-            brainGenerationContract: brainGenerationPromptContract,
-            supportedClaims: claimSelection.selectedClaims.map((c) => ({
-              id: c.id,
-              statement: c.statement,
-              kind: c.kind,
-            })),
-            claimSelectionPolicy,
-          });
-          systemInstruction = ensureGenerationAuthorityInSystem(rendered.systemInstruction);
-          userPrompt = ensureGenerationAuthorityInUserPrompt(
-            rendered.userPrompt,
-            generationAuthority,
-          );
-        }
+        const slim = buildOptionBBloggerGeneratorPrompt({
+          productTitle: input.productTitle,
+          ctaUrl: input.ctaUrl ?? "",
+          articleFormat,
+          generationAuthority,
+          articleOutputContract,
+          planViolationNote: planViolationFeedback
+            ? buildPlanViolationRegenNote(planViolationFeedback)
+            : null,
+        });
+        const systemInstruction = slim.systemInstruction;
+        const userPrompt = slim.userPrompt;
+        // r79 — executeTask must use the same cardinality-bound schema as the prompt
+        const outputSchema = slim.outputSchema;
         finalSystemInstruction = systemInstruction;
         finalUserPrompt = userPrompt;
 
@@ -1025,121 +1068,24 @@ export class ContentGenerationService {
           currency: llm.currency,
         });
 
-        const optionB = isOptionBGenerationMode(
-          brainGenerationPromptContract as Record<string, unknown>,
-        );
         const parsed = parseBloggerArticle(
-          optionB
-            ? fillOptionBArticleDefaults(llm.output as Record<string, unknown>)
-            : llm.output,
+          fillOptionBArticleDefaults(
+            applyOptionBDeterministicCta(
+              llm.output as Record<string, unknown>,
+              input.ctaUrl ?? null,
+            ),
+          ),
         );
-        const segmentProv = extractSegmentContributionProvenance(
-          llm.output as Record<string, unknown>,
-        );
-
-        // OPTION B: never mutate prose via reserved-facet redaction (r31 restoration).
-        let redactedLead = parsed.lead;
-        let redactedSections = parsed.sections.map((s) => ({
-          paragraphs: s.paragraphs,
-          heading: s.heading,
-          lists: s.lists,
-        }));
-        let leadRedacted = false;
-        let bodyRedacted = false;
-
-        if (!optionB) {
-          const reservedFacets =
-            brainGenerationContract.segmentContracts.lead.reservedForLaterContributions.map(
-              (c) => c.facet,
-            );
-          const requiredLeadFacets =
-            brainGenerationContract.segmentContracts.lead.requiredContributions.map((c) => c.facet);
-          const requiredBodyFacets =
-            brainGenerationContract.segmentContracts.development.requiredContributions.map(
-              (c) => c.facet,
-            );
-          const leadRedact = safeRedactReservedLead({
-            lead: parsed.lead,
-            reservedFacets,
-            requiredFacets: requiredLeadFacets,
-          });
-          const bodyRedact = safeRedactLeadConsumedFromBody({
-            sections: parsed.sections.map((s) => ({
-              paragraphs: s.paragraphs,
-              heading: s.heading,
-              lists: s.lists,
-            })),
-            leadConsumedFacets: requiredLeadFacets,
-            bodyRequiredFacets: requiredBodyFacets,
-          });
-
-          if (!leadRedact.ok || !bodyRedact.ok) {
-            const failCode =
-              leadRedact.failureCode ?? bodyRedact.failureCode ?? "RAW_PLAN_EXECUTION_FAILED";
-            const failMsg =
-              leadRedact.failureMessage ??
-              bodyRedact.failureMessage ??
-              "unsafe reservation redaction";
-            priorFailureSignature = `${failCode}::redact`;
-            planViolationFeedback = {
-              attempt: generationAttempt,
-              violatedSegments: ["lead", "development"],
-              codes: [failCode],
-              prematurelyConsumedContributionIds: [],
-              missingRequiredContributionIds: [],
-              forbiddenReusedContributionIds: [],
-              failureClass: "STRUCTURAL_PLAN_FAILURE",
-              failureSignature: priorFailureSignature,
-              note: failMsg,
-            };
-            rawPlanComplianceMeta = {
-              attempt: generationAttempt,
-              ok: false,
-              planExecutionFailed: true,
-              structuralDefect: true,
-              findings: [{ code: failCode, message: failMsg, severity: "BLOCKING" }],
-              violatedSegments: ["lead"],
-              failureSignature: priorFailureSignature,
-              leadRedacted: false,
-              bodyRedacted: false,
-            };
-            rawFailureRoutingMeta = {
-              action: "REGEN_WITH_FEEDBACK",
-              failureClass: "STRUCTURAL_PLAN_FAILURE",
-              allowTargetedRepair: false,
-            };
-            skipTargetedRepairForStructural = true;
-            if (generationAttempt >= MAX_PLAN_EXECUTION_ATTEMPTS) {
-              throw new GenerationPreflightError(
-                "plan_execution_failed",
-                `PLAN_EXECUTION_FAILED after ${generationAttempt} attempts: ${failCode}`,
-              );
-            }
-            continue;
-          }
-          redactedLead = leadRedact.lead;
-          redactedSections = (bodyRedact.sections ?? redactedSections).map((s) => ({
-            paragraphs: s.paragraphs,
-            heading: s.heading ?? null,
-            lists: s.lists ?? [],
-          }));
-          leadRedacted = redactedLead !== parsed.lead;
-          bodyRedacted =
-            JSON.stringify(redactedSections) !==
-            JSON.stringify(
-              parsed.sections.map((s) => ({
-                paragraphs: s.paragraphs,
-                heading: s.heading,
-                lists: s.lists,
-              })),
-            );
-        }
+        // Leadless write contract: never persist/emit lead (even if model hallucinated it).
+        const leadlessParsed = stripArticleLeadKey(
+          parsed as unknown as Record<string, unknown>,
+        ) as unknown as BloggerArticleStructured;
 
         const articleForRaw = {
-          title: parsed.title,
-          summary: parsed.summary,
-          lead: redactedLead,
-          sections: redactedSections.map((s) => ({
+          title: leadlessParsed.title,
+          summary: leadlessParsed.summary,
+          lead: "",
+          sections: leadlessParsed.sections.map((s) => ({
             paragraphs: s.paragraphs,
             heading: s.heading,
           })),
@@ -1147,7 +1093,6 @@ export class ContentGenerationService {
 
         const postIntegrity = validatePostTransformIntegrity({
           title: articleForRaw.title,
-          lead: articleForRaw.lead,
           summary: articleForRaw.summary,
           sections: articleForRaw.sections,
         });
@@ -1157,7 +1102,7 @@ export class ContentGenerationService {
             .join(",")}`;
           planViolationFeedback = {
             attempt: generationAttempt,
-            violatedSegments: ["lead", "development"],
+            violatedSegments: ["body"],
             codes: ["POST_TRANSFORM_INTEGRITY_FAILED"],
             prematurelyConsumedContributionIds: [],
             missingRequiredContributionIds: [],
@@ -1185,328 +1130,235 @@ export class ContentGenerationService {
             failureClass: "STRUCTURAL_PLAN_FAILURE",
             allowTargetedRepair: false,
           };
-          skipTargetedRepairForStructural = true;
+          generationAttemptTraces.push(
+            buildGenerationAttemptTrace({
+              attempt: generationAttempt,
+              article: articleForRaw,
+              articlePlan,
+              compliance: {
+                findings: postIntegrity.findings.map((f) => ({
+                  code: f.code,
+                  message: f.message,
+                  slot: "lead" as const,
+                })),
+              },
+              regenInput: planViolationFeedback,
+              regenOutputOrNextFeedback: planViolationFeedback,
+            }),
+          );
           if (generationAttempt >= MAX_PLAN_EXECUTION_ATTEMPTS) {
             throw new GenerationPreflightError(
               "plan_execution_failed",
-              `PLAN_EXECUTION_FAILED after ${generationAttempt} attempts: POST_TRANSFORM_INTEGRITY_FAILED`,
+              `PLAN_EXECUTION_FAILED after ${generationAttempt} attempts: POST_TRANSFORM_INTEGRITY_FAILED: ${postIntegrity.findings
+                .map((f) => `${f.message}${f.evidence ? ` ::${f.evidence}` : ""}`)
+                .join(" | ")
+                .slice(0, 400)}`,
             );
           }
           continue;
         }
+        publishValidation.integrityPass = postIntegrity.ok;
 
-        const leadAssignedFromRef =
-          referenceGuided.mappingPlan?.mappings
-            .filter((m) => m.role === "lead" && m.status === "mapped")
-            .flatMap((m) => m.assignedFacts) ?? [];
-        const bodyAssignedFromRef =
-          referenceGuided.mappingPlan?.mappings
-            .filter((m) => m.role === "development" && m.status === "mapped")
-            .flatMap((m) => m.assignedFacts) ?? [];
-        const leadAssigned =
-          optionB || leadAssignedFromRef.length === 0
-            ? [
-                skeletonAssignment.opening.primary?.fact,
-                ...skeletonAssignment.opening.supporting.map((s) => s.fact),
-              ].filter((f): f is string => Boolean(f))
-            : leadAssignedFromRef;
-        const bodyAssigned =
-          optionB || bodyAssignedFromRef.length === 0
-            ? skeletonAssignment.body.flatMap((b) => [
-                b.primary?.fact,
-                ...b.supporting.map((s) => s.fact),
-              ]).filter((f): f is string => Boolean(f))
-            : bodyAssignedFromRef;
-
-        const genericProse = detectGenericProseViolations({
-          lead: articleForRaw.lead,
-          sections: articleForRaw.sections,
-          leadAssignedFacts: leadAssigned,
-          bodyAssignedFacts: bodyAssigned.length
-            ? bodyAssigned
-            : evidencePack.concreteEvidence.map((e) => e.fact),
-          transformationAvailable:
-            Boolean(referenceGuided.transformation) || Boolean(writingSkeleton),
-        });
-
-        // RAW plan compliance — SEGMENT contracts are non-authoritative on OPTION B (r31).
-        const rawPlan = validateRawEditorialPlanCompliance({
+        const articlePlanCompliance = validateArticlePlanCompliance({
           article: articleForRaw,
-          contract: brainGenerationContract,
-          productTitle: input.productTitle,
-          segmentContributionProvenance: segmentProv,
+          articlePlan,
         });
-        const routing = optionB
-          ? buildOptionBSegmentRawRouting()
-          : routeRawPlanFailure({
-              result: rawPlan,
-              insufficientDevelopmentMaterial:
-                brainGenerationContract.insufficientDevelopmentMaterial,
-              scarcityMode: brainGenerationContract.scarcityMode,
-              bodyOnlyRestatesLead: rawPlan.bodyOnlyRestatesLead,
-            });
-        rawFailureRoutingMeta = { ...routing };
-        skipTargetedRepairForStructural = optionB ? false : !routing.allowTargetedRepair;
-
-        if (optionB) {
-          rawPlanComplianceMeta = buildOptionBObservedRawPlanComplianceMeta({
+          publishValidation.articlePlanCompliancePass = articlePlanCompliance.ok;
+          const routing = articlePlanCompliance.ok
+            ? buildOptionBArticlePlanRouting()
+            : routeArticlePlanFailure({
+                result: articlePlanCompliance,
+                insufficientDevelopmentMaterial:
+                  brainGenerationContract.insufficientDevelopmentMaterial,
+                scarcityMode: brainGenerationContract.scarcityMode,
+                bodyOnlyRestatesLead: articlePlanCompliance.bodyOnlyRestatesLead,
+              });
+          rawFailureRoutingMeta = { ...routing };
+          articlePlanComplianceMeta = buildArticlePlanComplianceMeta({
             attempt: generationAttempt,
-            rawPlan,
-            genericProse,
+            compliance: articlePlanCompliance,
             postIntegrity,
             routing,
-            leadRedacted,
-            bodyRedacted,
           });
-        } else {
-          rawPlanComplianceMeta = {
-            attempt: generationAttempt,
-            optionB: false,
-            ok: rawPlan.ok && genericProse.ok,
-            planExecutionFailed: rawPlan.planExecutionFailed || !genericProse.ok,
-            structuralDefect: rawPlan.structuralDefect || !genericProse.ok,
-            findings: [
-              ...rawPlan.findings,
-              ...genericProse.findings.map((f) => ({
-                code: f.code,
-                message: f.message,
-                severity: f.severity,
-              })),
-            ],
-            violatedSegments: rawPlan.violatedSegments,
-            missingRequiredContributionIds: rawPlan.missingRequiredContributionIds,
-            forbiddenReusedContributionIds: rawPlan.forbiddenReusedContributionIds,
-            prematurelyConsumedContributionIds: rawPlan.prematurelyConsumedContributionIds,
-            semanticReusedFacets: rawPlan.semanticReusedFacets,
-            leadConsumedFacets: rawPlan.leadConsumedFacets,
-            failureSignature: rawPlan.failureSignature,
-            bodyOnlyRestatesLead: rawPlan.bodyOnlyRestatesLead,
-            leadRedacted,
-            bodyRedacted,
-            postTransformIntegrity: postIntegrity,
-            genericProse,
-            routing,
-          };
-        }
+          rawPlanComplianceMeta = articlePlanComplianceMeta;
 
-        if (!optionB && !genericProse.ok) {
-          priorFailureSignature = `GENERIC_PROSE::${genericProse.findings.map((f) => f.code).join(",")}`;
-          planViolationFeedback = {
-            attempt: generationAttempt,
-            violatedSegments: genericProse.findings.map((f) => f.segment),
-            codes: genericProse.findings.map((f) => f.code),
-            prematurelyConsumedContributionIds: [],
-            missingRequiredContributionIds: [],
-            forbiddenReusedContributionIds: [],
-            failureClass: "STRUCTURAL_PLAN_FAILURE",
-            failureSignature: priorFailureSignature,
-            note: "Avoid catalog narration / generic evaluative padding; execute transformation with new evidence.",
-          };
-          skipTargetedRepairForStructural = true;
+          const nextFeedback =
+            !articlePlanCompliance.ok && generationAttempt < MAX_PLAN_EXECUTION_ATTEMPTS
+              ? buildArticlePlanViolationFeedback(
+                  generationAttempt,
+                  articlePlanCompliance,
+                  routing,
+                  articlePlan,
+                  {
+                    title: articleForRaw.title,
+                    lead: articleForRaw.lead,
+                    body: articleForRaw.sections
+                      .flatMap((s) => s.paragraphs)
+                      .join("\n"),
+                  },
+                )
+              : null;
+          generationAttemptTraces.push(
+            buildGenerationAttemptTrace({
+              attempt: generationAttempt,
+              article: articleForRaw,
+              articlePlan,
+              compliance: articlePlanCompliance,
+              regenInput: planViolationFeedback,
+              regenOutputOrNextFeedback: nextFeedback,
+            }),
+          );
+
+          if (articlePlanComplianceAllowsPersist(true, articlePlanCompliance)) {
+            if (referenceGuided.mappingPlan) {
+              const refExec = validateReferenceExecution({
+                article: {
+                  title: articleForRaw.title,
+                  lead: articleForRaw.lead,
+                  summary: articleForRaw.summary,
+                  sections: articleForRaw.sections,
+                },
+                mappingPlan: referenceGuided.mappingPlan,
+              });
+              articlePlanComplianceMeta = {
+                ...articlePlanComplianceMeta,
+                referenceExecution: { ...refExec, observeOnly: true },
+              };
+            }
+            article = leadlessParsed;
+            break;
+          }
+
           if (generationAttempt >= MAX_PLAN_EXECUTION_ATTEMPTS) {
+            try {
+              const brainRepo = this.repo.createEditorialBrainRepository();
+              await brainRepo.createExperience({
+                scope: "CHANNEL",
+                channel: "BLOG",
+                formatKey: resolvedFormatKey ?? articleFormat,
+                contentType: "blogger-article",
+                structurePatternId: selectedStructurePattern?.patternId ?? null,
+                editorialPatternId: selectedEditorialPattern?.patternId ?? null,
+                failureCodes: [
+                  "PLAN_EXECUTION_FAILED",
+                  ...articlePlanCompliance.findings.map((f) => f.code),
+                ],
+                outcome: "PLAN_EXECUTION_FAILED",
+                sourceType: "INITIAL_GENERATION",
+                confidence: 0.55,
+                sampleEvidence: 1,
+                modelRunIds: [modelRun.id],
+                lesson: {
+                  note: "Generator failed ArticlePlan compliance",
+                  structuralDefect: articlePlanCompliance.structuralDefect,
+                  violatedSlots: articlePlanCompliance.violatedSlots,
+                  codes: articlePlanCompliance.findings.map((f) => f.code),
+                },
+              });
+            } catch {
+              // Experience write is best-effort
+            }
+            await this.repo.completeModelRun(modelRun.id, {
+              status: "FAILED",
+              inputTokens: llm.inputTokens,
+              outputTokens: llm.outputTokens,
+              cachedTokens: llm.cachedTokens ?? 0,
+              estimatedCost: llm.estimatedCost,
+              actualCost: llm.actualCost ?? llm.estimatedCost,
+              currency: llm.currency,
+              structuredOutputValid: true,
+              errorType: "PLAN_EXECUTION_FAILED",
+              errorDetail: articlePlanCompliance.findings
+                .map((f) => f.code)
+                .join(",")
+                .slice(0, 240),
+              metadata: {
+                finishReason: llm.finishReason,
+                output: llm.output,
+                llmCompleted: true,
+                persistenceCompleted: false,
+                generationAttempt,
+                generationAttemptTraces,
+                articlePlanCompliance: articlePlanComplianceMeta,
+                planViolationFeedback,
+                generationAuthority: finalGenerationAuthority,
+                brainGenerationContract: brainGenerationPromptContract,
+                retrievedExperienceIds,
+                plannerFailureTendencies,
+                userPrompt: finalUserPrompt.slice(0, 12000),
+                stopReason: "PLAN_EXECUTION_FAILED",
+                regenCandidate: true,
+              },
+            });
             throw new GenerationPreflightError(
               "plan_execution_failed",
-              `PLAN_EXECUTION_FAILED after ${generationAttempt} attempts: ${genericProse.findings
+              `PLAN_EXECUTION_FAILED after ${generationAttempt} attempts: ${articlePlanCompliance.findings
                 .map((f) => f.code)
                 .join(",")}`,
             );
           }
-          continue;
-        }
 
-        if (optionBSegmentRawAllowsPersist(optionB, rawPlan)) {
-          if (!optionB && referenceGuided.mappingPlan) {
-            const refExec = validateReferenceExecution({
-              article: {
-                title: articleForRaw.title,
-                lead: articleForRaw.lead,
-                summary: articleForRaw.summary,
-                sections: articleForRaw.sections,
-              },
-              mappingPlan: referenceGuided.mappingPlan,
-            });
-            if (!refExec.ok) {
-              rawPlanComplianceMeta = {
-                ...rawPlanComplianceMeta,
-                referenceExecution: refExec,
-                ok: false,
-                planExecutionFailed: true,
-                structuralDefect: true,
-                findings: [
-                  ...(Array.isArray(
-                    (rawPlanComplianceMeta as { findings?: unknown[] })?.findings,
-                  )
-                    ? ((rawPlanComplianceMeta as { findings: unknown[] }).findings ?? [])
-                    : []),
-                  ...refExec.findings,
-                ],
-              };
-              priorFailureSignature = `REF_EXEC::${refExec.findings.map((f) => f.code).join(",")}`;
-              planViolationFeedback = {
-                attempt: generationAttempt,
-                violatedSegments: refExec.findings.map((f) => f.code),
-                codes: refExec.findings.map((f) => f.code),
-                prematurelyConsumedContributionIds: [],
-                missingRequiredContributionIds: [],
-                forbiddenReusedContributionIds: [],
-                failureClass: "STRUCTURAL_PLAN_FAILURE",
-                failureSignature: priorFailureSignature,
-                note: "REFERENCE_EXECUTION failed — rewrite mapped evidence into correct segments only.",
-              };
-              if (generationAttempt >= MAX_PLAN_EXECUTION_ATTEMPTS) {
-                throw new GenerationPreflightError(
-                  "plan_execution_failed",
-                  `PLAN_EXECUTION_FAILED after ${generationAttempt} attempts: ${refExec.findings
-                    .map((f) => f.code)
-                    .join(",")}`,
-                );
-              }
-              continue;
-            }
-          } else if (optionB && referenceGuided.mappingPlan) {
-            const refExec = validateReferenceExecution({
-              article: {
-                title: articleForRaw.title,
-                lead: articleForRaw.lead,
-                summary: articleForRaw.summary,
-                sections: articleForRaw.sections,
-              },
-              mappingPlan: referenceGuided.mappingPlan,
-            });
-            rawPlanComplianceMeta = {
-              ...rawPlanComplianceMeta,
-              referenceExecution: { ...refExec, observeOnly: true },
-            };
-          }
-          article = {
-            ...parsed,
-            lead: redactedLead,
-            sections: redactedSections.map((s, i) => ({
-              ...parsed.sections[i]!,
-              paragraphs: s.paragraphs,
-            })),
-          };
-          break;
-        }
-
-        if (generationAttempt >= MAX_PLAN_EXECUTION_ATTEMPTS) {
-          // Write Experience for planner retrieval; do not send structural defects to Brain repair
-          try {
-            const brainRepo = this.repo.createEditorialBrainRepository();
-            await brainRepo.createExperience({
-              scope: "CHANNEL",
-              channel: "BLOG",
-              formatKey: resolvedFormatKey ?? articleFormat,
-              contentType: "blogger-article",
-              structurePatternId: selectedStructurePattern?.patternId ?? null,
-              editorialPatternId: selectedEditorialPattern?.patternId ?? null,
-              failureCodes: [
-                "PLAN_EXECUTION_FAILED",
-                ...rawPlan.findings.map((f) => f.code),
-              ],
-              outcome: "PLAN_EXECUTION_FAILED",
-              sourceType: "INITIAL_GENERATION",
-              confidence: 0.55,
-              sampleEvidence: 1,
-              modelRunIds: [modelRun.id],
-              lesson: {
-                note: "Generator failed EditorialExecutionPlan / SEGMENT_CONTRACTS",
-                structuralDefect: rawPlan.structuralDefect,
-                violatedSegments: rawPlan.violatedSegments,
-                codes: rawPlan.findings.map((f) => f.code),
-              },
-            });
-          } catch {
-            // Experience write is best-effort
-          }
-          await this.repo.completeModelRun(modelRun.id, {
-            status: "FAILED",
-            inputTokens: llm.inputTokens,
-            outputTokens: llm.outputTokens,
-            cachedTokens: llm.cachedTokens ?? 0,
-            estimatedCost: llm.estimatedCost,
-            actualCost: llm.actualCost ?? llm.estimatedCost,
-            currency: llm.currency,
-            structuredOutputValid: true,
-            errorType: "PLAN_EXECUTION_FAILED",
-            errorDetail: rawPlan.findings
-              .map((f) => f.code)
-              .join(",")
-              .slice(0, 240),
-            metadata: {
-              finishReason: llm.finishReason,
-              output: llm.output,
-              llmCompleted: true,
-              persistenceCompleted: false,
-              generationAttempt,
-              rawPlanCompliance: rawPlanComplianceMeta,
-              planViolationFeedback,
-              generationAuthority: finalGenerationAuthority,
-              brainGenerationContract: brainGenerationPromptContract,
-              retrievedExperienceIds,
-              plannerFailureTendencies,
-              userPrompt: finalUserPrompt.slice(0, 12000),
-              stopReason: "PLAN_EXECUTION_FAILED",
-              regenCandidate: true,
-            },
-          });
-          throw new GenerationPreflightError(
-            "plan_execution_failed",
-            `PLAN_EXECUTION_FAILED after ${generationAttempt} attempts: ${rawPlan.findings
-              .map((f) => f.code)
-              .join(",")}`,
-          );
-        }
-
-        // Bounded regen with violation feedback only — never identical prompt resend
-        planViolationFeedback = buildPlanViolationFeedback(generationAttempt, rawPlan, routing);
+        planViolationFeedback = buildArticlePlanViolationFeedback(
+          generationAttempt,
+          articlePlanCompliance,
+          routing,
+          articlePlan,
+          {
+            title: articleForRaw.title,
+            lead: articleForRaw.lead,
+            body: articleForRaw.sections.flatMap((s) => s.paragraphs).join("\n"),
+          },
+        );
+        continue;
       }
 
       if (!article || !llm) {
         throw new Error("blogger generation produced no article");
       }
 
-      const optionBPersist = isOptionBGenerationMode(
-        brainGenerationPromptContract as Record<string, unknown>,
-      );
-      // OPTION B: validator ≠ rewriter — do not strip/mutate prose before Brain
-      if (!optionBPersist) {
-        const { stripUnsupportedEvaluativePadding } = await import(
-          "../editorial-brain/generation/strip-evaluative-padding.js"
-        );
-        const keepFacets = [
-          ...brainGenerationContract.segmentAllocation.leadContributions,
-          ...brainGenerationContract.segmentAllocation.bodyContributions,
-          ...brainGenerationContract.segmentAllocation.summaryContributions,
-        ].map((c) => c.facet);
-        const scrubbed = stripUnsupportedEvaluativePadding({
-          article: {
-            title: article.title,
-            summary: article.summary,
-            lead: article.lead,
-            sections: article.sections.map((s) => ({
-              heading: s.heading,
-              paragraphs: s.paragraphs,
-              lists: s.lists,
-            })),
-          },
-          claimStatements: claimSelection.selectedClaims.map((c) => ({
-            statement: c.statement,
-          })),
-          keepFacets,
-        });
-        article = {
-          ...article,
-          title: scrubbed.title,
-          summary: scrubbed.summary,
-          lead: scrubbed.lead,
-          sections: scrubbed.sections.map((s, i) => ({
-            ...article!.sections[i]!,
-            paragraphs: s.paragraphs,
-          })),
+      // Architecture simplify: no post-LLM prose mutation on OPTION B.
+      // Defects are handled inside the Writer loop via VALIDATE → REGENERATE (bounded).
+      // Legacy applyArticlePlanComplianceMutations / applyBaselineQualityRepair remain
+      // in-repo for LEGACY_ONLY callers but are off the new generation path.
+      articlePlanComplianceMutationMeta = {
+        applied: false,
+        mutated: false,
+        proseMutationPolicy: "OPTION_B_NO_POST_LLM_PROSE_MUTATION",
+        droppedSentences: 0,
+        decisions: [],
+      };
+      if (articlePlanComplianceMeta) {
+        articlePlanComplianceMeta = {
+          ...articlePlanComplianceMeta,
+          completionOnlyMutations: articlePlanComplianceMutationMeta,
         };
       }
+
+      // Integrity already hard-gated Writer output inside the attempt loop.
+      // Re-check here as final inspection only (no rewrite).
+      const finalIntegrity = validatePostTransformIntegrity({
+        title: article.title,
+        summary: article.summary,
+        sections: article.sections.map((s) => ({
+          paragraphs: s.paragraphs,
+          heading: s.heading,
+        })),
+      });
+      publishValidation.integrityPass = finalIntegrity.ok;
+      if (!finalIntegrity.ok) {
+        throw new GenerationPreflightError(
+          "plan_execution_failed",
+          `PLAN_EXECUTION_FAILED: POST_TRANSFORM_INTEGRITY_FAILED after accepted Writer output: ${finalIntegrity.findings
+            .map((f) => f.message)
+            .join(" | ")
+            .slice(0, 400)}`,
+        );
+      }
       assertSectionHeadingsAgainstStructurePattern(article, selectedStructurePattern);
+      // Ensure final article object never carries a lead key on the new write path.
+      article = stripArticleLeadKey(
+        article as unknown as Record<string, unknown>,
+      ) as unknown as BloggerArticleStructured;
       const rawOut = llm.output as Record<string, unknown>;
       const hasExplicitProvenance =
         Array.isArray(rawOut.titleClaimIds) ||
@@ -1547,71 +1399,6 @@ export class ContentGenerationService {
           sectionCount: article.sections.length,
         });
       }
-      const optionBPost = isOptionBGenerationMode(
-        brainGenerationPromptContract as Record<string, unknown>,
-      );
-      // OPTION B: WritingSkeleton + EvidencePack are SSOT — do not hard-fail on legacy
-      // claimUsagePlan / SEGMENT roleAllowlist bookkeeping after RAW already passed.
-      if (!optionBPost) {
-      const claimIdCompliance = checkPlanCompliance({
-        contract: brainGenerationContract,
-        provenance: brainProvenance,
-        sectionCount: article.sections.length,
-        requireProvenance: true,
-      });
-      const hardCodes = new Set([
-        "OMITTED_CLAIM_USED",
-        "CTA_NEW_CLAIM",
-        "PROVENANCE_MISSING",
-        "PLAN_STRUCTURE",
-      ]);
-      // UNSUPPORTED_CLAIM_ID: clamp away — do not abort after RAW plan already passed.
-      const hardFindings = claimIdCompliance.findings.filter((f) => hardCodes.has(f.code));
-      if (hardFindings.length > 0) {
-        throw new Error(
-          `Plan compliance failed: ${hardFindings.map((f) => f.code).join(",")}`,
-        );
-      }
-      brainProvenance = clampProvenanceToAllowlist(
-        brainProvenance,
-        brainGenerationContract.roleAllowlist,
-      );
-      detectBadInputClaims(
-        claimSelection.selectedClaims.map((c) => ({
-          id: c.id,
-          statement: c.statement,
-          kind: c.kind,
-        })),
-      );
-      // Deterministic: drop trailing generic CTA bridge when plan says omit
-      const { isGenericCtaBridgeSection } = await import("./claim-usage-validation.js");
-      if (claimUsagePlan.omitCtaBridge && article.sections.length >= 2) {
-        const last = article.sections[article.sections.length - 1]!;
-        if (isGenericCtaBridgeSection(last)) {
-          article = { ...article, sections: article.sections.slice(0, -1) };
-        }
-      }
-      const usageCheck = validateArticleAgainstClaimUsagePlan(article, claimUsagePlan, {
-        claimStatements: claimSelection.selectedClaims,
-      });
-      if (!usageCheck.ok) {
-        const blocking = usageCheck.findings.filter((f) => f.severity === "BLOCKING");
-        // Auto-drop last generic CTA section once more if that is the only blocker
-        if (
-          blocking.length > 0 &&
-          blocking.every(
-            (f) => f.code === "GENERIC_CTA_BRIDGE_ONLY" || f.code === "CTA_BRIDGE_SHOULD_OMIT",
-          ) &&
-          article.sections.length >= 2
-        ) {
-          article = { ...article, sections: article.sections.slice(0, -1) };
-        } else if (blocking.length > 0) {
-          throw new Error(
-            `Claim usage plan validation failed: ${blocking.map((f) => f.code).join(",")}`,
-          );
-        }
-      }
-      } // end !optionBPost legacy claimUsage / SEGMENT hard gates
     } catch (error) {
       if (error instanceof GenerationPreflightError && error.code === "plan_execution_failed") {
         // Always finalize ModelRun — plan_execution_failed must not leave RUNNING forever
@@ -1664,6 +1451,7 @@ export class ContentGenerationService {
           articleOutputContract,
           responseSchemaSections: getSectionsCardinalityFromLlmSchema(outputSchema),
           generationAttempt,
+          generationAttemptTraces,
           rawPlanCompliance: rawPlanComplianceMeta,
         },
       });
@@ -1676,6 +1464,7 @@ export class ContentGenerationService {
         status: "RUNNING",
         metadata: {
           generationAttempt,
+          generationAttemptTraces,
           rawPlanCompliance: rawPlanComplianceMeta,
           planViolationFeedback,
           generationAuthority: finalGenerationAuthority,
@@ -1693,26 +1482,37 @@ export class ContentGenerationService {
     const articleImages = imageResolution.images;
 
     const body = structuredToPlainBody(article, { images: articleImages });
-    const optionBClaimGate = isOptionBGenerationMode(
-      brainGenerationPromptContract as Record<string, unknown>,
-    );
     const storedAllowlist = (
       brainGenerationPromptContract as { evidenceAllowlistIds?: string[] }
     ).evidenceAllowlistIds;
-    const allowedEvidenceIds = optionBClaimGate
-      ? Array.isArray(storedAllowlist) && storedAllowlist.length > 0
+    const allowedEvidenceIds =
+      Array.isArray(storedAllowlist) && storedAllowlist.length > 0
         ? storedAllowlist
-        : [
-            "title::full",
-            ...Array.from({ length: 24 }, (_, i) => `title_facet::${i}`),
-          ]
-      : undefined;
+        : ["title::full", ...Array.from({ length: 24 }, (_, i) => `title_facet::${i}`)];
+    const attestedEvidenceSurfaces = attestedSurfacesFromArticlePlan(
+      (finalGenerationAuthority?.ARTICLE_PLAN as
+        | {
+            title?: { facts?: string[] };
+            lead?: { facts?: string[] };
+            body?: Array<{ facts?: string[] }>;
+          }
+        | undefined) ??
+        (articlePlan as
+          | {
+              title?: { facts?: string[] };
+              lead?: { facts?: string[] };
+              body?: Array<{ facts?: string[] }>;
+            }
+          | undefined),
+    );
     const claimCheck = validateClaimsAgainstArticle({
       article,
       claims,
       bodyText: body,
       allowedEvidenceIds,
+      attestedEvidenceSurfaces,
     });
+    publishValidation.claimValidationPass = claimCheck.ok;
     if (!claimCheck.ok) {
       await this.repo.completeModelRun(modelRun.id, {
         status: "FAILED",
@@ -1876,7 +1676,10 @@ export class ContentGenerationService {
           },
           brainProvenance,
           generationAttempt,
+          generationAttemptTraces,
           rawPlanCompliance: rawPlanComplianceMeta,
+          articlePlanCompliance: articlePlanComplianceMeta,
+          articlePlanComplianceMutations: articlePlanComplianceMutationMeta,
           planViolationFeedback,
           generationAuthority: finalGenerationAuthority,
           retrievedExperienceIds,
@@ -1893,123 +1696,16 @@ export class ContentGenerationService {
         },
       });
 
-      await this.observeEditorialBrainShadowSafe({
-        channel: "BLOG",
-        topicId: input.topicId,
-        strategyId: input.strategyId,
-        contentId: content.id,
-        contentVersionId: version.id,
-        formatKey: resolvedFormatKey ?? articleFormat,
-        contentType: "blogger-article",
-        structurePatternId: selectedStructurePattern?.patternId ?? null,
-        editorialPatternId: selectedEditorialPattern?.patternId ?? null,
-        availableClaims: promptClaims.map((c) => ({
-          id: c.id,
-          statement: c.statement,
-          kind:
-            claimSelection.selectedClaims.find((s) => s.id === c.id)?.kind ??
-            "other",
-        })),
-        selectedClaims: claimSelection.selectedClaims.map((c) => ({
-          id: c.id,
-          statement: c.statement,
-          kind: c.kind,
-        })),
-        deferredClaimIds: claimSelection.deferredClaimIds,
-        openingClaimIds: claimSelection.openingClaimIds,
-        hookClaimIds: claimUsagePlan.hookClaimIds,
-        developmentClaimIds: claimUsagePlan.developmentClaimIds,
-        softLengthGuidance: isOptionBGenerationMode(
-          brainGenerationPromptContract as Record<string, unknown>,
-        )
-          ? null
-          : {
-              targetMaxCharsApprox: claimUsagePlan.claimBudget.targetMaxCharsApprox,
-              targetMaxParagraphs: claimUsagePlan.claimBudget.targetMaxParagraphs,
-            },
-        generatorModelRunIds: [modelRun.id],
-        validatorResults: { claimUsageOk: true, planComplianceOk: true },
-        legacyDecision: "GENERATED_OK",
-        artifact: {
-          channel: "BLOG",
-          title: article.title,
-          summary: article.summary,
-          lead: article.lead,
-          sections: article.sections.map((s) => ({
-            paragraphs: s.paragraphs,
-            lists: s.lists,
-          })),
-          bodyText: body,
-        },
-        claimStatements: claimSelection.selectedClaims.map((c) => ({
-          id: c.id,
-          statement: c.statement,
-        })),
-        optionBNaturalIntro: isOptionBGenerationMode(
-          brainGenerationPromptContract as Record<string, unknown>,
-        ),
-        sourceTexts:
-          typeof evidencePackPrompt.officialDescription === "string" &&
-          evidencePackPrompt.officialDescription.trim()
-            ? [evidencePackPrompt.officialDescription.trim()]
-            : undefined,
-      });
-
-      // Explicit brainGuidedRepair:false skips repair LLM even in ACTIVE
-      // (Brain observe above still runs — evaluation without regen/repair).
-      const allowBrainRepair =
-        input.brainGuidedRepair === true ||
-        (input.brainGuidedRepair !== false &&
-          (await import("../editorial-brain/index.js")).isEditorialBrainActive());
-      if (allowBrainRepair) {
-        // Structural plan defects never reach here (RAW gate). Local TARGETED_REPAIR only.
-        const repaired = await runBoundedBrainRepairOnVersion({
-          repo: this.repo,
-          llm: this.llm,
-          generationModel: this.models.generation,
-          content,
-          version,
-          article,
-          modelRunId: modelRun.id,
-          strategyId: input.strategyId,
-          availableClaims: promptClaims.map((c) => ({
-            id: c.id,
-            statement: c.statement,
-            kind:
-              claimSelection.selectedClaims.find((s) => s.id === c.id)?.kind ??
-              "other",
-          })),
-          selectedClaims: claimSelection.selectedClaims.map((c) => ({
-            id: c.id,
-            statement: c.statement,
-            kind: c.kind,
-          })),
-          deferredClaimIds: claimSelection.deferredClaimIds,
-          openingClaimIds: claimSelection.openingClaimIds,
-          hookClaimIds: claimUsagePlan.hookClaimIds,
-          developmentClaimIds: claimUsagePlan.developmentClaimIds,
-          formatKey: resolvedFormatKey ?? articleFormat,
-          structurePatternId: selectedStructurePattern?.patternId ?? null,
-          editorialPatternId: selectedEditorialPattern?.patternId ?? null,
-          softLengthGuidance: {
-            targetMaxCharsApprox: claimUsagePlan.claimBudget.targetMaxCharsApprox,
-            targetMaxParagraphs: claimUsagePlan.claimBudget.targetMaxParagraphs,
-          },
-          brainProvenance,
-          images: articleImages,
-          skipStructuralTargetedRepair: skipTargetedRepairForStructural,
-          rawPlanCompliant: Boolean(rawPlanComplianceMeta && (rawPlanComplianceMeta as { ok?: boolean }).ok),
-        });
-        return {
-          content: repaired.content,
-          version: repaired.version,
-          article: repaired.article,
-          modelRunId: repaired.modelRunId,
-          brainGuided: repaired,
-        };
-      }
-
-      return { content, version, article, modelRunId: modelRun.id };
+      // R117: full Brain observe / bounded Brain repair path remain removed.
+      // Minimal deterministic OPTION B baseline hygiene (REPETITION/catalog/eval pad)
+      // is applied above as a bounded TARGETED_REPAIR-equivalent — not a Brain revive.
+      return {
+        content,
+        version,
+        article,
+        modelRunId: modelRun.id,
+        publishValidation,
+      };
     } catch (error) {
       // Do not clobber a COMPLETED Generator ModelRun when post-persist Brain repair fails.
       const alreadyPersisted = Boolean(llm);
@@ -2145,34 +1841,7 @@ export class ContentGenerationService {
         createdBy: "brain-defer",
         modelRunId: modelRun.id,
       });
-      await this.observeEditorialBrainShadowSafe({
-        channel: "X",
-        topicId: input.topicId,
-        strategyId: input.strategyId,
-        contentId: content.id,
-        contentVersionId: version.id,
-        formatKey: null,
-        contentType: "x-post",
-        availableClaims: claimStatements.map((c) => ({ ...c, kind: "other" })),
-        selectedClaims: claimStatements.map((c) => ({ ...c, kind: "other" })),
-        openingClaimIds: material.hookClaimIds,
-        hookClaimIds: material.hookClaimIds,
-        developmentClaimIds: material.supportClaimIds,
-        generatorModelRunIds: [modelRun.id],
-        legacyDecision: "GENERATED_OK",
-        artifact: {
-          channel: "X",
-          body: "",
-          reply: null,
-          posts: [],
-        },
-        claimStatements,
-      });
-      await this.stampActiveBrainAuthoritySafe({
-        channel: "X",
-        contentVersionId: version.id,
-        legacyDecision: "GENERATED_OK",
-      });
+      // R117: no Brain observe / lifecycle stamp on defer path
       return { content, version, body: "", modelRunId: modelRun.id };
     }
 
@@ -2259,8 +1928,8 @@ export class ContentGenerationService {
     if (parsed.reply && /続きはこちら/.test(parsed.reply) && parsed.reply.length < 20) {
       throw new Error("Low-value reply-only X content is forbidden");
     }
-    const { hasEvaluativeRelation } = await import(
-      "../editorial-brain/shadow/predicate-families.js"
+    const { hasPromotionalEvalSurface } = await import(
+      "../editorial-brain/generation/claim-eval-support.js"
     );
     const { detectSourceTitleRestatement, allocateXFacetContributions } = await import(
       "../editorial-brain/generation/contribution-compliance.js"
@@ -2275,8 +1944,8 @@ export class ContentGenerationService {
       hookClaimIds: material.hookClaimIds,
       supportClaimIds: material.supportClaimIds,
     });
-    if (restatement.hit || hasEvaluativeRelation(xBody) || material.hookFacets.length > 0) {
-      if (restatement.hit || hasEvaluativeRelation(xBody)) {
+    if (restatement.hit || hasPromotionalEvalSurface(xBody) || material.hookFacets.length > 0) {
+      if (restatement.hit || hasPromotionalEvalSurface(xBody)) {
         xBody = compactFacetsToXPost({
           hookFacets: facetAlloc.hookContributions.map((c) => c.facet),
           supportFacets: facetAlloc.supportContributions.map((c) => c.facet),
@@ -2325,129 +1994,8 @@ export class ContentGenerationService {
       modelRunId: modelRun.id,
     });
 
-    await this.observeEditorialBrainShadowSafe({
-      channel: "X",
-      topicId: input.topicId,
-      strategyId: input.strategyId,
-      contentId: content.id,
-      contentVersionId: version.id,
-      formatKey: null,
-      contentType: "x-post",
-      availableClaims: claimStatements.map((c) => ({ ...c, kind: "other" })),
-      selectedClaims: claimStatements.map((c) => ({ ...c, kind: "other" })),
-      openingClaimIds: material.hookClaimIds,
-      hookClaimIds: material.hookClaimIds,
-      developmentClaimIds: material.supportClaimIds,
-      generatorModelRunIds: [modelRun.id],
-      legacyDecision: "GENERATED_OK",
-      artifact: {
-        channel: "X",
-        body: parsed.body,
-        reply: parsed.reply,
-        posts: [
-          {
-            order: 1,
-            text: parsed.body,
-            claimIdsUsed: parsed.usedClaimIds ?? material.hookClaimIds,
-            function: "hook",
-          },
-        ],
-      },
-      claimStatements,
-    });
-    await this.stampActiveBrainAuthoritySafe({
-      channel: "X",
-      contentVersionId: version.id,
-      legacyDecision: "GENERATED_OK",
-    });
-
+    // R117: no Brain observe / lifecycle stamp on X generation path
     return { content, version, body: parsed.body, modelRunId: modelRun.id };
-  }
-
-  /**
-   * ACTIVE: stamp Brain lifecycle from latest BrainRun (fail-closed for X repair, etc.).
-   * SHADOW: no-op.
-   */
-  private async stampActiveBrainAuthoritySafe(input: {
-    channel: "BLOG" | "X";
-    contentVersionId: string;
-    legacyDecision: string;
-  }): Promise<void> {
-    const {
-      isEditorialBrainActive,
-      applyBrainProductionAuthority,
-      persistBrainLifecycleOnVersion,
-      getChannelCapabilities,
-      resolveEditorialBrainMode,
-    } = await import("../editorial-brain/index.js");
-    if (!isEditorialBrainActive()) return;
-    const brainRepo = this.repo.createEditorialBrainRepository();
-    const run = await brainRepo.findLatestBrainRunByContentVersion(input.contentVersionId);
-    if (!run) return;
-    const applied = applyBrainProductionAuthority({
-      mode: resolveEditorialBrainMode(),
-      channel: input.channel,
-      channelCapabilities: getChannelCapabilities(input.channel),
-      brainDecision: (run.brainDecision as string) ?? "ESCALATE",
-      legacyDecision: input.legacyDecision,
-      repairAttempted: false,
-      brainRunId: run.id,
-      initialContentVersionId: input.contentVersionId,
-    });
-    await persistBrainLifecycleOnVersion(this.repo, input.contentVersionId, applied.lifecycle);
-    await brainRepo.completeBrainRun(run.id, {
-      finalDecision: applied.finalDecision,
-      metadata: {
-        ...(typeof run.metadata === "object" && run.metadata ? (run.metadata as object) : {}),
-        brainLifecycle: applied.lifecycle,
-        downstreamAllowed: applied.downstreamAllowed,
-        blockReason: applied.lifecycle.blockReason,
-      },
-    });
-  }
-
-  /**
-   * Observe Brain after generation.
-   * SHADOW: never throws into production path.
-   * ACTIVE: fail-closed — stamps BLOCKED_INTERNAL and rethrows (no GENERATED_OK bypass).
-   */
-  private async observeEditorialBrainShadowSafe(
-    input: Parameters<EditorialBrainShadowService["observeGeneration"]>[0],
-  ): Promise<void> {
-    const { isEditorialBrainActive, handleBrainInternalError, persistBrainLifecycleOnVersion } =
-      await import("../editorial-brain/index.js");
-    const { getChannelCapabilities } = await import("../editorial-brain/index.js");
-    const { resolveEditorialBrainMode } = await import("../editorial-brain/index.js");
-    try {
-      const brain = new EditorialBrainShadowService(this.repo.createEditorialBrainRepository());
-      await brain.observeGeneration(input);
-    } catch (error) {
-      const mode = resolveEditorialBrainMode();
-      const handled = handleBrainInternalError({
-        mode,
-        channel: input.channel,
-        channelCapabilities: getChannelCapabilities(input.channel),
-        errorMessage: error instanceof Error ? error.message : String(error),
-        legacyDecision: input.legacyDecision,
-        contentVersionId: input.contentVersionId ?? null,
-      });
-      if (input.contentVersionId) {
-        await persistBrainLifecycleOnVersion(
-          this.repo,
-          input.contentVersionId,
-          handled.lifecycle,
-        ).catch(() => undefined);
-      }
-      if (isEditorialBrainActive()) {
-        throw new Error(
-          `BRAIN_INTERNAL_ERROR: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-      console.warn(
-        "[editorial-brain] shadow observe failed:",
-        error instanceof Error ? error.message : error,
-      );
-    }
   }
 
   async runQualityReviews(

@@ -7,9 +7,21 @@ import {
   type ArticleImageSelectionOptions,
 } from "./article-images.js";
 
+const EMPTY_RESOLUTION = {
+  images: [] as ArticleImage[],
+  productId: null as string | null,
+  productUrl: null as string | null,
+  externalIdsTried: [] as string[],
+  researchImageCount: 0,
+  pageImageCount: 0,
+};
+
 /**
  * Resolve product images for a Topic / AffiliateProduct.
  * Reuses ResearchImage + SourceDocument.imageReferences — no download, no new SSOT table.
+ *
+ * Prefer AffiliateProduct when linked; otherwise resolve via Topic.researchItemId
+ * (page-evidence ingest path without AffiliateProduct bootstrap).
  */
 export async function resolveArticleImagesForTopic(
   repo: LifecycleRepository,
@@ -24,20 +36,26 @@ export async function resolveArticleImagesForTopic(
   pageImageCount: number;
 }> {
   const topic = await repo.findTopicCandidate(topicId);
-  if (!topic?.affiliateProductId) {
-    return {
-      images: [],
-      productId: null,
-      productUrl: null,
-      externalIdsTried: [],
-      researchImageCount: 0,
-      pageImageCount: 0,
-    };
+  if (!topic) {
+    return { ...EMPTY_RESOLUTION };
   }
-  return resolveArticleImagesForProduct(repo, topic.affiliateProductId, {
-    ...options,
-    altBase: options?.altBase ?? shortAltFromTitle(topic.title),
-  });
+
+  if (topic.affiliateProductId) {
+    return resolveArticleImagesForProduct(repo, topic.affiliateProductId, {
+      ...options,
+      altBase: options?.altBase ?? shortAltFromTitle(topic.title),
+    });
+  }
+
+  const researchItemId = resolveTopicResearchItemId(topic);
+  if (researchItemId) {
+    return resolveArticleImagesForResearchItem(repo, researchItemId, {
+      ...options,
+      altBase: options?.altBase ?? shortAltFromTitle(topic.title),
+    });
+  }
+
+  return { ...EMPTY_RESOLUTION };
 }
 
 export async function resolveArticleImagesForProduct(
@@ -54,14 +72,7 @@ export async function resolveArticleImagesForProduct(
 }> {
   const product = await repo.findAffiliateProduct(affiliateProductId);
   if (!product) {
-    return {
-      images: [],
-      productId: null,
-      productUrl: null,
-      externalIdsTried: [],
-      researchImageCount: 0,
-      pageImageCount: 0,
-    };
+    return { ...EMPTY_RESOLUTION };
   }
 
   const externalIds = new Set<string>();
@@ -91,6 +102,53 @@ export async function resolveArticleImagesForProduct(
     images,
     productId: product.id,
     productUrl: product.url,
+    externalIdsTried,
+    researchImageCount: researchImages.length,
+    pageImageCount: pageImageUrls.length,
+  };
+}
+
+/**
+ * Resolve images from ResearchItem when Topic has no AffiliateProduct.
+ * Same selectArticleImages / dedupe path as the product resolver.
+ */
+export async function resolveArticleImagesForResearchItem(
+  repo: LifecycleRepository,
+  researchItemId: string,
+  options?: ArticleImageSelectionOptions,
+): Promise<{
+  images: ArticleImage[];
+  productId: string | null;
+  productUrl: string | null;
+  externalIdsTried: string[];
+  researchImageCount: number;
+  pageImageCount: number;
+}> {
+  const item = await repo.findResearchItem(researchItemId);
+  if (!item) {
+    return { ...EMPTY_RESOLUTION };
+  }
+
+  const researchImages = await repo.listResearchImagesByResearchItemId(item.id);
+  const externalIdsTried = item.externalId?.trim() ? [item.externalId.trim()] : [];
+
+  const urlCandidates = [item.url].filter((u): u is string => Boolean(u?.trim()));
+  const pageDocs = await repo.listSourceDocumentsImageReferencesByUrls(urlCandidates);
+  const pageImageUrls = pageDocs.flatMap((d) => d.imageReferences);
+
+  const images = selectArticleImages({
+    researchImages,
+    pageImageUrls,
+    options: {
+      ...options,
+      altBase: options?.altBase ?? shortAltFromTitle(item.title),
+    },
+  });
+
+  return {
+    images,
+    productId: null,
+    productUrl: item.url,
     externalIdsTried,
     researchImageCount: researchImages.length,
     pageImageCount: pageImageUrls.length,
@@ -144,6 +202,20 @@ export async function resolveImagesForContentVersion(
       pageImageCount: resolved.pageImageCount,
     },
   };
+}
+
+function resolveTopicResearchItemId(topic: {
+  researchItemId?: string | null;
+  metadata?: unknown;
+}): string | null {
+  const direct = topic.researchItemId?.trim();
+  if (direct) return direct;
+  const meta =
+    topic.metadata && typeof topic.metadata === "object" && !Array.isArray(topic.metadata)
+      ? (topic.metadata as Record<string, unknown>)
+      : null;
+  const fromMeta = typeof meta?.researchItemId === "string" ? meta.researchItemId.trim() : "";
+  return fromMeta || null;
 }
 
 function shortAltFromTitle(title: string | null | undefined): string {

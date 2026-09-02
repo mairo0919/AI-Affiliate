@@ -18,6 +18,7 @@ export { buildCoreEditorialPlan } from "./core/planner.js";
 export type { BuildCorePlanInput, PlannerClaimInput } from "./core/planner.js";
 export {
   channelExtensionBoundaryContract,
+  ensureChannelModulesRegistered,
   getChannelModule,
   getChannelCapabilities,
   listRegisteredChannels,
@@ -35,6 +36,7 @@ export {
   buildLifecycleRecord,
   formatActiveFinalDecision,
   MAX_ACTIVE_REPAIR_ATTEMPTS,
+  MAX_TARGETED_REPAIR_ATTEMPTS,
 } from "./core/active-lifecycle.js";
 export type { BrainLifecycleState, BrainLifecycleRecord } from "./core/active-lifecycle.js";
 export {
@@ -67,23 +69,6 @@ export type {
   CompatibilityCutoverAction,
   CompatibilityAssessment,
 } from "./core/compatibility.js";
-export { auditActiveCutover } from "./cutover/audit-active-cutover.js";
-export type { CutoverAuditReport } from "./cutover/audit-active-cutover.js";
-export { stampExistingContentVersion } from "./cutover/stamp-existing.js";
-export type { StampExistingResult } from "./cutover/stamp-existing.js";
-export { evaluateExistingContentVersion } from "./cutover/evaluate-existing.js";
-export type {
-  EvaluateExistingResult,
-  CutoverBucket,
-  ProductionRelevance,
-} from "./cutover/evaluate-existing.js";
-export { planActiveCutover } from "./cutover/plan-active-cutover.js";
-export type { ActiveCutoverPlan, CutoverPlanItem } from "./cutover/plan-active-cutover.js";
-export { executeActiveCutover } from "./cutover/execute-active-cutover.js";
-export type {
-  ActiveCutoverExecuteReport,
-  CutoverExecuteResultRow,
-} from "./cutover/execute-active-cutover.js";
 export {
   readBrainLifecycle,
   mergeBrainLifecycleIntoStructured,
@@ -103,36 +88,10 @@ export { blogChannelModule, buildBlogChannelPlan, decideOmitCtaBridge } from "./
 export type { BlogChannelPlanSpecifics } from "./channels/blog/adapter.js";
 export { xChannelModule, buildXChannelPlan } from "./channels/x/adapter.js";
 export type { XChannelPlanSpecifics } from "./channels/x/adapter.js";
-export { reviewArtifactShadow } from "./shadow/reviewer.js";
-export type { ReviewableArtifact, ReviewableBlogArtifact, ReviewableXArtifact } from "./shadow/reviewer.js";
-export { DeterministicSemanticReviewer, defaultSemanticReviewer } from "./shadow/semantic-reviewer.js";
-export type {
-  AssertionSupportType,
-  SemanticAssertion,
-  SemanticReviewResult,
-  SemanticReviewStats,
-  SemanticReviewerPort,
-} from "./shadow/semantic-types.js";
-export {
-  EditorialBrainShadowService,
-  ensureChannelModulesRegistered,
-} from "./shadow/observe.js";
-export type { ShadowObserveInput, ShadowObserveResult } from "./shadow/observe.js";
-export { inspectEditorialBrainRun } from "./inspect-run.js";
-export type { InspectBrainRunReport } from "./inspect-run.js";
-export { runShadowValidation } from "./validation/validate-shadow.js";
-export type { ShadowValidationReport, ValidationSampleResult } from "./validation/validate-shadow.js";
 export {
   classifyClaimProfiles,
   inferClaimKindFromStatement,
 } from "./validation/claim-profile-tags.js";
-export { VALIDATION_FIXTURES } from "./validation/fixtures.js";
-export {
-  detectPredicateFamilies,
-  hasEvaluativeRelation,
-  classifyRepetitionKind,
-} from "./shadow/predicate-families.js";
-export type { PredicateFamily, RepetitionKind } from "./shadow/predicate-families.js";
 export {
   buildBrainGenerationInputContract,
   buildRoleClaimAllowlist,
@@ -146,34 +105,16 @@ export { normalizeArticleProvenance, allProvenanceClaimIds, clampProvenanceToAll
 export type { ArticleProvenance } from "./generation/provenance.js";
 export { checkPlanCompliance } from "./generation/plan-compliance.js";
 export type { PlanComplianceFinding, PlanComplianceResult } from "./generation/plan-compliance.js";
-export {
-  mapFailuresToRepairTargets,
-  MAX_TARGETED_REPAIR_ATTEMPTS,
-} from "./generation/repair-target.js";
-export type {
-  RepairTarget,
-  RepairStopReason,
-  BlogArticleParts,
-} from "./generation/repair-target.js";
-export { runBoundedTargetedRepair, applyRepairs } from "./generation/targeted-repair.js";
 export { detectBadInputClaims, isTitleRichClaim, isCastListClaim, looksLikeJammedCastNames } from "./generation/bad-claim-input.js";
-export { evaluateBlogArticleEditorialSufficiency } from "./generation/article-sufficiency.js";
-export type { ArticleSufficiencyResult } from "./generation/article-sufficiency.js";
 export {
   assessXEditorialMaterial,
   buildXGenerationPromptContract,
 } from "./generation/x-generation-contract.js";
 export type { XMaterialAssessment } from "./generation/x-generation-contract.js";
-export { runBoundedBrainRepairOnVersion } from "./generation/brain-guided-blogger.js";
-export type {
-  BrainGuidedGenerateResult,
-  BrainGuidedGenerateInput,
-} from "./generation/brain-guided-blogger.js";
 export {
   buildContributionPlan,
   contributionsFromClaim,
   toRoleContributionBoundaries,
-  unusedContributionsForRepair,
   consumedFacetKeysOutsideTarget,
   facetKey,
   normalizeAtomicFacets,
@@ -183,18 +124,35 @@ export type {
   ContributionPlan,
 } from "./generation/informational-contribution.js";
 export {
-  buildSegmentContributionAllocation,
-  validateContributionCompliance,
   detectSourceTitleRestatement,
   allocateXFacetContributions,
+  contributionFacetPresent,
 } from "./generation/contribution-compliance.js";
+export {
+  splitIntoSentences,
+  extractTextFacets,
+  extractNameTokens,
+  isNamingClaimStatement,
+} from "./generation/text-surface.js";
+export {
+  claimSupportsEvalSurface,
+  hasPromotionalEvalSurface,
+} from "./generation/claim-eval-support.js";
+export { hasPadShellSignal, hasInterpretivePadShell } from "./generation/pad-shell-signal.js";
+export {
+  validateArticlePlanCompliance,
+  applyArticlePlanComplianceMutations,
+  articlePlanComplianceAllowsPersist,
+} from "./generation/article-plan-compliance.js";
+export {
+  matchFactStrength,
+  resolveFactRealization,
+  evaluateFactRealization,
+  isFactRealized,
+} from "./generation/plan-fact-matching.js";
+export type { FactRealizationStatus, FactRealizationResult } from "./generation/plan-fact-matching.js";
 export type {
-  SegmentContributionAllocation,
-  SegmentContributionContract,
-  ContributionComplianceResult,
-} from "./generation/contribution-compliance.js";
-export { selectRepairOperation, buildDeterministicReplaceText, buildDeterministicCompressText, filterStrongUnused, hasFactualCore } from "./generation/repair-operation.js";
-export type { RepairOperation, RepairOperationDecision } from "./generation/repair-operation.js";
-export { validateRepairedSegment, mergeRepairSuccessResults } from "./generation/repair-success.js";
-export { classifyRepairRun, classifyRepairSegment } from "./generation/repair-diagnostics.js";
-export type { RepairFailureClass, SegmentRepairDiag } from "./generation/repair-diagnostics.js";
+  ArticlePlanComplianceResult,
+  ArticlePlanComplianceFinding,
+  ArticlePlanComplianceMutationResult,
+} from "./generation/article-plan-compliance.js";

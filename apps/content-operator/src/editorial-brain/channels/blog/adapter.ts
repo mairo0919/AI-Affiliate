@@ -65,6 +65,6 @@ export function buildBlogChannelPlan(core: CoreEditorialPlan): ChannelEditorialP
 
 export const blogChannelModule: ChannelEditorialModule = {
   channel: "BLOG",
-  capabilities: { targetedRepair: true },
+  capabilities: { targetedRepair: false },
   buildChannelPlan: buildBlogChannelPlan,
 };

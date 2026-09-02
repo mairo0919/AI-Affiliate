@@ -238,7 +238,7 @@ export function extractStructureBlocksFromFeatures(
     allowOmitIfClaimsScarce: false,
     generation: makeGeneration({
       readerFunction: scenario
-        ? "develop_confirmed_scene_or_trait_so_reader_wants_to_know_more"
+        ? "carry_reader_through_what_happens_from_evidence"
         : "develop_confirmed_differentiator_without_catalog_readout",
       transitionFunction: "deepen_hook_without_repeating_it",
       claimKindsPreferred: productFactMid

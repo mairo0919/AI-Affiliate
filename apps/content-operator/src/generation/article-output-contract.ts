@@ -84,6 +84,38 @@ export function deriveArticleOutputContract(
   };
 }
 
+/**
+ * OPTION B fallback when Structure Pattern is absent (r79).
+ * claimUsagePlan.effectiveMax/MinArticleSections still bound sections[].
+ */
+export function articleOutputContractFromSectionBounds(input: {
+  minArticleSections: number;
+  maxArticleSections: number;
+}): ArticleOutputContract {
+  const minArticleSections = Math.max(1, input.minArticleSections);
+  const maxArticleSections = Math.max(minArticleSections, input.maxArticleSections);
+  const sectionSlots: ArticleOutputSectionSlot[] = Array.from(
+    { length: maxArticleSections },
+    (_, i) => ({
+      role: i === 0 ? "interest_development" : `interest_development_${i + 1}`,
+      headingRequired: false,
+      usesList: false,
+      optional: i >= minArticleSections,
+    }),
+  );
+  return {
+    patternId: null,
+    leadRequired: true,
+    leadFromRole: null,
+    sectionSlots,
+    minArticleSections,
+    maxArticleSections,
+    maxNarrativeBlocks: maxArticleSections,
+    ctaWidgetRequired: true,
+    headingRequirements: sectionSlots.map((s) => s.headingRequired),
+  };
+}
+
 /** Prompt-safe slice of the contract (no prose). */
 export function toArticleOutputContractPromptFields(
   contract: ArticleOutputContract,

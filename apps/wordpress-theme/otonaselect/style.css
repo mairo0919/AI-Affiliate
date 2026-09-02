@@ -1,0 +1,345 @@
+/*
+Theme Name: オトナセレクト
+Theme URI: https://wordpress.org/
+Author: Otona Select
+Description: オトナセレクト専用の軽量ブロックテーマ。note風のシンプルな読み物＋商品紹介向け。白ベース、標準投稿・カテゴリ・タグに対応。
+Requires at least: 6.7
+Tested up to: 6.8
+Requires PHP: 8.0
+Version: 1.4.0
+License: GNU General Public License v2 or later
+License URI: https://www.gnu.org/licenses/gpl-2.0.html
+Text Domain: otonaselect
+Tags: blog, news, one-column, block-patterns, block-styles, full-site-editing, wide-blocks
+*/
+
+/*
+  Layout / presentation. Primary type & spacing scale lives in theme.json.
+  Factory HTML uses .blog-hero / .blog-sample / .blog-cta / .blog-meta-note.
+*/
+
+html {
+	overflow-x: clip;
+}
+
+body {
+	overflow-x: clip;
+}
+
+/* ----- Header ----- */
+.otonaselect-header-bar {
+	width: 100%;
+	gap: var(--wp--preset--spacing--40);
+}
+
+.otonaselect-nav {
+	margin: 0;
+}
+
+.otonaselect-nav p {
+	margin: 0;
+}
+
+.otonaselect-nav a {
+	text-decoration: none;
+	font-size: 0.875rem;
+	line-height: 1.4;
+}
+
+.otonaselect-nav a:hover,
+.otonaselect-nav a:focus-visible {
+	text-decoration: underline;
+}
+
+.otonaselect-site-title a {
+	color: inherit;
+	text-decoration: none;
+}
+
+/* ----- Home ----- */
+.otonaselect-home-columns {
+	gap: var(--wp--preset--spacing--60) !important;
+	align-items: start;
+	margin-bottom: 0;
+}
+
+.otonaselect-home-sidebar .wp-block-categories-list,
+.otonaselect-home-sidebar .wp-block-categories {
+	font-size: var(--wp--preset--font-size--medium);
+	line-height: 1.6;
+	margin: 0;
+	padding-left: 1.1em;
+}
+
+.otonaselect-home-sidebar .wp-block-tag-cloud,
+.otonaselect-tag-cloud {
+	font-size: var(--wp--preset--font-size--small) !important;
+	line-height: 1.7;
+}
+
+.otonaselect-card .wp-block-post-title {
+	margin-top: 0;
+	margin-bottom: 0;
+}
+
+.otonaselect-card-meta {
+	font-size: var(--wp--preset--font-size--small);
+}
+
+.otonaselect-card .wp-block-post-excerpt {
+	margin-top: 0;
+	margin-bottom: 0;
+}
+
+.otonaselect-card .wp-block-post-featured-image {
+	margin: 0;
+}
+
+.otonaselect-card .wp-block-post-featured-image img {
+	max-height: 11rem;
+	width: 100%;
+	object-fit: cover;
+	display: block;
+}
+
+.otonaselect-card .wp-block-post-featured-image:not(:has(img)) {
+	display: none !important;
+}
+
+/* ----- Sponsor ----- */
+.otonaselect-sponsor {
+	border: 1px dashed #cfcfcf;
+	background: #fafafa;
+	min-height: 4.5rem;
+	max-height: none;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	text-align: center;
+	color: #666;
+	font-size: 0.8125rem;
+	box-sizing: border-box;
+	width: 100%;
+}
+
+/* ----- Single article shell ----- */
+.otonaselect-single {
+	max-width: 100%;
+}
+
+.otonaselect-single-title {
+	margin-bottom: 0;
+	line-height: 1.35;
+}
+
+.single .otonaselect-single-title,
+body.single-post .otonaselect-single-title {
+	font-size: var(--wp--preset--font-size--x-large);
+}
+
+.otonaselect-post-meta {
+	font-size: 0.8125rem;
+	line-height: 1.5;
+	color: var(--wp--preset--color--muted, #5c5c5c);
+	gap: 0.5rem 0.75rem !important;
+	margin: 0;
+}
+
+.otonaselect-post-meta .wp-block-post-date,
+.otonaselect-post-meta .wp-block-post-terms {
+	margin: 0;
+	font-size: 0.8125rem;
+	color: var(--wp--preset--color--muted, #5c5c5c);
+}
+
+.otonaselect-post-meta .wp-block-post-terms:empty,
+.otonaselect-post-meta .wp-block-post-date:empty {
+	display: none;
+}
+
+.otonaselect-post-meta a {
+	color: inherit;
+	text-decoration: none;
+}
+
+.otonaselect-post-meta a:hover,
+.otonaselect-post-meta a:focus-visible {
+	text-decoration: underline;
+}
+
+.otonaselect-article-rule {
+	margin-top: 0.25rem;
+	margin-bottom: 0.5rem;
+}
+
+/* ----- Factory HTML inside post-content ----- */
+.otonaselect-post-content,
+.wp-block-post-content {
+	max-width: 100%;
+}
+
+.wp-block-post-content > p {
+	margin-top: 0;
+	margin-bottom: 1em;
+}
+
+.wp-block-post-content img {
+	height: auto;
+	max-width: 100%;
+	display: block;
+}
+
+/* Hero: full column width, natural aspect */
+.wp-block-post-content .blog-hero {
+	margin: 0 0 1.25em;
+	max-width: 100%;
+}
+
+.wp-block-post-content .blog-hero img {
+	width: 100%;
+	max-width: 100%;
+	height: auto;
+	object-fit: contain;
+}
+
+/* Samples: separate from hero; tame inline width:50% */
+.wp-block-post-content .blog-sample {
+	margin: 0 0 1.25em;
+	max-width: min(100%, 22rem);
+}
+
+.wp-block-post-content .blog-sample img {
+	width: 100% !important;
+	max-width: 100% !important;
+	height: auto !important;
+	object-fit: contain;
+}
+
+/* CTA button — only Factory .blog-cta links */
+.wp-block-post-content .blog-cta {
+	margin: 1.5em 0;
+}
+
+.wp-block-post-content .blog-cta a {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	box-sizing: border-box;
+	min-height: 2.875rem;
+	padding: 0.75rem 1.5rem;
+	background: #222222;
+	color: #ffffff !important;
+	text-decoration: none !important;
+	font-size: var(--wp--preset--font-size--medium);
+	font-weight: 600;
+	line-height: 1.3;
+	border-radius: 0.25rem;
+	border: 1px solid #222222;
+	max-width: 100%;
+	text-align: center;
+}
+
+.wp-block-post-content .blog-cta a:hover,
+.wp-block-post-content .blog-cta a:focus-visible {
+	background: #111111;
+	border-color: #111111;
+	outline: 2px solid #111111;
+	outline-offset: 2px;
+}
+
+/* Disclosure / notes */
+.wp-block-post-content .blog-meta-note {
+	font-size: 0.75rem !important;
+	line-height: 1.55 !important;
+	color: #5c5c5c;
+	margin: 0.35em 0;
+}
+
+.wp-block-post-content .blog-meta-note + .blog-meta-note {
+	margin-top: 0.15em;
+}
+
+.wp-block-post-content .blog-cta + .blog-meta-note {
+	margin-top: 1.75em;
+	padding-top: 1rem;
+	border-top: 1px solid var(--wp--preset--color--line, #e6e6e6);
+}
+
+/* ----- After content: sponsor / related / nav ----- */
+.otonaselect-after-content {
+	max-width: 100%;
+}
+
+.otonaselect-after-heading {
+	margin: 0;
+	font-weight: 700;
+}
+
+/* Hide related block when there are no post results (avoid large empty area) */
+.otonaselect-related-section:not(:has(.wp-block-post)) {
+	display: none;
+}
+
+.otonaselect-related-empty {
+	margin: 0;
+}
+
+.otonaselect-single-nav {
+	width: 100%;
+	font-size: var(--wp--preset--font-size--small);
+	align-items: center;
+}
+
+.otonaselect-single-nav .wp-block-post-navigation-link:not(:has(a)) {
+	display: none;
+}
+
+.otonaselect-back-top {
+	margin: 0;
+}
+
+.otonaselect-back-top a {
+	text-decoration: none;
+}
+
+.otonaselect-back-top a:hover,
+.otonaselect-back-top a:focus-visible {
+	text-decoration: underline;
+}
+
+.otonaselect-after-content .otonaselect-sponsor {
+	margin-bottom: 0;
+}
+
+/* ----- Mobile ----- */
+@media (max-width: 781px) {
+	.otonaselect-home-columns {
+		flex-wrap: wrap !important;
+		gap: var(--wp--preset--spacing--50) !important;
+	}
+
+	.otonaselect-home-columns > .wp-block-column {
+		flex-basis: 100% !important;
+		width: 100% !important;
+	}
+
+	.otonaselect-header-bar {
+		align-items: flex-start;
+	}
+
+	.single .otonaselect-single-title,
+	body.single-post .otonaselect-single-title {
+		font-size: var(--wp--preset--font-size--large);
+	}
+
+	.wp-block-post-content .blog-sample {
+		max-width: 100%;
+	}
+
+	.wp-block-post-content .blog-cta a {
+		display: flex;
+		width: 100%;
+		min-height: 3rem;
+		padding: 0.85rem 1.25rem;
+	}
+}

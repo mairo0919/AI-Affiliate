@@ -39,6 +39,13 @@ export interface DailySelectionConfig {
    * to full pool (never fail closed just because bucket is thin).
    */
   preferAgeBucket?: "RECENT" | "MID" | "OLDER" | "UNKNOWN" | null;
+  /**
+   * Deterministic sort overlay for content mix:
+   * - popularity: Analysis popularityScore first (POPULAR_RANKING)
+   * - performer: under-represented actress first, then score (PERFORMER_RANKING)
+   * LLM never invents ranks.
+   */
+  sortMode?: "default" | "popularity" | "performer";
 }
 
 export interface DailySelectionResult {
@@ -69,6 +76,48 @@ function sortWithinBucket(a: DailyCandidateScore, b: DailyCandidateScore): numbe
   return b.totalScore - a.totalScore;
 }
 
+function sortByPopularity(a: DailyCandidateScore, b: DailyCandidateScore): number {
+  const pop = (b.popularityScore ?? 0) - (a.popularityScore ?? 0);
+  if (Math.abs(pop) > 1e-6) return pop;
+  if (Math.abs(b.totalScore - a.totalScore) > 1e-6) return b.totalScore - a.totalScore;
+  return a.canonicalId.localeCompare(b.canonicalId);
+}
+
+function sortPerformerFirst(
+  pool: DailyCandidateScore[],
+  recentActressKeys: string[],
+): DailyCandidateScore[] {
+  const recent = new Set(recentActressKeys.filter(Boolean));
+  const byActress = new Map<string, DailyCandidateScore[]>();
+  const noActress: DailyCandidateScore[] = [];
+  for (const c of pool) {
+    if (!c.actressKey) {
+      noActress.push(c);
+      continue;
+    }
+    const list = byActress.get(c.actressKey) ?? [];
+    list.push(c);
+    byActress.set(c.actressKey, list);
+  }
+  for (const [, list] of byActress) list.sort(sortByPopularity);
+
+  const actressKeys = [...byActress.keys()].sort((a, b) => {
+    const aRecent = recent.has(a) ? 1 : 0;
+    const bRecent = recent.has(b) ? 1 : 0;
+    if (aRecent !== bRecent) return aRecent - bRecent;
+    const aTop = byActress.get(a)![0]!;
+    const bTop = byActress.get(b)![0]!;
+    return sortByPopularity(aTop, bTop);
+  });
+
+  const out: DailyCandidateScore[] = [];
+  for (const key of actressKeys) {
+    out.push(...(byActress.get(key) ?? []));
+  }
+  out.push(...noActress.sort(sortByPopularity));
+  return out;
+}
+
 export function selectDailyProductCandidate(
   pool: DailyCandidateScore[],
   config: DailySelectionConfig,
@@ -89,7 +138,12 @@ export function selectDailyProductCandidate(
     }
   }
 
-  const ranked = working.slice().sort(sortWithinBucket);
+  const ranked =
+    config.sortMode === "popularity"
+      ? working.slice().sort(sortByPopularity)
+      : config.sortMode === "performer"
+        ? sortPerformerFirst(working, config.recentActressKeys)
+        : working.slice().sort(sortWithinBucket);
 
   let skippedDiversity = 0;
   let skippedEvidence = 0;

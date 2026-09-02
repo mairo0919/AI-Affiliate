@@ -3,8 +3,17 @@ dist
 .env
 *.log
 .DS_Store
+**/.DS_Store
 coverage
 .turbo
 *.tsbuildinfo
 .next
 apps/admin-web/next-env.d.ts
+
+# Local package / build artifacts (not source)
+.pnpm-store/
+apps/content-operator/dist-tmp/
+apps/content-operator/dist/
+
+# Regenerable WordPress theme archive (source lives in otonaselect/)
+apps/wordpress-theme/otonaselect.zip

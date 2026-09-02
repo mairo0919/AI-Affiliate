@@ -316,13 +316,19 @@ export class P45ContentService {
     const research1 = await ops.registerPublicUrlResearch({
       url: "https://example.invalid/notes/p45-1",
       summary: "Sample Catalog Item P45 is listed as available.",
-      claimStatement: "Sample Catalog Item P45 is listed as available in a public catalog.",
+      claimStatement: "松本いちか",
       strategyId: strategy.id,
     });
     const research2 = await ops.registerPublicUrlResearch({
       url: "https://example.invalid/notes/p45-2",
       summary: "The catalog page shows a standard product URL.",
-      claimStatement: "Sample Catalog Item P45 has a public product page URL.",
+      claimStatement: "激ピストン騎乗位で連続絶頂するシーン",
+      strategyId: strategy.id,
+    });
+    const research3 = await ops.registerPublicUrlResearch({
+      url: "https://example.invalid/notes/p45-3",
+      summary: "Runtime scale is published on the catalog page.",
+      claimStatement: "8時間ベスト",
       strategyId: strategy.id,
     });
 
@@ -333,7 +339,7 @@ export class P45ContentService {
       productTitle: product.title,
       ctaUrl: product.url,
       articleFormat: "new-release",
-      claimIds: [research1.claim.id, research2.claim.id],
+      claimIds: [research1.claim.id, research2.claim.id, research3.claim.id],
     });
 
     const review = await this.generation.runQualityReviews(generated.version.id);
@@ -358,8 +364,8 @@ export class P45ContentService {
       strategyId: strategy.id,
       productTitle: product.title,
       productUrl: product.url,
-      bloggerUrl: null,
-      claimIds: [research1.claim.id],
+      bloggerUrl: draft.url ?? null,
+      claimIds: [research1.claim.id, research2.claim.id, research3.claim.id],
     });
     const xExport = buildXExport({
       contentId: x.content.id,
@@ -369,7 +375,7 @@ export class P45ContentService {
     return {
       productId: product.id,
       strategyId: strategy.id,
-      claimIds: [research1.claim.id, research2.claim.id],
+      claimIds: [research1.claim.id, research2.claim.id, research3.claim.id],
       bloggerVersionId: generated.version.id,
       bloggerContentId: generated.content.id,
       reviewOverall: review.overall,

@@ -42,10 +42,11 @@ describe("ModelRun failure status finalization (LLM=0)", () => {
     expect(src).toContain('status: "COMPLETED"');
   });
 
-  it("K3. brainGuidedRepair:false skips ACTIVE repair LLM; does not clobber COMPLETED", () => {
+  it("K3. R117: Brain repair path removed from production generation", () => {
     const src = readFileSync(servicePath, "utf8");
-    expect(src).toContain("input.brainGuidedRepair !== false");
+    expect(src).not.toContain("runBoundedBrainRepairOnVersion");
+    expect(src).not.toContain("observeEditorialBrainShadowSafe");
     expect(src).toContain("Do not clobber a COMPLETED Generator ModelRun");
-    expect(src).toContain("existing?.status === \"COMPLETED\"");
+    expect(src).toContain('existing?.status === "COMPLETED"');
   });
 });

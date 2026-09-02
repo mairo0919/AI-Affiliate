@@ -41,6 +41,7 @@ import {
   type ProductLinkUsageKind,
   type QualityReviewRecord,
   type ResearchFinding,
+  type ResearchItem,
   type ResearchJobStatus,
   type ResearchJobType,
   type ReviewResult,
@@ -1034,6 +1035,15 @@ export class LifecycleRepository {
     return this.prisma.affiliateProduct.findUnique({ where: { id } });
   }
 
+  async findResearchItem(
+    id: string,
+  ): Promise<Pick<ResearchItem, "id" | "externalId" | "title" | "url"> | null> {
+    return this.prisma.researchItem.findUnique({
+      where: { id },
+      select: { id: true, externalId: true, title: true, url: true },
+    });
+  }
+
   /**
    * ResearchImage rows for ResearchItems whose externalId is in the given set.
    * Used for Blogger URL-reference images (no download).
@@ -1051,6 +1061,34 @@ export class LifecycleRepository {
     if (ids.length === 0) return [];
     const rows = await this.prisma.researchImage.findMany({
       where: { researchItem: { externalId: { in: ids } } },
+      include: { researchItem: { select: { externalId: true } } },
+      orderBy: { createdAt: "asc" },
+    });
+    return rows.map((row) => ({
+      id: row.id,
+      imageType: row.imageType,
+      sourceUrl: row.sourceUrl,
+      usageStatus: row.usageStatus,
+      researchItemExternalId: row.researchItem.externalId,
+    }));
+  }
+
+  /**
+   * ResearchImage rows for a ResearchItem id (AffiliateProduct not required).
+   */
+  async listResearchImagesByResearchItemId(researchItemId: string): Promise<
+    Array<{
+      id: string;
+      imageType: string;
+      sourceUrl: string;
+      usageStatus: string;
+      researchItemExternalId: string;
+    }>
+  > {
+    const id = researchItemId.trim();
+    if (!id) return [];
+    const rows = await this.prisma.researchImage.findMany({
+      where: { researchItemId: id },
       include: { researchItem: { select: { externalId: true } } },
       orderBy: { createdAt: "asc" },
     });

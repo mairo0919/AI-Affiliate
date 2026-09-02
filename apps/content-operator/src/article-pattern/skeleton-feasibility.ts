@@ -4,6 +4,7 @@
  */
 
 import type { EvidencePack, EvidencePackItem } from "./evidence-pack.js";
+import { packItemSemanticFamilyId } from "./evidence-pack.js";
 import type { WritingSkeleton } from "./writing-skeleton.js";
 import { writingSkeletonFallback } from "./writing-skeleton.js";
 import type { ProductMaterialProfile } from "./reference-type-profile.js";
@@ -12,10 +13,13 @@ import {
   type SkeletonEvidenceAssignment,
 } from "./skeleton-evidence-assignment.js";
 import {
-  classifySemanticEvidence,
   roleCompatibleClasses,
+  semanticClassToBlueprintType,
 } from "./semantic-evidence.js";
-import { NATURAL_PRODUCT_INTRO_STRUCTURE } from "./natural-product-intro-policy.js";
+import {
+  NATURAL_PRODUCT_INTRO_STRUCTURE,
+  OPTION_B_SLOT_STOP_CONDITION,
+} from "./natural-product-intro-policy.js";
 
 export type SkeletonFeasibilityResult = {
   ok: boolean;
@@ -32,11 +36,7 @@ export type SkeletonFeasibilityResult = {
 };
 
 function itemFamily(item: EvidencePackItem): string {
-  return classifySemanticEvidence(item.fact, {
-    sourceType: item.provenance.sourceType,
-    titleIdentityToken:
-      item.provenance.sourceType === "product_title" && item.type !== "product_identity",
-  }).familyId;
+  return packItemSemanticFamilyId(item);
 }
 
 function countFilledBody(assignment: SkeletonEvidenceAssignment): number {
@@ -71,9 +71,9 @@ export function skeletonFromMaterialProfile(profile: ProductMaterialProfile): Wr
       purpose,
       primaryEvidenceRole: role,
       supportingEvidenceRoles: supporting,
-      transformation: "natural_compose_multi_fact",
-      transitionFromPrevious: "continue_naturally",
-      stopCondition: "stop_when_mapped_evidence_exhausted_do_not_pad",
+      transformation: "compose_assigned_facts_as_work_content",
+      transitionFromPrevious: "deepen_hook_without_repeating_it",
+      stopCondition: OPTION_B_SLOT_STOP_CONDITION,
       avoid: [...base.globalAvoid],
     });
   };
@@ -149,7 +149,7 @@ export function skeletonFromMaterialProfile(profile: ProductMaterialProfile): Wr
       purpose: NATURAL_PRODUCT_INTRO_STRUCTURE.slots[0]!.purpose,
       primaryEvidenceRole: openingRole,
       supportingEvidenceRoles: openingSupport,
-      packaging: "NATURAL_COMPOSE",
+      packaging: "COMPOSE_AS_WORK_CONTENT",
       avoid: [...base.globalAvoid],
     },
     body,
@@ -343,15 +343,15 @@ export function hasCompatibleUnusedEvidence(
   role: string,
   usedFamilies: Set<string>,
 ): boolean {
-  const allowed = new Set(roleCompatibleClasses(role));
+  const allowed = roleCompatibleClasses(role);
   for (const e of pack.concreteEvidence) {
     if (!e.generationEligible || e.type === "product_identity") continue;
-    const sem = classifySemanticEvidence(e.fact, {
-      sourceType: e.provenance.sourceType,
-      titleIdentityToken: e.provenance.sourceType === "product_title",
-    });
-    if (!allowed.has(sem.primary)) continue;
-    if (usedFamilies.has(sem.familyId)) continue;
+    const matchesRole =
+      e.type === role ||
+      (role === "performer_or_concrete_trait" && e.type === "performer_identity") ||
+      allowed.some((p) => semanticClassToBlueprintType(p) === e.type);
+    if (!matchesRole) continue;
+    if (usedFamilies.has(packItemSemanticFamilyId(e))) continue;
     return true;
   }
   return false;

@@ -1,5 +1,8 @@
 /**
- * Deterministic FANZA affiliate URL validation — never synthesize, never LLM rewrite.
+ * Deterministic FANZA CTA URL validation — never synthesize, never LLM rewrite.
+ *
+ * Affiliate (af_id) preferred when present. Plain official FANZA/DMM product URLs
+ * are allowed as interim CTA until DMM_AFFILIATE_ID is configured (R61).
  */
 
 export interface AffiliateUrlCheck {
@@ -12,7 +15,7 @@ export interface AffiliateUrlCheck {
 const AFFILIATE_HOST_RE =
   /(^|\.)dmm\.co\.jp$|(^|\.)dmm\.com$|(^|\.)fanza\.co\.jp$|(^|\.)affiliate\.dmm\.com$/i;
 
-/** Official affiliate URL must be absolute https on known FANZA/DMM hosts with partner signal. */
+/** Official CTA must be absolute https on known FANZA/DMM hosts. */
 export function validateFanzaAffiliateUrl(url: string | null | undefined): AffiliateUrlCheck {
   if (!url || !url.trim()) {
     return { ok: false, url: null, failureCode: "AFFILIATE_URL_MISSING", hasAffiliateIdHint: false };
@@ -35,14 +38,6 @@ export function validateFanzaAffiliateUrl(url: string | null | undefined): Affil
     Boolean(q.get("affiliate_id") || q.get("af_id") || q.get("aid") || q.get("af")) ||
     /affiliate|\/al\.|click\./i.test(parsed.hostname + parsed.pathname) ||
     parsed.hostname.startsWith("al.");
-  // Plain product page without affiliate partner params is not acceptable for production CTA.
-  if (!hasAffiliateIdHint) {
-    return {
-      ok: false,
-      url: trimmed,
-      failureCode: "AFFILIATE_ID_MISSING",
-      hasAffiliateIdHint: false,
-    };
-  }
-  return { ok: true, url: trimmed, failureCode: null, hasAffiliateIdHint: true };
+  // R61: product page without partner params is allowed until affiliate id is available.
+  return { ok: true, url: trimmed, failureCode: null, hasAffiliateIdHint };
 }

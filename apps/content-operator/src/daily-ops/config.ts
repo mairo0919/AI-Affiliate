@@ -59,12 +59,31 @@ export function loadDailyMultiChannelConfig(
       (env.DAILY_RANKING_MODE ?? "REPLACE_BLOG_ARTICLE").trim().toUpperCase() === "ADDITIONAL_BLOG_ARTICLE"
         ? "ADDITIONAL_BLOG_ARTICLE"
         : "REPLACE_BLOG_ARTICLE",
-    mixWeights: {
-      recent: parseFloatDef(env.DAILY_MIX_WEIGHT_RECENT, 0.3),
-      mid: parseFloatDef(env.DAILY_MIX_WEIGHT_MID, 0.3),
-      older: parseFloatDef(env.DAILY_MIX_WEIGHT_OLDER, 0.3),
-      ranking: parseFloatDef(env.DAILY_MIX_WEIGHT_RANKING, 0.1),
-    },
+    mixWeights: (() => {
+      const hasNew =
+        env.DAILY_MIX_WEIGHT_SINGLE != null ||
+        env.DAILY_MIX_WEIGHT_POPULAR != null ||
+        env.DAILY_MIX_WEIGHT_PERFORMER != null ||
+        env.DAILY_MIX_WEIGHT_NEW_RELEASE != null ||
+        env.DAILY_MIX_WEIGHT_OLDER_TITLE != null;
+      if (hasNew) {
+        return {
+          singleProduct: parseFloatDef(env.DAILY_MIX_WEIGHT_SINGLE, 0.25),
+          popularRanking: parseFloatDef(env.DAILY_MIX_WEIGHT_POPULAR, 0.15),
+          performerRanking: parseFloatDef(env.DAILY_MIX_WEIGHT_PERFORMER, 0.15),
+          newRelease: parseFloatDef(env.DAILY_MIX_WEIGHT_NEW_RELEASE, 0.25),
+          olderTitle: parseFloatDef(env.DAILY_MIX_WEIGHT_OLDER_TITLE, 0.2),
+        };
+      }
+      // Legacy env → R72 weights
+      return {
+        singleProduct: parseFloatDef(env.DAILY_MIX_WEIGHT_MID, 0.25),
+        popularRanking: parseFloatDef(env.DAILY_MIX_WEIGHT_RANKING, 0.15),
+        performerRanking: 0.15,
+        newRelease: parseFloatDef(env.DAILY_MIX_WEIGHT_RECENT, 0.25),
+        olderTitle: parseFloatDef(env.DAILY_MIX_WEIGHT_OLDER, 0.2),
+      };
+    })(),
     releaseAge: {
       recentMaxDays: parsePositiveInt(env.DAILY_AGE_RECENT_MAX_DAYS, DEFAULT_RELEASE_AGE_THRESHOLDS.recentMaxDays),
       olderMinDays: parsePositiveInt(env.DAILY_AGE_OLDER_MIN_DAYS, DEFAULT_RELEASE_AGE_THRESHOLDS.olderMinDays),

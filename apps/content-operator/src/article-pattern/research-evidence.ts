@@ -11,6 +11,7 @@ import {
   officialPageAtomsToResearchEvidence,
   type PageEvidenceMetaShape,
 } from "./official-page-evidence-atoms.js";
+import { isWriterSynopsisLike } from "./writer-evidence-filter.js";
 
 export type EvidenceSourceType =
   | "product_title"
@@ -107,6 +108,7 @@ export function buildResearchEvidence(input: {
   for (const c of input.claims) {
     const statement = (c.statement ?? "").trim();
     if (statement.length < 2) continue;
+    if (isWriterSynopsisLike(statement)) continue;
     const status = (c.status ?? "SUPPORTED").toUpperCase();
     const allowed = status === "SUPPORTED" || status === "AVAILABLE";
     if (EVAL_BLOCK_RE.test(statement) && !/\d+|出演|メーカー|シリーズ/.test(statement)) {

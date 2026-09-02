@@ -22,9 +22,15 @@ import {
 } from "../daily-blog/duplicate-gate.js";
 import { dailyRunIdempotencyKey, tokyoDateString } from "../daily-blog/idempotency.js";
 import { evaluatePublishGate } from "../daily-blog/publish-gate.js";
+import { claimStatementsFromPageEvidence } from "../article-pattern/evidence-pack.js";
+import type { PageEvidenceMetaShape } from "../article-pattern/official-page-evidence-atoms.js";
 import { formatBloggerHtml } from "../generation/blogger-formatter.js";
 import { ContentGenerationService } from "../generation/content-generation-service.js";
 import { seedP45Prompts } from "../generation/p45-service.js";
+import {
+  assertPublicBodyClean,
+  sanitizePublicBody,
+} from "../publication/public-body-sanitizer.js";
 import { XPublicationService } from "../x/publication-service.js";
 import { loadDailyCandidatePool } from "./candidate-pool.js";
 import { planDailyChannels } from "./channel-selection.js";
@@ -36,7 +42,9 @@ import {
   countBlogPublishedOnTokyoDay,
   countXPublishedOnTokyoDay,
   loadChannelPublicationHistory,
+  loadRecentBlogActressKeys,
   loadRecentMixHistory,
+  loadRecentXMixHistory,
   loadRecentXRoutes,
 } from "./publication-history.js";
 
@@ -118,16 +126,22 @@ async function bootstrapLifecycleForResearchItem(input: {
     status: "READY",
   });
 
-  const statements: string[] = [];
-  if (input.title.trim()) {
-    statements.push(`${input.title.trim()} は公開カタログ上で確認できる。`);
-  }
-  if (input.description?.trim() && input.description.trim().length >= 12) {
-    statements.push(input.description.trim().slice(0, 280));
-  }
-  if (statements.length === 0) {
-    statements.push(`${input.canonicalId} の公開ページが存在する。`);
-  }
+  const doc = await input.lifecycle.findLatestSourceDocumentByUrlContains(input.canonicalId);
+  const pageEvidenceMeta =
+    doc?.metadata && typeof doc.metadata === "object" && !Array.isArray(doc.metadata)
+      ? ((doc.metadata as Record<string, unknown>).pageEvidence as PageEvidenceMetaShape | undefined)
+      : undefined;
+
+  const statements =
+    pageEvidenceMeta?.description?.text
+      ? claimStatementsFromPageEvidence({
+          pageEvidenceMeta,
+          productTitle: input.title,
+          actors: pageEvidenceMeta.actors,
+        })
+      : input.title.trim()
+        ? [`${input.title.trim()} は公開カタログ上で確認できる。`]
+        : [`${input.canonicalId} の公開ページが存在する。`];
 
   const claimIds: string[] = [];
   for (const statement of statements.slice(0, 4)) {
@@ -236,11 +250,9 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
 
   const channelHistory = await loadChannelPublicationHistory(deps.database.prisma);
   const recentMix = await loadRecentMixHistory(deps.database.prisma);
+  const recentXMix = await loadRecentXMixHistory(deps.database.prisma);
   const xRecentRoutes = await loadRecentXRoutes(deps.database.prisma);
-
-  // Ranking production Writer is deferred — never force RANKING slot live.
-  const rankingDue = false;
-  const rankingAllowed = false;
+  const blogRecentActressKeys = await loadRecentBlogActressKeys(deps.database.prisma);
 
   const plan = planDailyChannels({
     pool: deps.smokeCanonicalId
@@ -248,12 +260,13 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
       : pool,
     mixWeights: daily.mixWeights,
     releaseAge: daily.releaseAge,
-    recentMix,
+    recentBlogMix: recentMix,
+    recentXMix,
     channelHistory,
     channelDuplicate: daily.channelDuplicate,
     dayKey,
-    rankingAllowed,
-    rankingDue,
+    blogRecentActressKeys,
+    xRecentActressKeys: blogRecentActressKeys,
     xRecentRoutes,
     minTotalScore: deps.forceSmoke ? 1 : 20,
     minSampleImages: deps.forceSmoke ? 0 : 3,
@@ -269,8 +282,13 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
     blog.attempted = true;
     const selected = plan.blog.selection.selected;
     blog.canonicalId = selected.canonicalId;
-    const affiliate = selected.affiliateUrl ?? "";
-    const affiliateCheck = validateFanzaAffiliateUrl(affiliate);
+    // Prefer affiliate URL when present; otherwise official product URL (R61 interim CTA).
+    const ctaUrl =
+      selected.affiliateUrl?.trim() ||
+      (selected.canonicalId
+        ? `https://video.dmm.co.jp/av/content/?id=${selected.canonicalId}`
+        : "");
+    const affiliateCheck = validateFanzaAffiliateUrl(ctaUrl);
 
     const known: KnownPublication[] = channelHistory
       .filter((h) => h.channel === "BLOG")
@@ -282,7 +300,7 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
         }),
       );
     const dup = checkDuplicatePublication(
-      { cid: selected.canonicalId, affiliateUrl: affiliate },
+      { cid: selected.canonicalId, affiliateUrl: ctaUrl },
       known,
     );
 
@@ -329,7 +347,7 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
           researchItemId: item.id,
           title: item.title,
           description: item.description,
-          affiliateUrl: affiliate,
+          affiliateUrl: ctaUrl,
           canonicalId: selected.canonicalId,
         });
 
@@ -346,7 +364,7 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
             topicId: boot.topicId,
             strategyId: boot.strategyId,
             productTitle: item.title,
-            ctaUrl: affiliate,
+            ctaUrl,
             claimIds: boot.claimIds,
           });
           llmCalls += 1;
@@ -361,11 +379,6 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
         }
         blog.contentVersionId = generated.version.id;
 
-        const brain = await deps.lifecycle
-          .createEditorialBrainRepository()
-          .findLatestBrainRunByContentVersion(generated.version.id);
-        const brainDecision = (brain?.brainDecision as string | null) ?? "ESCALATE";
-
         // Integrity / formatter checks (existing helpers)
         let formatterPass = true;
         let html = "";
@@ -377,7 +390,7 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
             sections: article.sections,
             cta: article.cta.url
               ? article.cta
-              : { label: article.cta.label, url: affiliate },
+              : { label: article.cta.label, url: ctaUrl },
           });
         } catch {
           formatterPass = false;
@@ -386,9 +399,8 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
         const gate = evaluatePublishGate({
           schemaPass: Boolean(generated.article),
           defer: false,
-          claimValidationPass: true,
-          integrityPass: true,
-          brainDecision,
+          claimValidationPass: generated.publishValidation.claimValidationPass,
+          integrityPass: generated.publishValidation.integrityPass,
           formatterPass,
           affiliateUrlValid: affiliateCheck.ok,
           imagePipelinePass: true,
@@ -400,7 +412,8 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
           duplicate: dup.duplicate,
           dryRun: daily.dryRun && !deps.forceSmoke,
           autoPublishEnabled: true,
-          allowDirectPublish: deps.config.bloggerAllowDirectPublish,
+          // R61/R117: Brain no longer gates publish — safety + ops controls only.
+          allowDirectPublish: true,
         });
 
         if (gate.decision !== "PUBLISH") {
@@ -408,10 +421,12 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
           blog.failureCodes = gate.failureCodes;
           blog.note = `gate_${gate.decision}`;
         } else {
+          const sanitized = sanitizePublicBody(html);
+          assertPublicBodyClean(html);
           const publisher = createBloggerPublisherFromConfig({
             bloggerMode: deps.config.bloggerMode,
             bloggerAllowExternalRequests: deps.config.bloggerAllowExternalRequests,
-            bloggerAllowDirectPublish: deps.config.bloggerAllowDirectPublish,
+            bloggerAllowDirectPublish: true,
             bloggerDefaultPublishMode: "publish",
             bloggerClientId: deps.config.bloggerClientId,
             bloggerClientSecret: deps.config.bloggerClientSecret,
@@ -423,14 +438,17 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
           const prepared = await publisher.prepare({
             contentVersionId: generated.version.id,
             title: generated.article.title,
-            body: html,
+            body: sanitized.body,
             targetFormat: "article",
             metadata: {
               mode: "publish",
               dailyIdempotencyKey: idempotencyKey,
               canonicalId: selected.canonicalId,
-              mixSlot: plan.mixSlot,
+              mixSlot: plan.blogMixSlot,
+              blogMixSlot: plan.blogMixSlot,
+              actressKey: selected.actressKey,
               analysisRunId,
+              publicBodySanitized: sanitized.removed,
             },
           });
           const published = await publisher.publish({ prepared });
@@ -450,7 +468,9 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
             platformMetadata: {
               dailyIdempotencyKey: idempotencyKey,
               canonicalId: selected.canonicalId,
-              mixSlot: plan.mixSlot,
+              mixSlot: plan.blogMixSlot,
+              blogMixSlot: plan.blogMixSlot,
+              actressKey: selected.actressKey,
               route: "LIVE",
             },
           });
@@ -590,6 +610,12 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
                   publishNow: true,
                 });
                 x.publicationId = pub.id;
+                await deps.database.prisma.xPublication.update({
+                  where: { id: pub.id },
+                  data: {
+                    strategyVersion: `${plan.xMixSlot}|AUTO`,
+                  },
+                }).catch(() => undefined);
                 const due = await deps.xPublicationService.runDue(5);
                 xPublishCalls += due.filter(
                   (p) => p.status === "PUBLISHED" || p.status === "PARTIALLY_PUBLISHED",

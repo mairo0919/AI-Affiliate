@@ -13,6 +13,40 @@ export interface ClaimValidationResult {
   allowedClaimIds: string[];
 }
 
+/** Absolute / superlative phrasings that are blocked unless Evidence/Plan-attested. */
+export const ABSOLUTE_CLAIM_PATTERNS: RegExp[] = [
+  /絶対に/,
+  /世界一/,
+  /確実に稼げる/,
+  /必ず当たる/,
+];
+
+/**
+ * Collect fact surfaces from ARTICLE_PLAN (Evidence → Plan SSOT).
+ * Used to distinguish source-attested superlatives from Writer-invented ones.
+ */
+export function attestedSurfacesFromArticlePlan(plan: {
+  title?: { facts?: readonly string[] | null } | null;
+  lead?: { facts?: readonly string[] | null } | null;
+  body?: ReadonlyArray<{ facts?: readonly string[] | null } | null> | null;
+} | null | undefined): string[] {
+  if (!plan) return [];
+  const out: string[] = [];
+  for (const slot of [plan.title, plan.lead, ...(plan.body ?? [])]) {
+    if (!slot?.facts) continue;
+    for (const fact of slot.facts) {
+      if (typeof fact === "string" && fact.trim().length > 0) out.push(fact);
+    }
+  }
+  return out;
+}
+
+function isAbsolutePatternAttested(pattern: RegExp, attestedSurfaces: readonly string[]): boolean {
+  if (attestedSurfaces.length === 0) return false;
+  const blob = attestedSurfaces.join("\n");
+  return pattern.test(blob);
+}
+
 /**
  * Only SUPPORTED claims may be asserted as facts in publishable body.
  * PARTIALLY_SUPPORTED requires human confirmation / limited wording.
@@ -26,6 +60,13 @@ export function validateClaimsAgainstArticle(input: {
    * are valid provenance refs — not DB Claim rows.
    */
   allowedEvidenceIds?: string[];
+  /**
+   * Evidence/ARTICLE_PLAN fact surfaces that may contain source-attested
+   * absolute/superlative phrasing. When a hard pattern appears in the body
+   * AND in these surfaces, it is treated as source-attested (not unsupported).
+   * Invented superlatives with empty/non-matching attestation remain BLOCKING.
+   */
+  attestedEvidenceSurfaces?: readonly string[];
 }): ClaimValidationResult {
   const findings: ClaimValidationFinding[] = [];
   const byId = new Map(input.claims.map((c) => [c.id, c]));
@@ -35,6 +76,7 @@ export function validateClaimsAgainstArticle(input: {
     input.claims.filter((c) => c.status === "PARTIALLY_SUPPORTED").map((c) => c.id),
   );
   const blockedStatuses = new Set(["DISPUTED", "OUTDATED", "UNSUPPORTED", "REJECTED"]);
+  const attested = input.attestedEvidenceSurfaces ?? [];
 
   for (const claimId of input.article.usedClaimIds) {
     if (evidenceIds.has(claimId)) {
@@ -66,16 +108,15 @@ export function validateClaimsAgainstArticle(input: {
     }
   }
 
-  // Detect likely invented absolute claims without claim support
-  const absolutePatterns = [/絶対に/, /世界一/, /確実に稼げる/, /必ず当たる/];
-  for (const pattern of absolutePatterns) {
-    if (pattern.test(input.bodyText)) {
-      findings.push({
-        code: "UNSUPPORTED_SUPERLATIVE",
-        message: `Body contains unsupported absolute phrasing: ${pattern}`,
-        severity: "BLOCKING",
-      });
-    }
+  // Absolute/superlative: reject invented uses; allow Evidence/Plan-attested surfaces.
+  for (const pattern of ABSOLUTE_CLAIM_PATTERNS) {
+    if (!pattern.test(input.bodyText)) continue;
+    if (isAbsolutePatternAttested(pattern, attested)) continue;
+    findings.push({
+      code: "UNSUPPORTED_SUPERLATIVE",
+      message: `Body contains unsupported absolute phrasing: ${pattern}`,
+      severity: "BLOCKING",
+    });
   }
 
   // Mark unused unsupported claims that appear as statements

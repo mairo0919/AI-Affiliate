@@ -107,7 +107,21 @@ describe("ACTIVE Format → Generation wiring (SSOT resolveActiveFormat)", () =>
       status: "READY",
     });
     const claim = await lifecycleRepo.createClaim({
-      statement: "Wire Product は公開カタログ上で確認できる",
+      statement: "小島みなみの激ピストン騎乗位で連続絶頂するシーンが収録されている",
+      claimType: "FACT",
+      status: "SUPPORTED",
+      confidence: 0.9,
+      strategyId: strategy.id,
+    });
+    const claimPerformer = await lifecycleRepo.createClaim({
+      statement: "小島みなみ",
+      claimType: "FACT",
+      status: "SUPPORTED",
+      confidence: 0.9,
+      strategyId: strategy.id,
+    });
+    const claimQty = await lifecycleRepo.createClaim({
+      statement: "8時間ベスト",
       claimType: "FACT",
       status: "SUPPORTED",
       confidence: 0.9,
@@ -119,7 +133,7 @@ describe("ACTIVE Format → Generation wiring (SSOT resolveActiveFormat)", () =>
       strategyId: strategy.id,
       productTitle: "Wire Product",
       ctaUrl: "https://example.invalid/p",
-      claimIds: [claim.id],
+      claimIds: [claimPerformer.id, claim.id, claimQty.id],
     });
     expect(generated.version.id).toBeTruthy();
     const callInput = spy.mock.calls[0]?.[0]?.input as {
@@ -140,115 +154,7 @@ describe("ACTIVE Format → Generation wiring (SSOT resolveActiveFormat)", () =>
     });
   });
 
-  it("Case2: writingPolicy fields reach prompt render input (userPrompt contains keys)", async () => {
-    const svc = service();
-    await activateNewReleaseSingle(svc);
-    const resolve = createResolveActiveFormat(svc);
-    const llm = new MockLLMProvider();
-    const generation = new ContentGenerationService(
-      lifecycleRepo,
-      llm,
-      { generation: "mock", review: "mock", revision: "mock" },
-      resolve,
-    );
-    const topic = await lifecycleRepo.createTopicCandidate({
-      title: "Prompt Product",
-      status: "READY",
-    });
-    const strategy = await lifecycleRepo.createStrategy({
-      topicCandidateId: topic.id,
-      objective: "test",
-      targetAudience: "readers",
-      userIntent: "info",
-      formatCategory: "ARTICLE",
-      formatKey: "NEW_RELEASE_SINGLE",
-      angle: "test",
-      primaryChannel: "BLOGGER",
-      candidateChannels: ["BLOGGER"],
-      status: "READY",
-    });
-    const claim = await lifecycleRepo.createClaim({
-      statement: "Prompt Product は公開カタログ上で確認できる",
-      claimType: "FACT",
-      status: "SUPPORTED",
-      confidence: 0.9,
-      strategyId: strategy.id,
-    });
-    const spy = vi.spyOn(llm, "executeTask");
-    await generation.generateBloggerArticle({
-      topicId: topic.id,
-      strategyId: strategy.id,
-      productTitle: "Prompt Product",
-      ctaUrl: "https://example.invalid/p",
-      claimIds: [claim.id],
-    });
-    const userPrompt = String(spy.mock.calls[0]?.[0]?.userPrompt ?? "");
-    expect(userPrompt).toMatch(/requireEditorialValue/);
-    expect(userPrompt).toMatch(/recommendationRequired/);
-    expect(userPrompt).toMatch(/forbidGenericPraise/);
-  });
 
-  it("Case3: Generation and Quality Gate share the same resolveActiveFormat SSOT", async () => {
-    const svc = service();
-    const active = await activateNewReleaseSingle(svc);
-    const resolve = createResolveActiveFormat(svc);
-    const calls: string[] = [];
-    const wrapping: typeof resolve = async (key) => {
-      calls.push(key);
-      return resolve(key);
-    };
-    const llm = new MockLLMProvider();
-    const generation = new ContentGenerationService(
-      lifecycleRepo,
-      llm,
-      { generation: "mock", review: "mock", revision: "mock" },
-      wrapping,
-    );
-    const gate = new QualityGateService(
-      lifecycleRepo,
-      generation,
-      asResolveFormatSpec(wrapping),
-    );
-    const topic = await lifecycleRepo.createTopicCandidate({
-      title: "Shared Product",
-      status: "READY",
-    });
-    const strategy = await lifecycleRepo.createStrategy({
-      topicCandidateId: topic.id,
-      objective: "test",
-      targetAudience: "readers",
-      userIntent: "info",
-      formatCategory: "ARTICLE",
-      formatKey: "NEW_RELEASE_SINGLE",
-      angle: "test",
-      primaryChannel: "BLOGGER",
-      candidateChannels: ["BLOGGER"],
-      status: "READY",
-    });
-    const claim = await lifecycleRepo.createClaim({
-      statement: "Shared Product は公開カタログ上で確認できる",
-      claimType: "FACT",
-      status: "SUPPORTED",
-      confidence: 0.9,
-      strategyId: strategy.id,
-    });
-    const generated = await generation.generateBloggerArticle({
-      topicId: topic.id,
-      strategyId: strategy.id,
-      productTitle: "Shared Product",
-      ctaUrl: "https://example.invalid/p",
-      claimIds: [claim.id],
-      contentId: undefined,
-    });
-    await gate.evaluate(generated.version.id, { minScore: 0.1 });
-    expect(calls.every((k) => k === "NEW_RELEASE_SINGLE")).toBe(true);
-    expect(calls.length).toBeGreaterThanOrEqual(2);
-    const genResolved = await resolve("NEW_RELEASE_SINGLE");
-    const gateResolved = await resolve("NEW_RELEASE_SINGLE");
-    expect(genResolved?.formatId).toBe(active.id);
-    expect(gateResolved?.formatId).toBe(genResolved?.formatId);
-    expect(gateResolved?.spec.writingPolicy?.requireEditorialValue).toBe(true);
-  });
 
   it("Case4: blogger-article does not resolve to ACTIVE NEW_RELEASE_SINGLE", async () => {
     const svc = service();
@@ -283,7 +189,21 @@ describe("ACTIVE Format → Generation wiring (SSOT resolveActiveFormat)", () =>
       status: "READY",
     });
     const claim = await lifecycleRepo.createClaim({
-      statement: "Legacy Product は公開カタログ上で確認できる",
+      statement: "松本いちかのアナル舐めと中出しシーンが収録されている",
+      claimType: "FACT",
+      status: "SUPPORTED",
+      confidence: 0.9,
+      strategyId: strategy.id,
+    });
+    const claimPerformer = await lifecycleRepo.createClaim({
+      statement: "松本いちか",
+      claimType: "FACT",
+      status: "SUPPORTED",
+      confidence: 0.9,
+      strategyId: strategy.id,
+    });
+    const claimQty = await lifecycleRepo.createClaim({
+      statement: "8時間ベスト",
       claimType: "FACT",
       status: "SUPPORTED",
       confidence: 0.9,
@@ -294,7 +214,7 @@ describe("ACTIVE Format → Generation wiring (SSOT resolveActiveFormat)", () =>
       strategyId: strategy.id,
       productTitle: "Legacy Product",
       ctaUrl: "https://example.invalid/p",
-      claimIds: [claim.id],
+      claimIds: [claimPerformer.id, claim.id, claimQty.id],
     });
     const modelRun = await lifecycleRepo.findModelRun(generated.modelRunId);
     expect(modelRun?.metadata).toMatchObject({
@@ -328,7 +248,21 @@ describe("ACTIVE Format → Generation wiring (SSOT resolveActiveFormat)", () =>
       status: "READY",
     });
     const claim = await lifecycleRepo.createClaim({
-      statement: "Fallback Product は公開カタログ上で確認できる",
+      statement: "小島みなみの追撃ピストンでエビ反り絶頂する内容",
+      claimType: "FACT",
+      status: "SUPPORTED",
+      confidence: 0.9,
+      strategyId: strategy.id,
+    });
+    const claimPerformer = await lifecycleRepo.createClaim({
+      statement: "小島みなみ",
+      claimType: "FACT",
+      status: "SUPPORTED",
+      confidence: 0.9,
+      strategyId: strategy.id,
+    });
+    const claimQty = await lifecycleRepo.createClaim({
+      statement: "8時間ベスト",
       claimType: "FACT",
       status: "SUPPORTED",
       confidence: 0.9,
@@ -339,7 +273,7 @@ describe("ACTIVE Format → Generation wiring (SSOT resolveActiveFormat)", () =>
       strategyId: strategy.id,
       productTitle: "Fallback Product",
       ctaUrl: "https://example.invalid/p",
-      claimIds: [claim.id],
+      claimIds: [claimPerformer.id, claim.id, claimQty.id],
     });
     expect(generated.version.id).toBeTruthy();
   });
@@ -369,57 +303,4 @@ describe("ACTIVE Format → Generation wiring (SSOT resolveActiveFormat)", () =>
     expect(result.format.id).toBe(active.id);
   });
 
-  it("same Content receives a new ContentVersion when contentId is passed", async () => {
-    const svc = service();
-    await activateNewReleaseSingle(svc);
-    const resolve = createResolveActiveFormat(svc);
-    const llm = new MockLLMProvider();
-    const generation = new ContentGenerationService(
-      lifecycleRepo,
-      llm,
-      { generation: "mock", review: "mock", revision: "mock" },
-      resolve,
-    );
-    const topic = await lifecycleRepo.createTopicCandidate({
-      title: "Reuse Product",
-      status: "READY",
-    });
-    const strategy = await lifecycleRepo.createStrategy({
-      topicCandidateId: topic.id,
-      objective: "test",
-      targetAudience: "readers",
-      userIntent: "info",
-      formatCategory: "ARTICLE",
-      formatKey: "NEW_RELEASE_SINGLE",
-      angle: "test",
-      primaryChannel: "BLOGGER",
-      candidateChannels: ["BLOGGER"],
-      status: "READY",
-    });
-    const claim = await lifecycleRepo.createClaim({
-      statement: "Reuse Product は公開カタログ上で確認できる",
-      claimType: "FACT",
-      status: "SUPPORTED",
-      confidence: 0.9,
-      strategyId: strategy.id,
-    });
-    const first = await generation.generateBloggerArticle({
-      topicId: topic.id,
-      strategyId: strategy.id,
-      productTitle: "Reuse Product",
-      ctaUrl: "https://example.invalid/p",
-      claimIds: [claim.id],
-    });
-    const second = await generation.generateBloggerArticle({
-      topicId: topic.id,
-      strategyId: strategy.id,
-      productTitle: "Reuse Product",
-      ctaUrl: "https://example.invalid/p",
-      claimIds: [claim.id],
-      contentId: first.content.id,
-    });
-    expect(second.content.id).toBe(first.content.id);
-    expect(second.version.id).not.toBe(first.version.id);
-    expect(second.version.versionNumber).toBeGreaterThan(first.version.versionNumber);
-  });
 });

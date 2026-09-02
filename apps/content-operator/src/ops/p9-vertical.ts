@@ -18,6 +18,7 @@ const FIXTURE_HTML = `<!doctype html>
 <p>配信開始日: 2026-07-01</p>
 <p>価格: 1,980円</p>
 <p>ジャンル: abstract, catalog</p>
+<p>内容: 激ピストンと騎乗位シーンを収録した8時間ベスト。</p>
 <p>販売中</p>
 <a href="https://example.invalid/fanza/p9-related">related</a>
 </body></html>`;
@@ -73,6 +74,36 @@ export async function runP9MockVertical(): Promise<Record<string, unknown>> {
       strategyId: strategy.id,
       findingType: "observed:name",
     });
+    const boundPerformer = await stack.lifecycle.registerFindingAndClaim({
+      sourceKey: "public-url",
+      documentType: "product",
+      documentTitle: research.seed.title ?? product.title,
+      documentText: research.seed.normalizedText,
+      findingSummary: "松本いちか",
+      claimStatement: "松本いちか",
+      strategyId: strategy.id,
+      findingType: "observed:performer",
+    });
+    const boundScene = await stack.lifecycle.registerFindingAndClaim({
+      sourceKey: "public-url",
+      documentType: "product",
+      documentTitle: research.seed.title ?? product.title,
+      documentText: research.seed.normalizedText,
+      findingSummary: "激ピストン騎乗位で連続絶頂するシーン",
+      claimStatement: "激ピストン騎乗位で連続絶頂するシーン",
+      strategyId: strategy.id,
+      findingType: "observed:scene",
+    });
+    const boundQty = await stack.lifecycle.registerFindingAndClaim({
+      sourceKey: "public-url",
+      documentType: "product",
+      documentTitle: research.seed.title ?? product.title,
+      documentText: research.seed.normalizedText,
+      findingSummary: "8時間ベスト",
+      claimStatement: "8時間ベスト",
+      strategyId: strategy.id,
+      findingType: "observed:quantity",
+    });
 
     const content = await stack.lifecycleRepo.createContent({
       topicCandidateId: topic.id,
@@ -85,7 +116,7 @@ export async function runP9MockVertical(): Promise<Record<string, unknown>> {
       contentId: content.id,
       productTitle: product.title,
       ctaUrl: product.url,
-      claimIds: [bound.claim.id],
+      claimIds: [bound.claim.id, boundPerformer.claim.id, boundScene.claim.id, boundQty.claim.id],
       articleFormat: research.seed.pageType === "product" ? "catalog-fact" : "overview",
     });
     const originalBody = generated.version.body;
