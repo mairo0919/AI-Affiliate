@@ -290,6 +290,12 @@ export function buildPlanFactExecutionTarget(
   if (isBareWorkThemeFact(fact) && mode === "SEMANTIC_PRESERVE") {
     allowed.push("membership / recorded-variety framing (含む・収録・要素)");
   }
+  if (/^(?:この|その|あの)[\u4e00-\u9fffァ-ヶー]{2,6}$/u.test(fact.trim())) {
+    allowed.push("weave with related cast/scene sentence while keeping deixis+noun identity");
+  }
+  if (/^(?:それもそのはずで|そのはずで|だからこそ)$/u.test(fact.trim())) {
+    allowed.push("discourse connective paraphrase that preserves causal/glue meaning");
+  }
   return {
     contributionId,
     slot,

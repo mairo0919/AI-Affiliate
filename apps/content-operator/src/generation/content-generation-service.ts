@@ -75,6 +75,7 @@ import {
   buildArticlePlanComplianceMeta,
   buildOptionBArticlePlanRouting,
   routeArticlePlanFailure,
+  stripPureUnsupportedEvalClosers,
   validateArticlePlanCompliance,
 } from "../editorial-brain/generation/article-plan-compliance.js";
 import { validatePostTransformIntegrity } from "../editorial-brain/generation/post-transform-integrity.js";
@@ -1081,15 +1082,40 @@ export class ContentGenerationService {
           parsed as unknown as Record<string, unknown>,
         ) as unknown as BloggerArticleStructured;
 
-        const articleForRaw = {
+        let articleForRaw = {
           title: leadlessParsed.title,
           summary: leadlessParsed.summary,
           lead: "",
           sections: leadlessParsed.sections.map((s) => ({
-            paragraphs: s.paragraphs,
+            paragraphs: [...s.paragraphs],
             heading: s.heading,
           })),
         };
+
+        // Coverage-preserving closer removal only (pure unsupported eval padding).
+        // Not a general prose rewrite — prevents promotional-closer regen loops.
+        const closerStrip = stripPureUnsupportedEvalClosers({
+          article: articleForRaw,
+          articlePlan,
+        });
+        if (closerStrip.mutated) {
+          articleForRaw = {
+            ...articleForRaw,
+            sections: closerStrip.article.sections.map((s) => ({
+              paragraphs: s.paragraphs,
+              heading: s.heading ?? null,
+            })),
+          };
+          for (let si = 0; si < leadlessParsed.sections.length; si++) {
+            const stripped = closerStrip.article.sections[si];
+            if (!stripped) continue;
+            leadlessParsed.sections[si] = {
+              ...leadlessParsed.sections[si]!,
+              paragraphs: stripped.paragraphs,
+              heading: stripped.heading ?? leadlessParsed.sections[si]?.heading ?? null,
+            };
+          }
+        }
 
         const postIntegrity = validatePostTransformIntegrity({
           title: articleForRaw.title,
@@ -1316,14 +1342,12 @@ export class ContentGenerationService {
         throw new Error("blogger generation produced no article");
       }
 
-      // Architecture simplify: no post-LLM prose mutation on OPTION B.
-      // Defects are handled inside the Writer loop via VALIDATE → REGENERATE (bounded).
-      // Legacy applyArticlePlanComplianceMutations / applyBaselineQualityRepair remain
-      // in-repo for LEGACY_ONLY callers but are off the new generation path.
+      // Architecture: no general post-LLM prose rewrite. Pure unsupported-eval
+      // closer strip runs inside the attempt loop (coverage-preserving only).
       articlePlanComplianceMutationMeta = {
         applied: false,
         mutated: false,
-        proseMutationPolicy: "OPTION_B_NO_POST_LLM_PROSE_MUTATION",
+        proseMutationPolicy: "OPTION_B_PURE_EVAL_CLOSER_STRIP_ONLY",
         droppedSentences: 0,
         decisions: [],
       };

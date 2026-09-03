@@ -14,6 +14,10 @@ import {
   factRequiresConcessiveRelation,
   sentenceHasConcessiveRelation,
 } from "./semantic-proposition.js";
+import {
+  classifyFactRealizationPolicy,
+  policySemanticRealized,
+} from "./fact-realization-policy.js";
 
 const WEAK_FAMILY = new Set(["EVALUATIVE", "CATALOG", "TITLE_LABEL", "SERIES_CONCEPT"]);
 
@@ -314,7 +318,11 @@ export function paraphraseHit(sentence: string, fact: string): boolean {
 
   // Soft grammar fillers (ような / といった) and ordered content chunks —
   // required so SEMANTIC_PRESERVE natural prose is not marked PLAN_FACT_OMISSION.
-  if (softInflectionFactHit(sentence, fact)) return true;
+  // Concessive facts must NOT use soft/narrative majority (contrast relation is required).
+  if (!factRequiresConcessiveRelation(fact) && softInflectionFactHit(sentence, fact)) return true;
+
+  // Narrative-core / weaveable-deixis / discourse-connective (not identity-strict / concessive).
+  if (!factRequiresConcessiveRelation(fact) && policySemanticRealized(sentence, fact)) return true;
 
   const concessive = matchConcessiveProposition(sentence, fact);
   if (concessive === "EXACT" || concessive === "SEMANTIC") return true;
@@ -329,10 +337,24 @@ export function paraphraseHit(sentence: string, fact: string): boolean {
  * (e.g. 大人をバカにした表情 ↔ 大人をバカにしたような表情).
  */
 function softInflectionFactHit(sentence: string, fact: string): boolean {
+  // Identity-strict facts must not use soft chunk majority (qty/name integrity).
+  if (classifyFactRealizationPolicy(fact) === "IDENTITY_STRICT") {
+    const stripStrict = (t: string) =>
+      t
+        .replace(/\s+/g, "")
+        .replace(/ような|といった|みたいな|という/g, "")
+        .replace(/[、。！？・]/gu, "");
+    const s0 = stripStrict(sentence);
+    const f0 = stripStrict(fact);
+    return f0.length >= 2 && s0.includes(f0);
+  }
+
   const strip = (t: string) =>
     t
       .replace(/\s+/g, "")
       .replace(/ような|といった|みたいな|という/g, "")
+      // Optional narrative intensifiers (ただ/たった…) — core meaning unchanged
+      .replace(/(?:ただ|たった|ほんの|まさに|いわゆる|まさしく)/g, "")
       .replace(/[、。！？・]/gu, "");
   const s = strip(sentence);
   const f = strip(fact);
@@ -353,8 +375,15 @@ function softInflectionFactHit(sentence: string, fact: string): boolean {
     idx = at + c.length;
   }
   if (orderedHits === chunks.length) return true;
-  // Long narrative atoms: majority of content chunks (not full ordered surface).
+  // Narrative atoms: majority of content chunks (not full ordered surface).
   // Skip for concessive facts — relation loss must stay NONE (R151).
+  if (
+    chunks.length >= 3 &&
+    orderedHits >= Math.ceil(chunks.length * 0.7) &&
+    !factRequiresConcessiveRelation(fact)
+  ) {
+    return true;
+  }
   if (
     f.length >= 24 &&
     chunks.length >= 4 &&
@@ -567,6 +596,15 @@ export function resolveFactRealization(
 
   // Long SEMANTIC_PRESERVE atoms: major meaning anchors (not full surface restage)
   if (status === "NONE" && f.length >= 20 && majorMeaningRealized(sentence, fact)) {
+    status = "SEMANTIC";
+  }
+
+  // Policy semantic (narrative core / weaveable deixis / discourse) after surface miss
+  if (
+    status === "NONE" &&
+    !factRequiresConcessiveRelation(fact) &&
+    policySemanticRealized(sentence, fact)
+  ) {
     status = "SEMANTIC";
   }
 

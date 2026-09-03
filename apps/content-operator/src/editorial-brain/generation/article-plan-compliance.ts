@@ -457,6 +457,75 @@ export function validateArticlePlanCompliance(input: {
   };
 }
 
+/**
+ * Deterministic, coverage-preserving removal of pure unsupported evaluative closers.
+ *
+ * Not a general prose rewrite: only drops sentences that are pure eval padding
+ * (isPureUnsupportedEvaluativePadding) when every planned-fact realization is preserved.
+ * Needed so Writer promotional closers do not force regen loops as the steady-state design.
+ */
+export function stripPureUnsupportedEvalClosers(input: {
+  article: ArticlePlanComplianceArticle;
+  articlePlan: ArticlePlan;
+}): {
+  article: ArticlePlanComplianceArticle;
+  droppedSentences: string[];
+  mutated: boolean;
+} {
+  const planFacts = writerVisiblePlanFacts(articlePlanAllFacts(input.articlePlan));
+  const bodySlotFacts = writerVisiblePlanFacts(input.articlePlan.body.flatMap((b) => b.facts));
+  const fixed = articleFixedText(input.article);
+  const body = collectBodySentences(input.article);
+  if (body.length === 0) {
+    return { article: input.article, droppedSentences: [], mutated: false };
+  }
+
+  const keptFlags = body.map(() => true);
+  const dropped: string[] = [];
+
+  for (let i = 0; i < body.length; i++) {
+    const sentence = body[i]!.sentence;
+    if (!isPureUnsupportedEvaluativePadding(sentence, planFacts)) continue;
+
+    const currentKept = body.map((b) => b.sentence).filter((_, j) => keptFlags[j]);
+    const dropIdx = currentKept.indexOf(sentence);
+    if (dropIdx < 0) continue;
+    if (!dropPreservesPlannedRealization(fixed, currentKept, dropIdx, planFacts, bodySlotFacts)) {
+      continue;
+    }
+    keptFlags[i] = false;
+    dropped.push(sentence);
+  }
+
+  if (dropped.length === 0) {
+    return { article: input.article, droppedSentences: [], mutated: false };
+  }
+
+  const sections = input.article.sections.map((sec, sectionIndex) => {
+    const paragraphs: string[] = [];
+    sec.paragraphs.forEach((para, paragraphIndex) => {
+      const keptSentences = body
+        .filter(
+          (b, idx) =>
+            b.sectionIndex === sectionIndex &&
+            b.paragraphIndex === paragraphIndex &&
+            keptFlags[idx],
+        )
+        .map((b) => b.sentence);
+      if (keptSentences.length === 0) return;
+      const rebuilt = rejoinSentences(para, keptSentences);
+      if (rebuilt.trim().length > 0) paragraphs.push(rebuilt);
+    });
+    return { ...sec, paragraphs };
+  });
+
+  return {
+    article: { ...input.article, sections },
+    droppedSentences: dropped,
+    mutated: true,
+  };
+}
+
 type BodySent = {
   sectionIndex: number;
   paragraphIndex: number;

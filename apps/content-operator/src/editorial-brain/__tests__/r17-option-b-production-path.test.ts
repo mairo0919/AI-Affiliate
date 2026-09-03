@@ -374,7 +374,7 @@ describe("OPTION B production path (LLM=0)", () => {
     const beforeApproxBytes = legacySystemBytes + 26_000 + 37_000;
     // OPTION B system grows with natural-product-intro / title-surface policy text;
     // still far below legacy SEGMENT wall (~26KB+ authority dump).
-    expect(optionBSystemBytes).toBeLessThanOrEqual(legacySystemBytes + 1200);
+    expect(optionBSystemBytes).toBeLessThanOrEqual(legacySystemBytes + 1600);
     expect(optionB.systemInstruction).not.toMatch(/SEGMENT_CONTRACTS|CLAIM USAGE PLAN|BRAIN GENERATION CONTRACT/);
     expect(optionBBytes).toBeLessThan(25_000);
     expect(optionBBytes).toBeLessThan(beforeApproxBytes * 0.35);

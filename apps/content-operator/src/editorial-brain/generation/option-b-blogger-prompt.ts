@@ -78,7 +78,8 @@ export function buildOptionBBloggerGeneratorPrompt(input: {
           "Short work-theme planned facts (membership tags): state recorded membership/variety only. Obey notAllowed — do not invent emotions, psychology, narrative roles, or plot from genre knowledge.",
           "FREE_CONNECTIVE: connection/transition only — not new facts.",
           "Write one body section. Express every body.facts item (paraphrase OK under SEMANTIC_PRESERVE), grouping by informationAxis / presentationPurpose / related meaning — one fact ≠ one sentence/paragraph. Open by identifying the product from planned body facts, then advance remaining axes. For long scene/trait/play-style facts, make clear what product aspect those facts describe without inventing unsupported detail. materialDepth=rich means do not omit independent axes; it does not mean elaborate each fact or open a new paragraph per fact. Long compound facts are already dense: weave, do not inflate.",
-          "TERMINATION: when all planned body facts are realized, stop. Do not add a summary, recommendation, reader invitation, or evaluative wrap-up whose meaning is absent from ARTICLE_PLAN. A short ending on a factual sentence is correct. Do not pad for length.",
+          "TERMINATION: when all planned body facts are realized, stop. Do not add a summary, recommendation, reader invitation, or evaluative wrap-up whose meaning is absent from ARTICLE_PLAN. Explicitly forbidden unless already in planned facts: 楽しめます / 堪能できる / 充実した内容 / 余すところなく / 存分に味わえる / 魅力が詰まった as closing glue. A short ending on a factual sentence is correct. Do not pad for length.",
+          "Short facts: weave with related axes. Deixis (この美女) must keep noun+deixis identity when merged. Narrative intensifiers (ただ) may soften; meaning cores must remain. Never invent promotional closers after coverage is complete.",
         ].join("\n")
       : "",
     input.planViolationNote
