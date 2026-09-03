@@ -1,18 +1,23 @@
 /**
  * Daily multi-channel LIVE orchestrator.
- * Reuses planDailyChannels + OPTION B Blog + ContentEngine X + existing publishers.
- * Does not invent Writer/Brain rules. Ranking Writer remains deferred.
+ * Blog publication path: OPTION B generate → APPROVED → WordPress (shared publish path).
+ * X path unchanged. Ranking Writer remains deferred.
  */
 
 import type { AppConfig } from "@ai-affiliate/config";
 import {
   ContentRepository,
+  P6Repository,
   type DatabaseClient,
   type LifecycleRepository,
 } from "@ai-affiliate/database";
 import type { Logger } from "@ai-affiliate/shared";
+import type { PublisherAdapter } from "../adapters/types.js";
 import { requireApiLLMProvider } from "../adapters/llm/create-llm-provider.js";
-import { createBloggerPublisherFromConfig } from "../adapters/publisher/blogger-api-publisher.js";
+import {
+  wordpressCredentialsPresent,
+} from "../adapters/publisher/wordpress-api-publisher.js";
+import { ContentReviewService } from "../admin/content-review-service.js";
 import { ContentEngine } from "../content/content-engine.js";
 import { validateFanzaAffiliateUrl } from "../daily-blog/affiliate-url.js";
 import {
@@ -21,7 +26,6 @@ import {
   type KnownPublication,
 } from "../daily-blog/duplicate-gate.js";
 import { dailyRunIdempotencyKey, tokyoDateString } from "../daily-blog/idempotency.js";
-import { evaluatePublishGate } from "../daily-blog/publish-gate.js";
 import { claimStatementsFromPageEvidence } from "../article-pattern/evidence-pack.js";
 import type { PageEvidenceMetaShape } from "../article-pattern/official-page-evidence-atoms.js";
 import { formatBloggerHtml } from "../generation/blogger-formatter.js";
@@ -31,6 +35,11 @@ import {
   assertPublicBodyClean,
   sanitizePublicBody,
 } from "../publication/public-body-sanitizer.js";
+import { evaluateStructuredContentImagesForWordPress } from "../publication/image-publication-eligibility.js";
+import {
+  createDefaultWordPressPublisher,
+  publishContentVersionToWordPress,
+} from "../wordpress/wordpress-publish-path.js";
 import { XPublicationService } from "../x/publication-service.js";
 import { loadDailyCandidatePool } from "./candidate-pool.js";
 import { planDailyChannels } from "./channel-selection.js";
@@ -39,6 +48,7 @@ import {
   type DailyMultiChannelConfig,
 } from "./config.js";
 import {
+  BLOG_PUBLICATION_PLATFORMS,
   countBlogPublishedOnTokyoDay,
   countXPublishedOnTokyoDay,
   loadChannelPublicationHistory,
@@ -77,6 +87,9 @@ export interface DailyLiveResult {
   };
   ranking: { productionReady: false; deferred: true };
   llmCalls: number;
+  /** WordPress createDraft/publish attempts that reached the adapter. */
+  wordpressPublishCalls: number;
+  /** @deprecated Always 0 — Blogger is no longer on the daily-ops live path. */
   bloggerPublishCalls: number;
   xPublishCalls: number;
 }
@@ -94,6 +107,10 @@ export interface DailyLiveDeps {
   forceSmoke?: boolean;
   /** Override candidate externalId for smoke (optional). */
   smokeCanonicalId?: string;
+  /** Inject WordPress publisher (tests / mock). */
+  wordpressPublisher?: PublisherAdapter;
+  /** Inject review authority (tests). Default: ContentReviewService + P6Repository. */
+  contentReview?: ContentReviewService;
 }
 
 async function bootstrapLifecycleForResearchItem(input: {
@@ -121,8 +138,8 @@ async function bootstrapLifecycleForResearchItem(input: {
     formatCategory: "ARTICLE",
     formatKey: "NEW_RELEASE_SINGLE",
     angle: "single_product",
-    primaryChannel: "BLOGGER",
-    candidateChannels: ["BLOGGER", "X"],
+    primaryChannel: "WORDPRESS",
+    candidateChannels: ["WORDPRESS", "X"],
     status: "READY",
   });
 
@@ -196,13 +213,14 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
       x: emptyX,
       ranking: { productionReady: false, deferred: true },
       llmCalls: 0,
+      wordpressPublishCalls: 0,
       bloggerPublishCalls: 0,
       xPublishCalls: 0,
     };
   }
 
   let llmCalls = 0;
-  let bloggerPublishCalls = 0;
+  let wordpressPublishCalls = 0;
   let xPublishCalls = 0;
 
   const blogDone = await countBlogPublishedOnTokyoDay(
@@ -224,6 +242,7 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
       x: { ...emptyX, note: `xDone=${xDone}` },
       ranking: { productionReady: false, deferred: true },
       llmCalls: 0,
+      wordpressPublishCalls: 0,
       bloggerPublishCalls: 0,
       xPublishCalls: 0,
     };
@@ -243,6 +262,7 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
       x: emptyX,
       ranking: { productionReady: false, deferred: true },
       llmCalls: 0,
+      wordpressPublishCalls: 0,
       bloggerPublishCalls: 0,
       xPublishCalls: 0,
     };
@@ -277,7 +297,7 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
   const blog = { ...emptyBlog };
   const x = { ...emptyX };
 
-  // ——— BLOG ———
+  // ——— BLOG (WordPress) ———
   if ((blogNeeded > 0 || deps.forceSmoke) && plan.blog.selection.selected && !plan.blog.blocked) {
     blog.attempted = true;
     const selected = plan.blog.selection.selected;
@@ -310,19 +330,29 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
       canonicalId: selected.canonicalId,
     });
 
-    // Intent lock via existing PublicationTarget metadata search — soft check
+    // Intent lock — WORDPRESS primary; BLOGGER kept for mid-transition retries.
     const priorIntent = await deps.database.prisma.publicationTarget.findFirst({
       where: {
-        platform: "BLOGGER",
+        platform: { in: [...BLOG_PUBLICATION_PLATFORMS] },
         platformMetadata: { path: ["dailyIdempotencyKey"], equals: idempotencyKey },
-        status: { in: ["PUBLISHED", "DRAFT", "SCHEDULED"] },
+        status: { in: ["PUBLISHED", "DRAFT", "SCHEDULED", "AWAITING_APPROVAL"] },
       },
     });
-    if (priorIntent?.status === "PUBLISHED") {
+    if (
+      priorIntent?.status === "PUBLISHED" ||
+      priorIntent?.status === "DRAFT" ||
+      priorIntent?.status === "AWAITING_APPROVAL"
+    ) {
       blog.held = true;
-      blog.note = "idempotent_already_published";
+      blog.note =
+        priorIntent.status === "AWAITING_APPROVAL"
+          ? "idempotent_awaiting_review"
+          : priorIntent.status === "DRAFT"
+            ? "idempotent_already_drafted"
+            : "idempotent_already_published";
       blog.externalId = priorIntent.publishedExternalId;
       blog.url = priorIntent.publishedUrl;
+      blog.contentVersionId = priorIntent.contentVersionId;
     } else if (dup.duplicate) {
       blog.held = true;
       blog.failureCodes = ["DUPLICATE_PRODUCT"];
@@ -379,7 +409,7 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
         }
         blog.contentVersionId = generated.version.id;
 
-        // Integrity / formatter checks (existing helpers)
+        // ——— Generation complete: ContentVersion remains REVIEWING ———
         let formatterPass = true;
         let html = "";
         try {
@@ -392,78 +422,62 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
               ? article.cta
               : { label: article.cta.label, url: ctaUrl },
           });
+          sanitizePublicBody(html);
+          assertPublicBodyClean(html);
         } catch {
           formatterPass = false;
         }
 
-        const gate = evaluatePublishGate({
-          schemaPass: Boolean(generated.article),
-          defer: false,
-          claimValidationPass: generated.publishValidation.claimValidationPass,
-          integrityPass: generated.publishValidation.integrityPass,
-          formatterPass,
-          affiliateUrlValid: affiliateCheck.ok,
-          imagePipelinePass: true,
-          bloggerAuthPass: Boolean(
-            deps.config.bloggerClientId &&
-              deps.config.bloggerRefreshToken &&
-              deps.config.bloggerBlogId,
-          ),
-          duplicate: dup.duplicate,
-          dryRun: daily.dryRun && !deps.forceSmoke,
-          autoPublishEnabled: true,
-          // R61/R117: Brain no longer gates publish — safety + ops controls only.
-          allowDirectPublish: true,
+        // Match publishContentVersionToWordPress default: never promote to publish
+        // solely from WORDPRESS_DEFAULT_PUBLISH_MODE without allowDirectPublish.
+        const wpMode: "draft" | "publish" =
+          deps.config.wordpressAllowDirectPublish &&
+          deps.config.wordpressDefaultPublishMode === "publish"
+            ? "publish"
+            : "draft";
+        const authPass =
+          deps.config.wordpressMode === "mock" ||
+          (wordpressCredentialsPresent(deps.config) &&
+            deps.config.wordpressAllowExternalRequests);
+
+        const reviewFailureCodes: string[] = [];
+        if (!generated.article) reviewFailureCodes.push("SCHEMA_FAIL");
+        if (!generated.publishValidation.claimValidationPass) {
+          reviewFailureCodes.push("CLAIM_VALIDATION_FAIL");
+        }
+        if (!generated.publishValidation.integrityPass) {
+          reviewFailureCodes.push("INTEGRITY_FAIL");
+        }
+        if (!generated.publishValidation.articlePlanCompliancePass) {
+          reviewFailureCodes.push("COMPLIANCE_FAIL");
+        }
+        if (!formatterPass) reviewFailureCodes.push("FORMATTER_FAIL");
+        if (!affiliateCheck.ok) reviewFailureCodes.push("AFFILIATE_URL_INVALID");
+        if (!authPass) reviewFailureCodes.push("CHANNEL_AUTH_FAIL");
+
+        // Image gate for intended WordPress mode (never hardcode imagePipelinePass).
+        const imageEval = evaluateStructuredContentImagesForWordPress({
+          structuredContent: generated.version.structuredContent,
+          mode: wpMode,
         });
+        if (!imageEval.imagePipelinePass) {
+          reviewFailureCodes.push(...imageEval.failureCodes);
+        }
 
-        if (gate.decision !== "PUBLISH") {
+        if (reviewFailureCodes.length > 0) {
           blog.held = true;
-          blog.failureCodes = gate.failureCodes;
-          blog.note = `gate_${gate.decision}`;
-        } else {
-          const sanitized = sanitizePublicBody(html);
-          assertPublicBodyClean(html);
-          const publisher = createBloggerPublisherFromConfig({
-            bloggerMode: deps.config.bloggerMode,
-            bloggerAllowExternalRequests: deps.config.bloggerAllowExternalRequests,
-            bloggerAllowDirectPublish: true,
-            bloggerDefaultPublishMode: "publish",
-            bloggerClientId: deps.config.bloggerClientId,
-            bloggerClientSecret: deps.config.bloggerClientSecret,
-            bloggerRefreshToken: deps.config.bloggerRefreshToken,
-            bloggerBlogId: deps.config.bloggerBlogId,
-            bloggerApiBaseUrl: deps.config.bloggerApiBaseUrl,
-            bloggerOAuthTokenUrl: deps.config.bloggerOAuthTokenUrl,
-          });
-          const prepared = await publisher.prepare({
-            contentVersionId: generated.version.id,
-            title: generated.article.title,
-            body: sanitized.body,
-            targetFormat: "article",
-            metadata: {
-              mode: "publish",
-              dailyIdempotencyKey: idempotencyKey,
-              canonicalId: selected.canonicalId,
-              mixSlot: plan.blogMixSlot,
-              blogMixSlot: plan.blogMixSlot,
-              actressKey: selected.actressKey,
-              analysisRunId,
-              publicBodySanitized: sanitized.removed,
-            },
-          });
-          const published = await publisher.publish({ prepared });
-          bloggerPublishCalls += 1;
-
-          const target = await deps.lifecycle.createPublicationTarget({
+          blog.failureCodes = reviewFailureCodes;
+          blog.note = "review_readiness_hold";
+        } else if (daily.reviewPolicy === "manual") {
+          // Soft-lock daily slot; APPROVED only via ContentReviewService (human/admin).
+          await deps.lifecycle.createPublicationTarget({
             contentId: generated.content.id,
             contentVersionId: generated.version.id,
-            platform: "BLOGGER",
-            destinationRef: deps.config.bloggerBlogId ?? null,
+            platform: "WORDPRESS",
+            destinationRef: deps.config.wordpressBaseUrl ?? null,
             targetFormat: "article",
-            approvalMode: "AUTOMATIC",
-            status: "PUBLISHED",
-            publishedExternalId: published.externalId,
-            publishedUrl: published.url,
+            approvalMode: "MANUAL",
+            status: "AWAITING_APPROVAL",
             publishedAt: now,
             platformMetadata: {
               dailyIdempotencyKey: idempotencyKey,
@@ -471,22 +485,106 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
               mixSlot: plan.blogMixSlot,
               blogMixSlot: plan.blogMixSlot,
               actressKey: selected.actressKey,
-              route: "LIVE",
+              analysisRunId,
+              route: "DAILY_OPS_LIVE",
+              reviewPolicy: "manual",
+              awaitingContentReview: true,
             },
           });
-          await deps.lifecycle.createPublicationRecord({
-            publicationTargetId: target.id,
-            platform: "BLOGGER",
-            status: "PUBLISHED",
-            externalId: published.externalId,
-            url: published.url,
-            responseSummary: published.responseSummary as Record<string, unknown>,
-          });
+          blog.held = true;
+          blog.failureCodes = ["REVIEW_POLICY_MANUAL"];
+          blog.note = "AWAITING_MANUAL_REVIEW";
+        } else {
+          // ——— Review phase (auto policy): ContentReviewService is sole APPROVED authority ———
+          const contentReview =
+            deps.contentReview ??
+            new ContentReviewService(
+              deps.lifecycle,
+              new P6Repository(deps.database.prisma),
+            );
+          try {
+            await contentReview.decide({
+              contentVersionId: generated.version.id,
+              decision: "approve",
+              actor: "daily-ops-auto-review",
+              reason:
+                "Auto review: generation integrity/compliance/claim/image readiness passed",
+              correlationId: idempotencyKey,
+              approvalPolicy: "auto",
+            });
+          } catch (reviewErr) {
+            blog.held = true;
+            blog.failureCodes = ["AUTO_REVIEW_FAILED"];
+            blog.note =
+              reviewErr instanceof Error
+                ? reviewErr.message.slice(0, 240)
+                : String(reviewErr);
+            throw Object.assign(new Error("BLOG_REVIEW_HELD"), { held: true });
+          }
 
-          blog.published = true;
-          blog.externalId = published.externalId;
-          blog.url = published.url;
-          blog.note = "live_published";
+          // ——— Publication phase: APPROVED only (shared WordPress path) ———
+          // Public publish also requires allowDirectPublish; draft is default-safe.
+          if (
+            wpMode === "publish" &&
+            !deps.config.wordpressAllowDirectPublish
+          ) {
+            blog.held = true;
+            blog.failureCodes = ["DIRECT_PUBLISH_DISABLED"];
+            blog.note = "approved_but_direct_publish_disabled";
+          } else {
+            const publisher =
+              deps.wordpressPublisher ?? createDefaultWordPressPublisher(deps.config);
+            const wpResult = await publishContentVersionToWordPress(
+              {
+                config: deps.config,
+                lifecycle: deps.lifecycle,
+                prisma: deps.database.prisma,
+                publisher,
+              },
+              {
+                contentVersionId: generated.version.id,
+                canonicalId: selected.canonicalId,
+                ctaUrl,
+                mode: wpMode,
+                route: "DAILY_OPS_LIVE",
+                idempotencyKey: `wordpress:${generated.version.id}:${wpMode}`,
+                platformMetadata: {
+                  dailyIdempotencyKey: idempotencyKey,
+                  canonicalId: selected.canonicalId,
+                  mixSlot: plan.blogMixSlot,
+                  blogMixSlot: plan.blogMixSlot,
+                  actressKey: selected.actressKey,
+                  analysisRunId,
+                  route: "DAILY_OPS_LIVE",
+                  reviewPolicy: "auto",
+                },
+              },
+            );
+            wordpressPublishCalls += 1;
+
+            if (wpResult.ok && wpResult.published) {
+              blog.published = true;
+              blog.externalId = wpResult.externalId;
+              blog.url = wpResult.url;
+              blog.note =
+                wpResult.status === "DRAFT"
+                  ? "live_wordpress_draft"
+                  : "live_wordpress_published";
+            } else if (wpResult.ok && wpResult.skipped) {
+              blog.held = true;
+              blog.failureCodes = wpResult.gateFailures ?? [wpResult.reason];
+              blog.note = `wordpress_skipped_${wpResult.reason}`;
+              blog.externalId = wpResult.priorExternalId ?? null;
+            } else {
+              blog.held = true;
+              blog.failureCodes = [wpResult.reason];
+              blog.note = (
+                "error" in wpResult && wpResult.error
+                  ? wpResult.error
+                  : wpResult.reason
+              ).slice(0, 240);
+            }
+          }
         }
       } catch (error) {
         if ((error as { held?: boolean })?.held) {
@@ -658,7 +756,8 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
     x,
     ranking: { productionReady: false, deferred: true },
     llmCalls,
-    bloggerPublishCalls,
+    wordpressPublishCalls,
+    bloggerPublishCalls: 0,
     xPublishCalls,
   };
 }

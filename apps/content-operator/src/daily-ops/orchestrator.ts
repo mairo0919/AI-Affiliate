@@ -1,6 +1,6 @@
 /**
  * Multi-channel daily dry orchestrator (LLM=0).
- * Does not call Writer/Brain/X API/Blogger publish.
+ * Does not call Writer/Brain/X API/WordPress publish.
  */
 
 import { tokyoDateString } from "../daily-blog/idempotency.js";
@@ -36,6 +36,8 @@ export interface MultiChannelDryResult {
     note: string;
   };
   llmCalls: 0;
+  wordpressPublishCalls: 0;
+  /** @deprecated Always 0 — Blogger is off the daily-ops path. */
   bloggerPublishCalls: 0;
   xPublishCalls: 0;
 }
@@ -91,6 +93,7 @@ export function runMultiChannelDailyDry(input: MultiChannelDryInput): MultiChann
         "Selection prefers mix buckets before totalScore; freshness may remain in Analysis totalScore but no longer solely drives daily pick.",
     },
     llmCalls: 0,
+    wordpressPublishCalls: 0,
     bloggerPublishCalls: 0,
     xPublishCalls: 0,
   };

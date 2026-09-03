@@ -25,6 +25,7 @@ import {
   assertPublicBodyClean,
   sanitizePublicBody,
 } from "../publication/public-body-sanitizer.js";
+import { evaluateStructuredContentImagesForWordPress } from "../publication/image-publication-eligibility.js";
 
 export type WordPressStoredArticle = {
   title?: string;
@@ -85,6 +86,8 @@ export interface WordPressPublishOneInput {
   dryRun?: boolean;
   route?: string;
   idempotencyKey?: string;
+  /** Merged into PublicationTarget.platformMetadata (daily ops mix keys, etc.). */
+  platformMetadata?: Record<string, unknown>;
 }
 
 export type WordPressPublishOneResult =
@@ -372,13 +375,43 @@ export async function publishContentVersionToWordPress(
       ? `https://video.dmm.co.jp/av/content/?id=${canonicalId}`
       : null);
   const ctaCheck = validateFanzaAffiliateUrl(productUrl);
+
+  const mode: "publish" | "draft" =
+    input.mode ??
+    (deps.config.wordpressAllowDirectPublish &&
+    deps.config.wordpressDefaultPublishMode === "publish"
+      ? "publish"
+      : "draft");
+
+  const imageEval = evaluateStructuredContentImagesForWordPress({
+    structuredContent: version.structuredContent,
+    mode,
+  });
+  if (!imageEval.pass) {
+    return {
+      ok: true,
+      published: false,
+      skipped: true,
+      reason: "IMAGE_PUBLIC_ELIGIBILITY",
+      contentVersionId: version.id,
+      contentId: version.contentId,
+      gateFailures: imageEval.failureCodes,
+      duplicate: false,
+    };
+  }
+
+  const structuredForHtml = {
+    ...structured,
+    images: imageEval.imagesForHtml,
+  };
+
   // Prefer article CTA; fall back to validated product URL; never invent affiliate.
   let built: ReturnType<typeof buildWordPressHtmlFromVersion>;
   try {
     built = buildWordPressHtmlFromVersion({
       title: version.title,
       summary: version.summary,
-      structuredContent: version.structuredContent,
+      structuredContent: structuredForHtml,
       ctaUrl: ctaCheck.url ?? productUrl ?? "",
     });
   } catch (e) {
@@ -392,13 +425,6 @@ export async function publishContentVersionToWordPress(
     };
   }
 
-  const mode: "publish" | "draft" =
-    input.mode ??
-    (deps.config.wordpressAllowDirectPublish &&
-    deps.config.wordpressDefaultPublishMode === "publish"
-      ? "publish"
-      : "draft");
-
   const authPass =
     deps.config.wordpressMode === "mock" ||
     (wordpressCredentialsPresent(deps.config) && deps.config.wordpressAllowExternalRequests);
@@ -410,7 +436,7 @@ export async function publishContentVersionToWordPress(
     integrityPass: true,
     formatterPass: true,
     affiliateUrlValid: ctaCheck.ok || Boolean(built.article.cta?.url),
-    imagePipelinePass: true,
+    imagePipelinePass: imageEval.imagePipelinePass,
     bloggerAuthPass: authPass,
     channelAuthPass: authPass,
     duplicate: false,
@@ -506,6 +532,9 @@ export async function publishContentVersionToWordPress(
       ctaUrl: ctaCheck.url ?? productUrl,
       hasAffiliateIdHint: ctaCheck.hasAffiliateIdHint,
       wordpressMode: deps.config.wordpressMode,
+      imageEvalNotes: imageEval.notes,
+      imageExcludedCount: imageEval.excluded.length,
+      ...(input.platformMetadata ?? {}),
     },
   });
 

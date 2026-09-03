@@ -1,6 +1,7 @@
 /**
- * Future scheduler hook — not wired into SchedulerPipeline yet (prod switch deferred).
- * Call runWordPressPublicationBatch with due ContentVersion IDs when enabling WP daily ops.
+ * Scheduler / batch helper for APPROVED ContentVersions → WordPress.
+ * Daily multi-channel live path uses publishContentVersionToWordPress directly
+ * (see daily-ops/live-orchestrator). Prefer that shared path over a second publisher.
  */
 import type { AppConfig } from "@ai-affiliate/config";
 import type { LifecycleRepository } from "@ai-affiliate/database";

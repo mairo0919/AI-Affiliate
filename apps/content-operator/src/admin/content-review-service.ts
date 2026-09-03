@@ -46,6 +46,8 @@ export class ContentReviewService {
     actor: string;
     reason?: string;
     correlationId?: string;
+    /** Distinguishes human vs policy-driven auto approval in AuditEvent. */
+    approvalPolicy?: "manual" | "auto";
   }): Promise<ContentVersion> {
     const version = await this.repo.findContentVersion(input.contentVersionId);
     if (!version) {
@@ -53,7 +55,13 @@ export class ContentReviewService {
     }
 
     if (input.decision === "approve") {
-      return this.approve(version, input.actor, input.reason, input.correlationId);
+      return this.approve(
+        version,
+        input.actor,
+        input.reason,
+        input.correlationId,
+        input.approvalPolicy ?? "manual",
+      );
     }
 
     const nextStatus = this.mapDecisionToStatus(input.decision, version.status);
@@ -71,6 +79,7 @@ export class ContentReviewService {
         contentId: version.contentId,
         versionNumber: version.versionNumber,
         correlationId: input.correlationId ?? null,
+        approvalPolicy: input.approvalPolicy ?? "manual",
       },
     });
     return updated;
@@ -81,6 +90,7 @@ export class ContentReviewService {
     actor: string,
     reason?: string,
     correlationId?: string,
+    approvalPolicy: "manual" | "auto" = "manual",
   ): Promise<ContentVersion> {
     if (version.status !== ContentVersionStatus.REVIEWING) {
       throw new ContentReviewError(
@@ -136,6 +146,9 @@ export class ContentReviewService {
         contentId: version.contentId,
         versionNumber: version.versionNumber,
         correlationId: correlationId ?? null,
+        approvalPolicy,
+        previousStatus: version.status,
+        nextStatus: ContentVersionStatus.APPROVED,
       },
     });
     return updated;

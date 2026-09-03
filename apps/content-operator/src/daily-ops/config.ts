@@ -21,6 +21,12 @@ export interface DailyMultiChannelConfig {
   rankingMinDaysBetween: number | null;
   dryRun: boolean;
   enabled: boolean;
+  /**
+   * Review authority for daily-ops blog path.
+   * - manual (default): generation leaves REVIEWING; no publication until ContentReviewService
+   * - auto: ContentReviewService.decide(approve) after quality gates, then publication
+   */
+  reviewPolicy: "manual" | "auto";
 }
 
 function parseBool(v: string | undefined, fallback: boolean): boolean {
@@ -101,6 +107,10 @@ export function loadDailyMultiChannelConfig(
     ),
     dryRun: parseBool(env.DAILY_OPS_DRY_RUN, true),
     enabled: parseBool(env.DAILY_OPS_ENABLED, false),
+    reviewPolicy:
+      (env.DAILY_OPS_REVIEW_POLICY ?? "manual").trim().toLowerCase() === "auto"
+        ? "auto"
+        : "manual",
   };
 }
 

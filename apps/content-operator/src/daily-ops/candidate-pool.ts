@@ -34,28 +34,34 @@ function tagName(
 async function loadPublishedBlogUrls(
   prisma: DatabaseClient["prisma"],
 ): Promise<Map<string, string>> {
+  // Prefer WORDPRESS URLs for X BLOG_TRAFFIC; keep BLOGGER history readable.
   const publishedTargets = await prisma.publicationTarget.findMany({
     where: {
-      platform: "BLOGGER",
-      status: "PUBLISHED",
+      platform: { in: ["WORDPRESS", "BLOGGER"] },
+      status: { in: ["PUBLISHED", "DRAFT"] },
       publishedUrl: { not: null },
     },
     orderBy: { publishedAt: "desc" },
     take: 200,
     select: {
       publishedUrl: true,
+      platform: true,
       platformMetadata: true,
     },
   });
   const blogUrlByCid = new Map<string, string>();
-  for (const t of publishedTargets) {
-    const meta = asRecord(t.platformMetadata);
-    const cid =
-      (typeof meta.canonicalId === "string" && meta.canonicalId) ||
-      (typeof meta.externalId === "string" && meta.externalId) ||
-      null;
-    if (cid && t.publishedUrl && !blogUrlByCid.has(cid)) {
-      blogUrlByCid.set(cid.toLowerCase(), t.publishedUrl);
+  // Two-pass: WORDPRESS wins when both exist for the same canonicalId.
+  for (const prefer of ["WORDPRESS", "BLOGGER"] as const) {
+    for (const t of publishedTargets) {
+      if (t.platform !== prefer) continue;
+      const meta = asRecord(t.platformMetadata);
+      const cid =
+        (typeof meta.canonicalId === "string" && meta.canonicalId) ||
+        (typeof meta.externalId === "string" && meta.externalId) ||
+        null;
+      if (cid && t.publishedUrl && !blogUrlByCid.has(cid.toLowerCase())) {
+        blogUrlByCid.set(cid.toLowerCase(), t.publishedUrl);
+      }
     }
   }
   return blogUrlByCid;

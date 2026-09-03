@@ -1,5 +1,7 @@
 /**
  * Channel publication history + Tokyo-day quota helpers (existing models only).
+ * Blog channel SSOT for new publishes is WORDPRESS; BLOGGER rows remain readable
+ * for historical duplicate / mix awareness during transition.
  */
 
 import type { DatabaseClient } from "@ai-affiliate/database";
@@ -8,6 +10,9 @@ import type { ChannelPublicationRecord } from "./channel-duplicate.js";
 import type { MixHistoryEntry } from "./content-mix.js";
 import { normalizeMixSlot } from "./content-mix.js";
 import type { XPostRoute } from "./x-route.js";
+
+/** Active blog publication platform + legacy Blogger history. */
+export const BLOG_PUBLICATION_PLATFORMS = ["WORDPRESS", "BLOGGER"] as const;
 
 function asRecord(v: unknown): Record<string, unknown> {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
@@ -31,7 +36,11 @@ export async function loadChannelPublicationHistory(
   const out: ChannelPublicationRecord[] = [];
 
   const blogTargets = await prisma.publicationTarget.findMany({
-    where: { platform: "BLOGGER", status: { in: ["PUBLISHED", "DRAFT"] }, publishedAt: { not: null } },
+    where: {
+      platform: { in: [...BLOG_PUBLICATION_PLATFORMS] },
+      status: { in: ["PUBLISHED", "DRAFT"] },
+      publishedAt: { not: null },
+    },
     orderBy: { publishedAt: "desc" },
     take: limit,
     select: {
@@ -80,16 +89,22 @@ export async function countBlogPublishedOnTokyoDay(
   timeZone: string,
 ): Promise<number> {
   const { start, end } = dayBoundsUtc(dayKey, timeZone);
+  // Count DRAFT + PUBLISHED + AWAITING_APPROVAL so manual-review holds still consume the daily slot.
   const rows = await prisma.publicationTarget.findMany({
     where: {
-      platform: "BLOGGER",
-      status: "PUBLISHED",
-      publishedAt: { gte: start, lt: end },
+      platform: { in: [...BLOG_PUBLICATION_PLATFORMS] },
+      status: { in: ["PUBLISHED", "DRAFT", "AWAITING_APPROVAL"] },
+      OR: [
+        { publishedAt: { gte: start, lt: end } },
+        { publishedAt: null, createdAt: { gte: start, lt: end } },
+      ],
     },
-    select: { publishedAt: true },
+    select: { publishedAt: true, createdAt: true },
   });
-  return rows.filter((r) => r.publishedAt && tokyoDateString(r.publishedAt, timeZone) === dayKey)
-    .length;
+  return rows.filter((r) => {
+    const at = r.publishedAt ?? r.createdAt;
+    return at && tokyoDateString(at, timeZone) === dayKey;
+  }).length;
 }
 
 export async function countXPublishedOnTokyoDay(
@@ -114,7 +129,10 @@ export async function loadRecentMixHistory(
   limit = 14,
 ): Promise<MixHistoryEntry[]> {
   const rows = await prisma.publicationTarget.findMany({
-    where: { platform: "BLOGGER", publishedAt: { not: null } },
+    where: {
+      platform: { in: [...BLOG_PUBLICATION_PLATFORMS] },
+      publishedAt: { not: null },
+    },
     orderBy: { publishedAt: "desc" },
     take: limit,
     select: { publishedAt: true, platformMetadata: true },
@@ -167,7 +185,10 @@ export async function loadRecentBlogActressKeys(
   limit = 20,
 ): Promise<string[]> {
   const rows = await prisma.publicationTarget.findMany({
-    where: { platform: "BLOGGER", status: { in: ["PUBLISHED", "DRAFT"] } },
+    where: {
+      platform: { in: [...BLOG_PUBLICATION_PLATFORMS] },
+      status: { in: ["PUBLISHED", "DRAFT"] },
+    },
     orderBy: { publishedAt: "desc" },
     take: limit,
     select: { platformMetadata: true },
@@ -196,7 +217,7 @@ export async function loadRecentXRoutes(
   // Default soft balance: treat unknown as DIRECT_AFFILIATE.
   return rows.map((r) => {
     const body = r.posts[0]?.body ?? "";
-    if (/blogger\.com|blogspot\.com/i.test(body)) return "BLOG_TRAFFIC" as const;
+    if (/blogger\.com|blogspot\.com|wordpress|\/\?p=/i.test(body)) return "BLOG_TRAFFIC" as const;
     return "DIRECT_AFFILIATE" as const;
   });
 }

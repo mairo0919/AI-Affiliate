@@ -238,6 +238,7 @@ describe("multi-channel daily (LLM=0)", () => {
       ],
     });
     expect(result.llmCalls).toBe(0);
+    expect(result.wordpressPublishCalls).toBe(0);
     expect(result.bloggerPublishCalls).toBe(0);
     expect(result.xPublishCalls).toBe(0);
     expect(result.targets.minimumTotal).toBe(2);
