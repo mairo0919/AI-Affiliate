@@ -16,6 +16,7 @@ import {
   stripPureUnsupportedEvalClosers,
   validateArticlePlanCompliance,
 } from "../../editorial-brain/generation/article-plan-compliance.js";
+import { hasUnsupportedEvaluativeResidue } from "../plan-surface-attestation.js";
 import type { ArticlePlan } from "../article-plan.js";
 import { OPTION_B_WRITER_SYSTEM } from "../natural-product-intro-policy.js";
 import { buildOptionBBloggerGeneratorPrompt } from "../../editorial-brain/generation/option-b-blogger-prompt.js";
@@ -97,7 +98,7 @@ describe("pure unsupported eval closer strip — ofje", () => {
     ["奥田咲", "エスワンベスト第6弾"],
   );
 
-  it("strips pure eval closer while keeping fact-bearing sentences", () => {
+  it("keeps fact-bearing editorial interpretation; strips empty promo closer", () => {
     const article = {
       title: "奥田咲のエスワンベスト第6弾",
       lead: "",
@@ -107,20 +108,36 @@ describe("pure unsupported eval closer strip — ofje", () => {
           paragraphs: [
             "本作は奥田咲の最新12タイトルの全コーナーを収録したベスト第6弾で、AVデビューから8周年を迎えた彼女の円熟した濃厚なセックスとエロポテンシャルを堪能できる内容となっています。",
             "低身長ながらグラマラスボディを持つ奥田咲が人妻、NTR、痴女、追撃ピストンなど多彩なプレイスタイルを披露しており、合計55コーナー、8時間にわたる収録です。",
-            "このベストには奥田咲の円熟味が増した濃厚なシーンが含まれており、多様なシチュエーションを楽しめる充実した内容です。",
+            "このベストは充実した内容で楽しめます。",
           ],
         },
       ],
     };
 
+    // Fact-bearing sentence with soft editorial frame should not BLOCK.
+    expect(
+      hasUnsupportedEvaluativeResidue(
+        article.sections[0]!.paragraphs[0]!,
+        plan.body.flatMap((b) => b.facts),
+      ),
+    ).toBe(false);
+
     const before = validateArticlePlanCompliance({ article, articlePlan: plan });
     expect(
-      before.findings.some((f) => f.code === "PLAN_UNSUPPORTED_EVAL" && f.severity === "BLOCKING"),
+      before.findings.some(
+        (f) =>
+          f.code === "PLAN_UNSUPPORTED_EVAL" &&
+          f.severity === "BLOCKING" &&
+          f.message.includes("充実した内容で楽しめます"),
+      ),
     ).toBe(true);
 
     const stripped = stripPureUnsupportedEvalClosers({ article, articlePlan: plan });
     expect(stripped.mutated).toBe(true);
-    expect(stripped.droppedSentences.some((s) => s.includes("楽しめる"))).toBe(true);
+    expect(stripped.droppedSentences.some((s) => s.includes("楽しめます"))).toBe(true);
+    // Keep grounded editorial sentence
+    const kept = stripped.article.sections.flatMap((s) => s.paragraphs).join("\n");
+    expect(kept).toContain("円熟した濃厚なセックス");
 
     const after = validateArticlePlanCompliance({
       article: stripped.article,
@@ -131,9 +148,12 @@ describe("pure unsupported eval closer strip — ofje", () => {
     ).toBe(false);
   });
 
-  it("Writer TERMINATION policy cites concrete forbidden closers", () => {
-    expect(OPTION_B_WRITER_SYSTEM).toMatch(/楽しめます|堪能できる|充実した内容/);
-    expect(OPTION_B_WRITER_SYSTEM).toMatch(/deixis|この美女|ただ/i);
+  it("Writer policy allows grounded editorial interpretation; forbids external claims", () => {
+    expect(OPTION_B_WRITER_SYSTEM).toMatch(/EDITORIAL INTERPRETATION/);
+    expect(OPTION_B_WRITER_SYSTEM).toMatch(/EXTERNAL FACTUAL CLAIMS/);
+    expect(OPTION_B_WRITER_SYSTEM).toMatch(/で知られて|として知られて/);
+    expect(OPTION_B_WRITER_SYSTEM).toMatch(/ファンはもちろん|まとめて見たい人/);
+    expect(OPTION_B_WRITER_SYSTEM).toMatch(/fact formatter/i);
     const prompt = buildOptionBBloggerGeneratorPrompt({
       productTitle: "ofje00230",
       ctaUrl: "https://example.invalid",
@@ -143,8 +163,39 @@ describe("pure unsupported eval closer strip — ofje", () => {
         ARTICLE_PLAN_EXECUTION: [{ slot: "body", fact: "奥田咲", executionMode: "EXACT_SURFACE" }],
       },
     });
-    expect(prompt.userPrompt).toMatch(/楽しめます|堪能できる|充実した内容/);
-    expect(prompt.userPrompt).toMatch(/TERMINATION/);
+    expect(prompt.systemInstruction).toMatch(/EDITORIAL INTERPRETATION/i);
+    expect(prompt.userPrompt).toMatch(/natural Japanese product intro|weave into prose/i);
+    expect(prompt.userPrompt).toMatch(/で知られて|売上No\.1|大人気/);
+    // Internal taxonomy dumps must not lecture Writer HOW.
+    expect(prompt.userPrompt).not.toMatch(/BODY_PROGRESSION \(PLAN-TIME/);
+    expect(prompt.userPrompt).not.toMatch(/SOURCE FACT TYPE \(per/);
+  });
+
+  it("allows EDITORIAL reader-address; blocks EXTERNAL reputation-as-fact", () => {
+    const facts = plan.body.flatMap((b) => b.facts);
+    // EDITORIAL — keep
+    expect(
+      hasUnsupportedEvaluativeResidue(
+        "多彩なシーンと豊富な収録量が特徴のため、彼女のファンはもちろん、まとめて見たい人にも適したボリュームのあるベスト盤です。",
+        facts,
+      ),
+    ).toBe(false);
+    expect(
+      hasUnsupportedEvaluativeResidue(
+        "人妻、NTR、痴女、追撃ピストンといった多様なプレイスタイルを網羅しており、一つの方向性に偏らない幅広いエロティシズムを横断して楽しめる内容となっています。",
+        facts,
+      ),
+    ).toBe(false);
+    // EXTERNAL — block (third-party reputation asserted as fact)
+    expect(
+      hasUnsupportedEvaluativeResidue(
+        "奥田咲は低身長ながらグラマラスなボディを持ち、その円熟した濃厚なセックスと高いエロポテンシャルで知られています。",
+        facts,
+      ),
+    ).toBe(true);
+    expect(
+      hasUnsupportedEvaluativeResidue("世間から高く評価されているベスト盤です。", facts),
+    ).toBe(true);
   });
 });
 

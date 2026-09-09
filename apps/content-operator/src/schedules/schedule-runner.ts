@@ -24,6 +24,7 @@ import {
 } from "../providers/index.js";
 import { MockDynamicPaginatedProvider } from "../providers/mock/dynamic-paginated.js";
 import type { NotificationService } from "../notifications/notification-service.js";
+import { researchProviderAvailability } from "../adapters/affiliate/provider-status.js";
 import { computeNextRunAt, isWithinGraceWindow } from "./cron.js";
 import { applyRetryAndNotify, notifySuccess } from "./run-effects.js";
 import { resolveJobFailureError } from "./job-failure-error.js";
@@ -515,18 +516,9 @@ export class ScheduleRunner {
   }
 
   private checkProviderReady(schedule: ResearchSchedule): string | null {
-    if (schedule.providerName === "mock") {
-      return null;
-    }
-    if (schedule.providerName === "fanza") {
-      try {
-        requireDmmCredentials(this.config);
-        return null;
-      } catch {
-        return "DMM credentials not configured (API approval pending or unset)";
-      }
-    }
-    return `unsupported provider: ${schedule.providerName}`;
+    const availability = researchProviderAvailability(schedule.providerName, this.config);
+    if (availability.available) return null;
+    return availability.skipReason;
   }
 
   private createProvider(schedule: ResearchSchedule): PageCollectionProvider {

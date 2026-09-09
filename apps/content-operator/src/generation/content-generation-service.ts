@@ -99,6 +99,16 @@ import {
   summarizePlanFailureTendencies,
 } from "../editorial-brain/generation/planner-failure-tendencies.js";
 import {
+  claimProfileForExperienceRetrieval,
+  deriveArticleExperienceContext,
+  ensureBaselineHumanQualityExperiences,
+  isFailureExperienceRow,
+  observeWritingQualityExecution,
+  summarizeWritingQualityGuidance,
+  type WritingQualityGuidance,
+} from "../editorial-brain/generation/success-experience.js";
+import { articlePlanAllFacts } from "../article-pattern/article-plan.js";
+import {
   buildReferenceGuidedLayer,
   toReferenceGuidedPromptContract,
 } from "../editorial-brain/generation/reference-guided-layer.js";
@@ -157,6 +167,38 @@ export interface GenerateXInput {
   productUrl?: string | null;
   claimIds?: string[];
   maxWeightedLength?: number;
+  /** Optional X_SOCIAL_MEDIA candidates (never reuse article package as default). */
+  mediaCandidates?: Array<{
+    sourceUrl?: string | null;
+    xTimelineSafe?: boolean;
+    assetKind?: "X_SOCIAL_SAFE" | "ARTICLE_PACKAGE" | "ARTICLE_SAMPLE" | "OFFICIAL_SAMPLE" | "UNKNOWN";
+    adultVisualRisk?: boolean;
+    usageStatus?: string | null;
+    imageType?: string | null;
+    visualHints?: {
+      faceVisible?: boolean;
+      clothedNormal?: boolean;
+      sexualPose?: boolean;
+      nudityOrLingerie?: boolean;
+      sexualAct?: boolean;
+      largeSexualText?: boolean;
+      portraitFriendly?: boolean;
+      subjectClear?: boolean;
+    } | null;
+  }>;
+  /** Official ResearchImage rows for X sample selection (rights + visual gates). */
+  researchImages?: Array<{
+    sourceUrl: string;
+    imageType?: string | null;
+    usageStatus?: string | null;
+  }>;
+  productCanonicalId?: string | null;
+  /** Explicit ops confirmation only — never invent true. */
+  fanzaAffiliateImageTermsVerified?: boolean;
+  /** DMM/FANZA X site approval — default false; never invent true. */
+  fanzaXSiteApproved?: boolean;
+  fanzaService?: string | null;
+  fanzaFloor?: string | null;
 }
 
 export class ContentGenerationService {
@@ -830,15 +872,31 @@ export class ContentGenerationService {
       claimUsagePlanContract as unknown as Record<string, unknown>,
     );
 
-    // Experience → planner tendency hints only (no Experience prose dump / no LearningRule mutation)
+    // Experience: FAILURE avoidance + SUCCESS/IMPROVEMENT writing-quality guidance
     let plannerFailureTendencies: Record<string, unknown> | null = null;
     let retrievedExperienceIds: string[] = [];
+    let writingQualityGuidance: WritingQualityGuidance | null = null;
+    let experienceApplyTrace: Record<string, unknown> | null = null;
     try {
       const brainRepo = this.repo.createEditorialBrainRepository();
+      // Ensure human baselines exist before retrieve (idempotent by experienceKey).
+      await ensureBaselineHumanQualityExperiences(brainRepo, {
+        post20ContentVersionId: "cmtlbfs86000ts7zfsadm6w0i",
+      });
+      const expCtx = deriveArticleExperienceContext({
+        planFacts: articlePlanAllFacts(articlePlanBase),
+        materialDepth: articlePlanBase.materialDepth,
+        sourceResolution:
+          articlePlanBase.sourceExpansion?.resolution ??
+          articlePlanBase.bodyProgression?.sourceResolution ??
+          null,
+      });
+      const experienceClaimProfile = claimProfileForExperienceRetrieval(expCtx);
       const expResult = await retrieveExperiences(brainRepo, {
         channel: "BLOG",
         formatKey: resolvedFormatKey ?? articleFormat,
         contentType: "blogger-article",
+        claimProfile: experienceClaimProfile,
         structurePatternId: selectedStructurePattern?.patternId ?? null,
         editorialPatternId: selectedEditorialPattern?.patternId ?? null,
         failureCodes: [
@@ -854,15 +912,65 @@ export class ContentGenerationService {
           "PROVENANCE_CONTRADICTION",
           "REPEATED_PLAN_EXECUTION_FAILURE",
         ],
-        limit: 8,
+        limit: 12,
       });
       retrievedExperienceIds = expResult.hits.map((h) => h.id);
-      const hints = summarizePlanFailureTendencies(expResult, {
-        editorialPatternId: selectedEditorialPattern?.patternId ?? null,
-        maxHints: 4,
-      });
+      const fullRows = await brainRepo.listExperiencesByIds(retrievedExperienceIds);
+      const failureRows = fullRows.filter((r) => isFailureExperienceRow(r));
+      const qualityRows = fullRows.filter((r) => !isFailureExperienceRow(r));
+      const hints = summarizePlanFailureTendencies(
+        {
+          hits: expResult.hits.filter((h) =>
+            failureRows.some((r) => r.id === h.id),
+          ),
+          query: expResult.query,
+        },
+        {
+          editorialPatternId: selectedEditorialPattern?.patternId ?? null,
+          maxHints: 4,
+        },
+      );
       plannerFailureTendencies = formatTendencyHintsForAuthority(hints);
-      // Experience must change Planner/Contract output — not metadata-only
+      writingQualityGuidance = summarizeWritingQualityGuidance({
+        experiences: qualityRows,
+        context: expCtx,
+        maxSuccess: 2,
+        maxImprovements: 2,
+      });
+      experienceApplyTrace = {
+        retrievedCount: retrievedExperienceIds.length,
+        failureRetrievedIds: failureRows.map((r) => r.id),
+        successOrMixedRetrievedIds: qualityRows.map((r) => r.id),
+        experienceClaimProfile,
+        hitScores: expResult.hits.map((h) => ({
+          id: h.id,
+          score: h.score,
+          outcome: h.outcome,
+          sourceType: h.sourceType ?? null,
+        })),
+        /** Prompt injection only — not proof of prose execution. */
+        injectedExperienceIds: writingQualityGuidance.appliedExperienceIds,
+        injected: true,
+        executedObservation: null,
+        skipped: writingQualityGuidance.skipped,
+        failureHintsAppliedToContractRules: hints.map((h) => h.failureClass),
+        writingQualityAppliedToWriter: Boolean(
+          writingQualityGuidance.success.length + writingQualityGuidance.improvements.length,
+        ),
+        planTimeIds: [
+          ...writingQualityGuidance.success,
+          ...writingQualityGuidance.improvements,
+        ]
+          .filter((i) => i.applicationPhase === "plan_time" || i.applicationPhase === "both")
+          .map((i) => i.experienceId),
+        writeTimeIds: [
+          ...writingQualityGuidance.success,
+          ...writingQualityGuidance.improvements,
+        ]
+          .filter((i) => i.applicationPhase === "write_time" || i.applicationPhase === "both")
+          .map((i) => i.experienceId),
+        context: expCtx,
+      };
       if (hints.length > 0) {
         const extraRules = hints.map(
           (h) => `EXPERIENCE_TENDENCY(${h.failureClass}): ${h.executionConstraint}`,
@@ -880,9 +988,24 @@ export class ContentGenerationService {
           rules: [...prevRules, ...extraRules],
         };
       }
+      if (
+        writingQualityGuidance.success.length > 0 ||
+        writingQualityGuidance.improvements.length > 0
+      ) {
+        brainGenerationPromptContract = {
+          ...brainGenerationPromptContract,
+          writingQualityGuidance: {
+            appliedExperienceIds: writingQualityGuidance.appliedExperienceIds,
+            successCount: writingQualityGuidance.success.length,
+            improvementCount: writingQualityGuidance.improvements.length,
+          },
+        };
+      }
     } catch {
       plannerFailureTendencies = null;
       retrievedExperienceIds = [];
+      writingQualityGuidance = null;
+      experienceApplyTrace = { error: "experience_retrieve_or_seed_failed" };
     }
 
     const claimSelectionPolicy = {
@@ -945,6 +1068,8 @@ export class ContentGenerationService {
         segmentExecution: brainGenerationPromptContract.segmentExecution ?? null,
         retrievedExperienceIds,
         plannerFailureTendencies,
+        writingQualityGuidance,
+        experienceApplyTrace,
         articleOutputContract,
         responseSchemaSections: getSectionsCardinalityFromLlmSchema(outputSchema),
         claimSelection: {
@@ -992,6 +1117,10 @@ export class ContentGenerationService {
           structurePatternSummary: slimStructure,
           planViolationFeedback,
           plannerFailureTendencies,
+          writingQualityGuidance: writingQualityGuidance as unknown as Record<
+            string,
+            unknown
+          > | null,
         });
         finalGenerationAuthority = generationAuthority;
 
@@ -1311,6 +1440,8 @@ export class ContentGenerationService {
                 brainGenerationContract: brainGenerationPromptContract,
                 retrievedExperienceIds,
                 plannerFailureTendencies,
+                writingQualityGuidance,
+                experienceApplyTrace,
                 userPrompt: finalUserPrompt.slice(0, 12000),
                 stopReason: "PLAN_EXECUTION_FAILED",
                 regenCandidate: true,
@@ -1506,6 +1637,32 @@ export class ContentGenerationService {
     const articleImages = imageResolution.images;
 
     const body = structuredToPlainBody(article, { images: articleImages });
+    if (experienceApplyTrace && writingQualityGuidance) {
+      const themeRes =
+        (articlePlanBase as { bodyProgression?: { themeSourceResolution?: string } } | null)
+          ?.bodyProgression?.themeSourceResolution ??
+        (finalGenerationAuthority?.ARTICLE_PLAN as { bodyProgression?: { themeSourceResolution?: string } } | undefined)
+          ?.bodyProgression?.themeSourceResolution ??
+        null;
+      const executedObservation = observeWritingQualityExecution({
+        guidance: writingQualityGuidance,
+        bodyText: body,
+        themeSourceResolution: themeRes,
+      });
+      experienceApplyTrace = {
+        ...experienceApplyTrace,
+        executedObservation,
+        executedIds: executedObservation
+          .filter((o) => o.status === "EXECUTED")
+          .map((o) => o.experienceId),
+        partiallyExecutedIds: executedObservation
+          .filter((o) => o.status === "PARTIALLY_EXECUTED")
+          .map((o) => o.experienceId),
+        notExecutedIds: executedObservation
+          .filter((o) => o.status === "NOT_EXECUTED")
+          .map((o) => o.experienceId),
+      };
+    }
     const storedAllowlist = (
       brainGenerationPromptContract as { evidenceAllowlistIds?: string[] }
     ).evidenceAllowlistIds;
@@ -1708,7 +1865,11 @@ export class ContentGenerationService {
           generationAuthority: finalGenerationAuthority,
           retrievedExperienceIds,
           plannerFailureTendencies,
+          writingQualityGuidance,
+          experienceApplyTrace,
           renderedUserPromptPreview: finalUserPrompt.slice(0, 8000),
+          renderedUserPromptTail: finalUserPrompt.slice(-4000),
+          writingQualityPromptPresent: finalUserPrompt.includes("WRITING_QUALITY_GUIDANCE"),
           finishReason: llm.finishReason,
           output: llm.output,
           jsonParsed: llm.metadata?.jsonParsed ?? true,
@@ -1780,8 +1941,18 @@ export class ContentGenerationService {
       ? await this.repo.listClaimsByIds(input.claimIds)
       : await this.repo.listClaimsForStrategy(input.strategyId);
     const supported = claims.filter((c) => c.status === "SUPPORTED");
-    const supportedIds = supported.map((c) => c.id);
-    const claimStatements = supported.map((c) => ({ id: c.id, statement: c.statement }));
+    const {
+      filterClaimsForXSocialContent,
+      enforceXSocialContentBody,
+      buildXSocialSafeBodyFromEvidence,
+    } = await import("../x/x-social-content-policy.js");
+    const { evaluateXSocialMedia } = await import("../x/x-social-media-gate.js");
+    const { CONTENT_POLICY_SURFACE } = await import("../x/content-policy-surfaces.js");
+
+    // X_SOCIAL_CONTENT uses Evidence claims only — never article body text.
+    const claimStatementsAll = supported.map((c) => ({ id: c.id, statement: c.statement }));
+    const claimStatements = filterClaimsForXSocialContent(claimStatementsAll);
+    const supportedIds = claimStatements.map((c) => c.id);
 
     const { buildCoreEditorialPlan } = await import("../editorial-brain/core/planner.js");
     const { buildXChannelPlan } = await import("../editorial-brain/channels/x/adapter.js");
@@ -1887,9 +2058,12 @@ export class ContentGenerationService {
     });
     const systemInstruction = [
       rendered.systemInstruction,
-      "You write short editorial X posts from SUPPORTED claims only.",
-      "Do not write ad copy. Do not invent evaluation, recommendation, or urgency.",
-      "Hook = concrete supported fact. Support = different supported fact. CTA = URL only when provided.",
+      "You write X_SOCIAL_CONTENT: timeline-safe acquisition posts from Evidence facets only.",
+      "Do NOT summarize, compress, or excerpt any WordPress / blog article body.",
+      "Prefer actress name, runtime, title count, best/compilation, release — general-interest hooks.",
+      "Forbidden on X: sexual acts, genitals/fluids, explicit body focus, adult hype, AV-front framing.",
+      "Do not invent popularity, ranking, reviews, or evaluations.",
+      "Hook = concrete catalog facet. Support = different facet. Soft CTA + URL when provided.",
       "Return JSON {body, reply, usedClaimIds, ctaUrl}.",
     ].join("\n");
     const userPrompt = [
@@ -1959,6 +2133,8 @@ export class ContentGenerationService {
       "../editorial-brain/generation/contribution-compliance.js"
     );
     let xBody = parsed.body.trim();
+    const destinationUrl = input.bloggerUrl || input.productUrl || null;
+    const disclosure = "#PR";
     const restatement = detectSourceTitleRestatement({
       body: xBody,
       sourceStatements: claimStatements.map((c) => c.statement),
@@ -1968,27 +2144,79 @@ export class ContentGenerationService {
       hookClaimIds: material.hookClaimIds,
       supportClaimIds: material.supportClaimIds,
     });
-    if (restatement.hit || hasPromotionalEvalSurface(xBody) || material.hookFacets.length > 0) {
-      if (restatement.hit || hasPromotionalEvalSurface(xBody)) {
-        xBody = compactFacetsToXPost({
-          hookFacets: facetAlloc.hookContributions.map((c) => c.facet),
-          supportFacets: facetAlloc.supportContributions.map((c) => c.facet),
-          url: null,
-        });
-      }
+    const safeFacets = [
+      ...material.hookFacets,
+      ...material.supportFacets,
+      ...facetAlloc.hookContributions.map((c) => c.facet),
+      ...facetAlloc.supportContributions.map((c) => c.facet),
+      ...claimStatements.map((c) => c.statement),
+    ];
+    if (restatement.hit || hasPromotionalEvalSurface(xBody)) {
+      xBody = buildXSocialSafeBodyFromEvidence({
+        productTitle: input.productTitle,
+        safeFacets,
+        destinationUrl: null,
+        disclosure: null,
+      });
     }
-    parsed.body = xBody;
-    const max = input.maxWeightedLength ?? 140;
+
+    const enforced = enforceXSocialContentBody({
+      body: xBody,
+      productTitle: input.productTitle,
+      safeFacets,
+      destinationUrl: null,
+      disclosure: null,
+    });
+    xBody = enforced.body;
+
+    // Append soft CTA destination + disclosure outside LLM body (route-aware caller may re-append)
+    if (destinationUrl && !xBody.includes(destinationUrl)) {
+      xBody = `${xBody.trim()} ${disclosure} ${destinationUrl}`.trim();
+    } else if (!/#PR|アフィリエイト/u.test(xBody)) {
+      xBody = `${xBody.trim()} ${disclosure}`.trim();
+    }
+
+    const recheck = enforceXSocialContentBody({
+      body: xBody,
+      productTitle: input.productTitle,
+      safeFacets,
+      destinationUrl,
+      disclosure,
+    });
+    parsed.body = recheck.body;
+
+    const max = input.maxWeightedLength ?? 280;
     try {
       this.xCounter.assertWithinLimit(parsed.body, max);
     } catch {
-      parsed.body = compactFacetsToXPost({
-        hookFacets: facetAlloc.hookContributions.map((c) => c.facet),
-        supportFacets: facetAlloc.supportContributions.map((c) => c.facet),
-        url: null,
-      }).slice(0, 120);
+      parsed.body = buildXSocialSafeBodyFromEvidence({
+        productTitle: input.productTitle,
+        safeFacets,
+        destinationUrl,
+        disclosure,
+      });
       this.xCounter.assertWithinLimit(parsed.body, max);
     }
+
+    // Official samples → rights gate → X visual gate. Never auto-TEXT_ONLY post.
+    const media = evaluateXSocialMedia({
+      candidates: (input.mediaCandidates ?? []).map((c) => ({
+        sourceUrl: c.sourceUrl,
+        xTimelineSafe: c.xTimelineSafe,
+        assetKind: c.assetKind,
+        adultVisualRisk: c.adultVisualRisk,
+        usageStatus: c.usageStatus,
+        imageType: c.imageType,
+        visualHints: c.visualHints,
+      })),
+      researchImages: input.researchImages ?? null,
+      productCanonicalId: input.productCanonicalId ?? null,
+      fanzaAffiliateImageTermsVerified: input.fanzaAffiliateImageTermsVerified === true,
+      fanzaXSiteApproved: input.fanzaXSiteApproved === true,
+      fanzaService: input.fanzaService,
+      fanzaFloor: input.fanzaFloor,
+      earlySamplePreferCount: 5,
+    });
 
     const latest = await this.repo.findLatestContentVersion(content.id);
     const version = await this.repo.createContentVersion({
@@ -1997,10 +2225,11 @@ export class ContentGenerationService {
       parentVersionId: latest?.id ?? null,
       revisionType: "initial",
       title: `X: ${input.productTitle}`,
-      summary: "LLM X post",
+      summary: "X_SOCIAL_CONTENT",
       body: parsed.body,
       structuredContent: {
         channel: "X",
+        contentPolicySurface: CONTENT_POLICY_SURFACE.X_SOCIAL_CONTENT,
         xPost: parsed,
         posts: [
           {
@@ -2011,7 +2240,14 @@ export class ContentGenerationService {
           },
         ],
         xEditorialContract: xContract,
+        xSocialContentGate: {
+          rewritten: enforced.rewritten || recheck.rewritten,
+          violations: [...enforced.violations, ...recheck.violations],
+          policyVersion: enforced.policyVersion,
+        },
+        xSocialMedia: media,
         weightedLength: this.xCounter.count(parsed.body).weightedLength,
+        sourceMode: "evidence_claims_not_article_body",
       },
       status: "REVIEWING",
       createdBy: "llm-generation",

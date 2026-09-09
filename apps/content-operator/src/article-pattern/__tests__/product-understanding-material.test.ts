@@ -117,19 +117,22 @@ describe("product-understanding material (ofje-shaped)", () => {
     expect(deriveExecutionMode("NTR", "body")).toBe("SEMANTIC_PRESERVE");
     expect(deriveExecutionMode("8時間", "body")).toBe("EXACT_SURFACE");
     expect(deriveInformationAxis("人妻")).toBe("trait");
-    expect(deriveInformationAxis("追撃ピストン")).toBe("scene");
+    // Short ACTION membership tags group with theme/trait, not scene scripts.
+    expect(deriveInformationAxis("追撃ピストン")).toBe("trait");
     expect(derivePresentationPurpose("人妻")).toBe("SCENE_VARIETY");
     expect(derivePresentationPurpose("追撃ピストン")).toBe("PLAY_STYLE");
   });
 
   it("Writer contract requires product-aspect understanding beyond tag lists", () => {
     expect(OPTION_B_WRITER_SYSTEM).toMatch(
-      /more than a bare (?:surface mention|checklist drop)|tag list|checklist/i,
+      /fact formatter|editorial interpretation|taxonomy explainer|checklist/i,
     );
-    expect(OPTION_B_WRITER_SYSTEM).toMatch(/presentationPurpose|factPurposes/);
-    expect(OPTION_B_WRITER_SYSTEM).toMatch(/Coverage ≠ expansion|coverage ≠ expansion/i);
-    expect(OPTION_B_WRITER_SYSTEM).toMatch(/Never use fixed character or paragraph quotas/);
-    expect(OPTION_B_WRITER_SYSTEM).toMatch(/Do not output a lead field/);
+    expect(OPTION_B_WRITER_SYSTEM).toMatch(/Coverage:|realize the meaning|Weave related facts/i);
+    expect(OPTION_B_WRITER_SYSTEM).toMatch(/No fixed character quotas|No fixed paragraph count/);
+    expect(OPTION_B_WRITER_SYSTEM).toMatch(/MAY STOP|sourceExpansion|SOURCE DENSITY/);
     expect(OPTION_B_WRITER_SYSTEM).not.toMatch(/最低500|必ず3段落|300字以上/);
+    // Internal Planner taxonomy must not drive Writer HOW checklists.
+    expect(OPTION_B_WRITER_SYSTEM).not.toMatch(/presentationPurpose|factPurposes|sourceFactType/);
+    expect(OPTION_B_WRITER_SYSTEM).not.toMatch(/bodyProgression|SOURCE_RESOLUTION/);
   });
 });

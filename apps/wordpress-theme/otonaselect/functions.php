@@ -1,8 +1,9 @@
 <?php
 /**
- * オトナセレクト — lightweight block theme helpers.
+ * オトナセレクト — SEO / AEO / GEO foundation + presentation helpers.
  *
- * Keeps Factory-generated post HTML untouched. No Jetpack / paid deps.
+ * Factory-generated post HTML is not rewritten here.
+ * No Jetpack / paid SEO plugins.
  *
  * @package OtonaSelect
  */
@@ -12,6 +13,15 @@ declare(strict_types=1);
 if (!defined('ABSPATH')) {
 	exit;
 }
+
+$otonaselect_inc = get_template_directory() . '/inc';
+require_once $otonaselect_inc . '/constants.php';
+require_once $otonaselect_inc . '/taxonomies.php';
+require_once $otonaselect_inc . '/seo-head.php';
+require_once $otonaselect_inc . '/json-ld.php';
+require_once $otonaselect_inc . '/breadcrumbs.php';
+require_once $otonaselect_inc . '/related.php';
+require_once $otonaselect_inc . '/site-pages.php';
 
 /**
  * Enqueue the theme stylesheet (block themes still benefit from style.css rules).
@@ -36,49 +46,3 @@ add_action('init', static function (): void {
 		]
 	);
 });
-
-/**
- * Related / "more posts" Query Loop helper.
- *
- * Template queries with class `otonaselect-related`:
- * - exclude current post on singular
- * - prefer shared tags, else shared categories
- * - if neither exists, remain a normal recent-posts query (still excludes current)
- */
-add_filter(
-	'query_loop_block_query_vars',
-	static function (array $query, $block): array {
-		$class_name = '';
-		if (is_object($block) && isset($block->attributes['className']) && is_string($block->attributes['className'])) {
-			$class_name = $block->attributes['className'];
-		}
-		if (!str_contains($class_name, 'otonaselect-related')) {
-			return $query;
-		}
-
-		if (is_singular('post')) {
-			$post_id = (int) get_queried_object_id();
-			if ($post_id > 0) {
-				$exclude = isset($query['post__not_in']) && is_array($query['post__not_in'])
-					? $query['post__not_in']
-					: [];
-				$exclude[] = $post_id;
-				$query['post__not_in'] = array_values(array_unique(array_map('intval', $exclude)));
-
-				$tag_ids = wp_get_post_tags($post_id, ['fields' => 'ids']);
-				if (is_array($tag_ids) && $tag_ids !== []) {
-					$query['tag__in'] = array_map('intval', $tag_ids);
-				} else {
-					$cat_ids = wp_get_post_categories($post_id);
-					if (is_array($cat_ids) && $cat_ids !== []) {
-						$query['category__in'] = array_map('intval', $cat_ids);
-					}
-				}
-			}
-		}
-
-		return $query;
-	},
-	10,
-	2
-);

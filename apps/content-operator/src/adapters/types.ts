@@ -21,6 +21,15 @@ export interface AffiliateProviderCapabilities {
   htmlFetch: boolean;
   affiliateLinkGeneration: boolean;
   conversionReport: boolean;
+  /** Explicit capability aliases (provider-agnostic). */
+  supportsProductApi?: boolean;
+  supportsAffiliateLink?: boolean;
+  supportsProductImages?: boolean;
+  supportsSampleImages?: boolean;
+  supportsSearch?: boolean;
+  supportsTracking?: boolean;
+  supportsPrice?: boolean;
+  supportsAvailability?: boolean;
   /** @deprecated use apiSearch */
   search?: boolean;
   /** @deprecated use apiProductFetch */
@@ -29,12 +38,36 @@ export interface AffiliateProviderCapabilities {
   feed?: boolean;
 }
 
+/**
+ * Runtime availability — independent of capability declarations.
+ * FANZA API pending must not stop the whole factory.
+ */
+export type AffiliateProviderRuntimeStatus =
+  | "READY"
+  | "PARTIAL"
+  | "API_UNAVAILABLE"
+  | "AFFILIATE_PENDING"
+  | "DISABLED";
+
+export type AffiliateProviderRuntimeSnapshot = {
+  providerKey: string;
+  status: AffiliateProviderRuntimeStatus;
+  apiAvailable: boolean;
+  affiliateLinkReady: boolean;
+  /** Official product page / feed / HTML SOURCE can still fuel articles. */
+  sourceAcquisitionAvailable: boolean;
+  reasons: string[];
+  checkedAt: string;
+};
+
 export interface AffiliateProvider {
   readonly providerKey: string;
   readonly capabilities: AffiliateProviderCapabilities;
   searchProducts(query: string, limit?: number): Promise<AffiliateProductNormalized[]>;
   fetchProduct(externalProductId: string): Promise<AffiliateProductNormalized | null>;
   normalizeProduct(raw: Record<string, unknown>): AffiliateProductNormalized;
+  /** Optional runtime probe — providers without it are treated as unknown/READY for mocks. */
+  getRuntimeStatus?(): AffiliateProviderRuntimeSnapshot | Promise<AffiliateProviderRuntimeSnapshot>;
 }
 
 export interface SourceDocumentPayload {

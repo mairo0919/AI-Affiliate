@@ -10,6 +10,11 @@ import { classifySemanticEvidence, semanticClassToBlueprintType } from "./semant
 import type { BlueprintEvidenceType } from "./reference-editorial-blueprint.js";
 import type { ResearchEvidence } from "./research-evidence.js";
 import { stripCatalogWrapper } from "./evidence-pack.js";
+import { extractCatalogGenreAtoms } from "./catalog-genre-evidence.js";
+import {
+  classifySourceFactType,
+  type SourceFactType,
+} from "./source-fact-authority.js";
 
 export type OfficialPageFactBucket =
   | "SUPPORTED_CONCRETE_FACT"
@@ -27,6 +32,8 @@ export type OfficialPageFactAtom = {
   originField: string;
   source: "fanza_product_page";
   generatorAllowed: boolean;
+  /** Claim authority class — GENRE_TAG never equals SCENE. */
+  sourceFactType?: SourceFactType;
 };
 
 export type OfficialPageEvidenceInput = {
@@ -455,7 +462,7 @@ export function isUnusablePageAtomFragment(fact: string): boolean {
   // Katakana-only ultra-short dialogue stem: ヤッテ — keep known scene/product stems
   if (/^[ァ-ヶー]{2,5}$/u.test(t)) {
     if (
-      /(?:ピス|フェラ|キス|ハメ|オナニ|イラマ|スパン|ベスト|ノンストップ|エステ|ハーレム)/u.test(
+      /(?:ピス|パイズリ|フェラ|キス|ハメ|オナニ|イラマ|スパン|ベスト|ノンストップ|エステ|ハーレム)/u.test(
         t,
       )
     ) {
@@ -962,18 +969,30 @@ export function officialPageAtomsToResearchEvidence(
 ): ResearchEvidence[] {
   return atoms
     .filter((a) => a.generatorAllowed)
-    .map((a) => ({
-      evidenceId: a.id,
-      sourceType: (a.originField.includes("actor")
-        ? "performer_metadata"
-        : "product_description") as "performer_metadata" | "product_description",
-      sourceRef: `fanza_product_page:${a.originField}`,
-      observedFact: a.fact,
-      confidence: "high" as const,
-      facetType: a.blueprintType,
-      allowedForGeneration: true,
-      semanticFamilyId: a.familyId,
-    }));
+    .map((a) => {
+      const sourceRef = `fanza_product_page:${a.originField}`;
+      const sourceFactType =
+        a.sourceFactType ??
+        classifySourceFactType({
+          fact: a.fact,
+          originField: a.originField,
+          sourceRef,
+          evidenceType: a.blueprintType,
+        });
+      return {
+        evidenceId: a.id,
+        sourceType: (a.originField.includes("actor")
+          ? "performer_metadata"
+          : "product_description") as "performer_metadata" | "product_description",
+        sourceRef,
+        observedFact: a.fact,
+        confidence: "high" as const,
+        facetType: a.blueprintType,
+        allowedForGeneration: true,
+        semanticFamilyId: a.familyId,
+        sourceFactType,
+      };
+    });
 }
 
 export type PageEvidenceMetaShape = {
@@ -1015,7 +1034,7 @@ export function extractAtomsFromPageEvidenceMeta(
   if (!meta) {
     return extractOfficialPageFactAtoms({});
   }
-  return extractOfficialPageFactAtoms({
+  const base = extractOfficialPageFactAtoms({
     contentId: meta.contentId,
     descriptionText: meta.description?.text ?? null,
     descriptionOriginField: meta.description?.originField ?? "jsonld.Product.description",
@@ -1027,4 +1046,32 @@ export function extractAtomsFromPageEvidenceMeta(
       .filter((k): k is string => Boolean(k)),
     uniqueSampleSceneCount: meta.uniqueSampleSceneCount ?? null,
   });
+
+  // Official catalog genres (JSON-LD / ItemList) — previously AVAILABLE but IGNORED.
+  const genreAtoms = extractCatalogGenreAtoms(meta.catalog?.genres ?? null);
+  if (genreAtoms.length === 0) return base;
+
+  const existingFacts = new Set(
+    base.concrete.filter((a) => a.generatorAllowed).map((a) => a.fact.replace(/\s+/g, "")),
+  );
+  const mergedExtra: typeof genreAtoms = [];
+  for (const g of genreAtoms) {
+    const key = g.fact.replace(/\s+/g, "");
+    // Skip if a description atom already covers the same short stem (人妻 ⊂ 人妻・主婦 OK to keep both? prefer keep genre if not exact)
+    const covered = [...existingFacts].some(
+      (ef) => ef === key || (key.length >= 2 && ef.includes(key)) || (ef.length >= 2 && key.includes(ef)),
+    );
+    // Keep genre when it adds a distinct stem (e.g. パイズリ) not present in description compounds
+    if (covered && !/パイズリ|巨乳|淫乱|ハード|総集編|ベスト/.test(g.fact)) {
+      continue;
+    }
+    if (existingFacts.has(key)) continue;
+    existingFacts.add(key);
+    mergedExtra.push(g);
+  }
+  if (mergedExtra.length === 0) return base;
+  return {
+    ...base,
+    concrete: [...base.concrete, ...mergedExtra],
+  };
 }

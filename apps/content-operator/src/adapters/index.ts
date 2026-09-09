@@ -2,6 +2,8 @@ export type {
   AffiliateProductNormalized,
   AffiliateProvider,
   AffiliateProviderCapabilities,
+  AffiliateProviderRuntimeSnapshot,
+  AffiliateProviderRuntimeStatus,
   AnalyticsAdapter,
   AnalyticsMetricInput,
   LLMProvider,
@@ -25,6 +27,14 @@ export type {
 } from "./types.js";
 export { NoopNotificationAdapter, LLMProviderError } from "./types.js";
 export { MockAffiliateProvider } from "./affiliate/mock-affiliate-provider.js";
+export { FanzaAffiliateProvider, UnconfiguredAffiliateProvider } from "./affiliate/fanza-affiliate-provider.js";
+export { createAffiliateProviderFromConfig, listKnownAffiliateProviderKeys } from "./affiliate/create-affiliate-provider.js";
+export {
+  buildRuntimeSnapshot,
+  dmmApiCredentialsPresent,
+  readAffiliateProviderRuntimeStatus,
+  researchProviderAvailability,
+} from "./affiliate/provider-status.js";
 export { MockPublisher } from "./publisher/mock-publisher.js";
 export {
   BloggerApiPublisher,

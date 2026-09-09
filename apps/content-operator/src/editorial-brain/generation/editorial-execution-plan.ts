@@ -170,7 +170,7 @@ export function buildEditorialExecutionPlan(input: {
       preferDeferWhenNoConcreteBody: true,
       note:
         scarceMode === "short_dense"
-          ? "Few concrete facts: keep article short and dense. Stop when unused concrete evidence is exhausted. Do not pad with evaluation or maker/availability/独占-only. Prefer DEFER over filler."
+          ? "Few concrete facts: keep article short and dense. Stop when unused concrete evidence is exhausted. Do not pad with external-world claims or maker/availability/独占-only. Prefer DEFER over filler. Short grounded editorial interpretation of the few facts is OK."
           : "Use only unused concrete facets in body; never catalog padding.",
     },
     richStrategy: {
@@ -178,8 +178,8 @@ export function buildEditorialExecutionPlan(input: {
       preferDenseEditorialPattern: depth === "rich",
       note:
         depth === "rich"
-          ? "Compose each slot's assignedFacts into evidence-grounded work-content prose. Do not enumerate leftover evidence in sequence. Fulfill the slot plan, then stop."
-          : "Standard depth: compose assigned opening/body facts as work content; one body advance beyond lead is enough.",
+          ? "Compose each slot's assignedFacts into evidence-grounded editorial prose: select, relate, explain, and interpret volume/theme for the reader. Do not emit a bare FACT→FACT checklist. After covering assigned facts, a short grounded editorial ending is allowed — not external-world claims."
+          : "Standard depth: compose assigned opening/body facts as work content with brief editorial interpretation where grounded; one body advance beyond lead is enough.",
     },
     repetitionPolicy: {
       style: "no_cross_role_restatement",
@@ -204,7 +204,7 @@ export function buildEditorialExecutionPlan(input: {
     generatorDuty: [
       "Execute EDITORIAL_PLAN using only FACTS (supported contributions).",
       "Describe work content from facts — do not write as external SKU reviewer.",
-      "Do not invent facts, evaluations, social proof, or catalog padding.",
+      "Do not invent concrete facts, external-world claims (売上No.1 / 大人気), or catalog padding. Editorial interpretation grounded in assigned facts is allowed.",
       "Do not copy competitor wording (none is provided — patterns are abstract strategies only).",
       "Lead uses openingStrategy + lead required contributions only.",
       "Each body paragraph must advance with a new allowed contribution (never restate lead facets).",

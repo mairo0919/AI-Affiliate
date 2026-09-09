@@ -1,7 +1,7 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { config as loadDotenv } from "dotenv";
+import { config as loadDotenv, parse as parseDotenv } from "dotenv";
 import type { LogLevel } from "@ai-affiliate/shared";
 
 function parseBooleanEnv(value: string | undefined, fallback: boolean): boolean {
@@ -35,6 +35,12 @@ export interface AppConfig {
   fanzaRequestIntervalMs: number;
   fanzaRequestTimeoutMs: number;
   fanzaMaxRetries: number;
+  /**
+   * DMM/FANZA affiliate site approval for the X account (e.g. @osusume_media).
+   * Default false — never invent true. When false, X image attach stops at
+   * WAITING_FOR_AFFILIATE_SITE_APPROVAL without fabricating material ALLOWED.
+   */
+  fanzaXSiteApproved: boolean;
   researchScheduleFailureLimit: number;
   researchScheduleGraceMs: number;
   researchRetryEnabled: boolean;
@@ -494,20 +500,48 @@ function parseIntList(value: string | undefined, fallback: number[]): number[] {
   return parsed.length > 0 ? parsed : fallback;
 }
 
-function resolveEnvFilePath(): string | undefined {
+function resolveEnvFilePaths(): string[] {
   const moduleDir = dirname(fileURLToPath(import.meta.url));
+  // Least → most specific. Later non-empty values win over earlier empty placeholders.
   const candidates = [
+    resolve(moduleDir, "../../../.env"), // repo root from packages/config/dist
+    resolve(process.cwd(), "../../.env"), // repo root when cwd=apps/*
     resolve(process.cwd(), ".env"),
-    resolve(process.cwd(), "../../.env"),
-    resolve(moduleDir, "../../../.env"),
   ];
-  return candidates.find((candidate) => existsSync(candidate));
+  const seen = new Set<string>();
+  const paths: string[] = [];
+  for (const candidate of candidates) {
+    if (!existsSync(candidate) || seen.has(candidate)) continue;
+    seen.add(candidate);
+    paths.push(candidate);
+  }
+  return paths;
+}
+
+/**
+ * Apply a .env file into process.env.
+ * Empty string in process.env is treated as unset so a later non-empty value can apply
+ * (avoids empty placeholders blocking real credentials).
+ */
+function applyEnvFile(path: string): void {
+  const parsed = parseDotenv(readFileSync(path));
+  for (const [key, raw] of Object.entries(parsed)) {
+    const next = raw ?? "";
+    const cur = process.env[key];
+    if (cur !== undefined && cur !== "") continue;
+    if (next === "" && cur === "") continue;
+    if (next !== "" || cur === undefined) {
+      process.env[key] = next;
+    }
+  }
 }
 
 export function loadConfig(options?: { requireDatabaseUrl?: boolean }): AppConfig {
-  const envPath = resolveEnvFilePath();
-  if (envPath) {
-    loadDotenv({ path: envPath });
+  const envPaths = resolveEnvFilePaths();
+  if (envPaths.length > 0) {
+    for (const envPath of envPaths) {
+      applyEnvFile(envPath);
+    }
   } else {
     loadDotenv();
   }
@@ -534,6 +568,7 @@ export function loadConfig(options?: { requireDatabaseUrl?: boolean }): AppConfi
     fanzaRequestIntervalMs: parsePositiveInt(process.env.FANZA_REQUEST_INTERVAL_MS, 1000),
     fanzaRequestTimeoutMs: parsePositiveInt(process.env.FANZA_REQUEST_TIMEOUT_MS, 15_000),
     fanzaMaxRetries: parsePositiveInt(process.env.FANZA_MAX_RETRIES, 3),
+    fanzaXSiteApproved: parseBooleanEnv(process.env.FANZA_X_SITE_APPROVED, false),
     researchScheduleFailureLimit: parsePositiveInt(
       process.env.RESEARCH_SCHEDULE_FAILURE_LIMIT,
       5,
@@ -645,11 +680,11 @@ export function loadConfig(options?: { requireDatabaseUrl?: boolean }): AppConfi
     contentNotifyRejected: parseBooleanEnv(process.env.CONTENT_NOTIFY_REJECTED, false),
     xApiEnabled: parseBooleanEnv(process.env.X_API_ENABLED, false),
     xApiProvider: process.env.X_API_PROVIDER?.trim() || "mock",
-    xApiClientId: process.env.X_API_CLIENT_ID || undefined,
-    xApiClientSecret: process.env.X_API_CLIENT_SECRET || undefined,
-    xApiAccessToken: process.env.X_API_ACCESS_TOKEN || undefined,
-    xApiRefreshToken: process.env.X_API_REFRESH_TOKEN || undefined,
-    xApiAccountId: process.env.X_API_ACCOUNT_ID || undefined,
+    xApiClientId: process.env.X_API_CLIENT_ID?.trim() || undefined,
+    xApiClientSecret: process.env.X_API_CLIENT_SECRET?.trim() || undefined,
+    xApiAccessToken: process.env.X_API_ACCESS_TOKEN?.trim() || undefined,
+    xApiRefreshToken: process.env.X_API_REFRESH_TOKEN?.trim() || undefined,
+    xApiAccountId: process.env.X_API_ACCOUNT_ID?.trim() || undefined,
     xApiBaseUrl: process.env.X_API_BASE_URL?.trim() || "https://api.x.com",
     xApiTimeoutMs: parsePositiveInt(process.env.X_API_TIMEOUT_MS, 30_000),
     xApiMaxAttempts: parsePositiveInt(process.env.X_API_MAX_ATTEMPTS, 3),

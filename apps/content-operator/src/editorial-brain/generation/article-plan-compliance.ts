@@ -9,6 +9,7 @@
 import type { ArticlePlan } from "../../article-pattern/article-plan.js";
 import { articlePlanAllFacts } from "../../article-pattern/article-plan.js";
 import {
+  hasExternalFactualClaimResidue,
   hasShortThemeSemanticOverreach,
   hasUnsupportedEvaluativeResidue,
   isPureUnsupportedEvaluativePadding,
@@ -159,6 +160,7 @@ function checkOmissions(
   article: ArticlePlanComplianceArticle,
 ): ArticlePlanComplianceFinding[] {
   const findings: ArticlePlanComplianceFinding[] = [];
+  const softThemeCoverage = plan.sourceExpansion?.requireAllThemeTagCoverage === false;
 
   for (const fact of plan.title.facts) {
     if (isWeakPlanFact(fact)) continue;
@@ -188,6 +190,10 @@ function checkOmissions(
   for (const fact of plan.body.flatMap((b) => b.facts)) {
     if (isWeakPlanFact(fact)) continue;
     if (!factRealizedIn(bodyText, fact)) {
+      // THEME/METADATA: short genre/play tags are representative, not mandatory full coverage.
+      if (softThemeCoverage && isOptionalThemeCoverageFact(fact, plan)) {
+        continue;
+      }
       findings.push({
         code: "PLAN_FACT_OMISSION",
         message: `body missing plan fact: ${fact.slice(0, 80)}`,
@@ -198,6 +204,24 @@ function checkOmissions(
   }
 
   return findings;
+}
+
+/** Optional short theme/play tags under thin SOURCE — not BLOCKING omissions. */
+function isOptionalThemeCoverageFact(fact: string, plan: ArticlePlan): boolean {
+  const f = (fact ?? "").trim();
+  if (!f) return false;
+  // Identity / quantity always mandatory
+  if (/\d+\s*(?:時間|コーナー|タイトル|分|本番|射精)/u.test(f)) return false;
+  if (/ベスト|総集編|デビュー|周年/.test(f) && f.length >= 6) return false;
+  const types = plan.body.flatMap((b) => b.factSourceTypes ?? []);
+  const facts = plan.body.flatMap((b) => b.facts);
+  const idx = facts.indexOf(f);
+  const st = idx >= 0 ? types[idx] : null;
+  if (st === "GENRE_TAG") return true;
+  if (st === "ACTION" && f.length <= 16) return true;
+  return /^(?:人妻|人妻・主婦|NTR|痴女|熟女|美少女|ギャル|OL|SM|淫乱・ハード系|淫乱|ハード系|パイズリ|巨乳|追撃ピストン|女優ベスト・総集編)$/iu.test(
+    f,
+  );
 }
 
 function checkSlotFidelity(
@@ -407,12 +431,13 @@ function checkPlanAttestationSurplus(
         });
       }
       if (hasUnsupportedEvaluativeResidue(sent, planFacts)) {
-        // Validate only — no post-LLM strip. Pure padding → REGENERATE; mixed → WARNING.
+        const external = hasExternalFactualClaimResidue(sent, planFacts);
         const pure = isPureUnsupportedEvaluativePadding(sent, planFacts);
         findings.push({
           code: "PLAN_UNSUPPORTED_EVAL",
-          message: `body paragraph ${i} has evaluative residue not attested by ARTICLE_PLAN: ${sent.slice(0, 200)}`,
-          severity: pure ? "BLOCKING" : "WARNING",
+          message: `body paragraph ${i} has unsupported external claim or ungrounded promo residue (editorial interpretation grounded in plan facts is allowed): ${sent.slice(0, 200)}`,
+          // External-world claims are always BLOCKING; empty promo closers BLOCKING; soft frames on fact sentences WARNING.
+          severity: external || pure ? "BLOCKING" : "WARNING",
           slot: "body",
         });
       }

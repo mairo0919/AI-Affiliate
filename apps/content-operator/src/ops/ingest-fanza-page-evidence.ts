@@ -36,6 +36,8 @@ export type IngestFanzaPageEvidenceResult = {
 const PAGE_IMAGE_USAGE_NOTE =
   "Page evidence (JSON-LD/gallery). Official usage scope varies. Confirm before ad use. URL reference only; no binary store.";
 
+/** Page images remain REQUIRES_CONFIRMATION — see publication/image-usage-decision.ts. */
+
 export async function ingestFanzaPageEvidence(input: {
   lifecycle: LifecycleRepository;
   research: ResearchRepository;

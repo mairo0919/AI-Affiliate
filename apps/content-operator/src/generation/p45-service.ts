@@ -15,7 +15,7 @@ import { createLLMProvider } from "../adapters/llm/create-llm-provider.js";
 import { MockLLMProvider } from "../adapters/llm/mock-llm-provider.js";
 import { OpsService } from "../ops/ops-service.js";
 import { ContentLifecycleService } from "../lifecycle/lifecycle-service.js";
-import { MockAffiliateProvider } from "../adapters/affiliate/mock-affiliate-provider.js";
+import { createAffiliateProviderFromConfig } from "../adapters/affiliate/create-affiliate-provider.js";
 import { NoopNotificationAdapter } from "../adapters/types.js";
 import { buildXExport } from "../ops/x-export.js";
 import { formatBloggerHtml } from "./blogger-formatter.js";
@@ -366,6 +366,9 @@ export class P45ContentService {
       productUrl: product.url,
       bloggerUrl: draft.url ?? null,
       claimIds: [research1.claim.id, research2.claim.id, research3.claim.id],
+      fanzaXSiteApproved: this.config.fanzaXSiteApproved === true,
+      fanzaService: this.config.fanzaDefaultService,
+      fanzaFloor: this.config.fanzaDefaultFloor,
     });
     const xExport = buildXExport({
       contentId: x.content.id,
@@ -498,7 +501,7 @@ export function createP45Stack(input: {
 
   const lifecycle = new ContentLifecycleService({
     repo: input.repo,
-    affiliate: new MockAffiliateProvider(),
+    affiliate: createAffiliateProviderFromConfig(input.config),
     llm,
     publishers,
     notifications: new NoopNotificationAdapter(),

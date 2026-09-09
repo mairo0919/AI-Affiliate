@@ -2,19 +2,31 @@
 
 <!-- wp:group {"tagName":"main","className":"otonaselect-single","style":{"spacing":{"padding":{"top":"var:preset|spacing|60","bottom":"var:preset|spacing|60","left":"var:preset|spacing|50","right":"var:preset|spacing|50"},"blockGap":"var:preset|spacing|60"}},"layout":{"type":"constrained","contentSize":"40rem"}} -->
 <main class="wp-block-group otonaselect-single" style="padding-top:var(--wp--preset--spacing--60);padding-right:var(--wp--preset--spacing--50);padding-bottom:var(--wp--preset--spacing--60);padding-left:var(--wp--preset--spacing--50)">
+	<!-- wp:html -->
+	<div class="otonaselect-breadcrumbs-slot"></div>
+	<!-- /wp:html -->
+
 	<!-- wp:group {"tagName":"article","className":"otonaselect-article","style":{"spacing":{"blockGap":"var:preset|spacing|40"}},"layout":{"type":"constrained"}} -->
 	<article class="wp-block-group otonaselect-article">
 		<!-- wp:post-title {"level":1,"fontSize":"x-large","className":"otonaselect-single-title"} /-->
 
 		<!-- wp:group {"className":"otonaselect-post-meta","style":{"spacing":{"blockGap":"var:preset|spacing|30"}},"layout":{"type":"flex","flexWrap":"wrap","verticalAlignment":"center"}} -->
 		<div class="wp-block-group otonaselect-post-meta">
-			<!-- wp:post-date {"format":"Y年n月j日","fontSize":"small"} /-->
+			<!-- wp:post-date {"format":"Y年n月j日","fontSize":"small","className":"otonaselect-published-date"} /-->
 
 			<!-- wp:post-terms {"term":"category","fontSize":"small"} /-->
+
+			<!-- wp:post-terms {"term":"performer","fontSize":"small"} /-->
+
+			<!-- wp:post-terms {"term":"series","fontSize":"small"} /-->
 
 			<!-- wp:post-terms {"term":"post_tag","fontSize":"small"} /-->
 		</div>
 		<!-- /wp:group -->
+
+		<!-- wp:html -->
+		<div class="otonaselect-entity-links-slot"></div>
+		<!-- /wp:html -->
 
 		<!-- wp:separator {"textColor":"line","backgroundColor":"line","className":"is-style-wide otonaselect-article-rule"} -->
 		<hr class="wp-block-separator has-text-color has-line-color has-alpha-channel-opacity has-line-background-color has-background is-style-wide otonaselect-article-rule"/>

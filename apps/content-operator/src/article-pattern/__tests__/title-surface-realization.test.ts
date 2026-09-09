@@ -154,7 +154,7 @@ describe("promotional framing residue", () => {
     ).toBe(false);
   });
 
-  it("compliance BLOCKS unattested 見どころ / 存分に (validate→REGENERATE; no prose strip on path)", () => {
+  it("compliance BLOCKS hard promo 見どころ; allows grounded soft editorial 存分に", () => {
     const plan = {
       schemaVersion: 1 as const,
       materialDepth: "standard" as const,
@@ -183,7 +183,7 @@ describe("promotional framing residue", () => {
       },
       articlePlan: plan,
     });
-    // Pure padding closer → BLOCKING (REGENERATE). Mixed fact+frame → WARNING (no strip).
+    // Hard promo without plan attestation → BLOCKING (REGENERATE).
     expect(closer.findings.some((f) => f.code === "PLAN_UNSUPPORTED_EVAL" && f.severity === "BLOCKING")).toBe(
       true,
     );
@@ -202,9 +202,8 @@ describe("promotional framing residue", () => {
       },
       articlePlan: plan,
     });
-    const mixedFinding = mixed.findings.find((f) => f.code === "PLAN_UNSUPPORTED_EVAL");
-    expect(mixedFinding).toBeTruthy();
-    expect(mixedFinding!.severity).toBe("WARNING");
+    // Soft editorial on a plan-grounded sentence → allowed (editorial interpretation).
+    expect(mixed.findings.some((f) => f.code === "PLAN_UNSUPPORTED_EVAL")).toBe(false);
   });
 
   it("OPTION B forbids post-LLM prose mutation", () => {
@@ -241,16 +240,18 @@ describe("promotional framing residue", () => {
     });
     const evalV = feedback.violations?.find((v) => v.code === "PLAN_UNSUPPORTED_EVAL");
     expect(evalV?.unsupportedSentence).toMatch(/見どころの一つ/);
-    expect(feedback.instruction).toMatch(/unsupportedSentence|Delete those sentences|delete that sentence/i);
+    expect(feedback.instruction).toMatch(
+      /unsupportedSentence|external factual|editorial interpretation|PLAN_UNSUPPORTED_EVAL/i,
+    );
     const note = JSON.parse(buildPlanViolationRegenNote(feedback));
     expect(note.violations.some((v: { unsupportedSentence?: string }) => v.unsupportedSentence?.includes("見どころ"))).toBe(
       true,
     );
   });
 
-  it("Writer policy forbids unfinished title fragments and soft closers", () => {
+  it("Writer policy forbids unfinished title fragments and external factual claims", () => {
     expect(OPTION_B_WRITER_SYSTEM).toMatch(/を迎え/);
-    expect(OPTION_B_WRITER_SYSTEM).toMatch(/TERMINATION|hard stop/i);
-    expect(OPTION_B_WRITER_SYSTEM).toMatch(/wrap-up|evaluative closer|締める/i);
+    expect(OPTION_B_WRITER_SYSTEM).toMatch(/EXTERNAL FACTUAL CLAIMS|EDITORIAL INTERPRETATION/);
+    expect(OPTION_B_WRITER_SYSTEM).toMatch(/unfinished clauses|読者|reader orientation|No purchase urgency/i);
   });
 });

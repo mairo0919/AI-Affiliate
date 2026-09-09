@@ -11,6 +11,10 @@
 import { classifySemanticEvidence } from "./semantic-evidence.js";
 import { isBareWorkThemeFact } from "./plan-surface-attestation.js";
 import { WORK_THEME_FACET_RE } from "./evidence-material-role.js";
+import {
+  classifySourceFactType,
+  type SourceFactType,
+} from "./source-fact-authority.js";
 
 export type PlanExecutionMode = "EXACT_SURFACE" | "SEMANTIC_PRESERVE" | "FREE_CONNECTIVE";
 
@@ -48,6 +52,8 @@ export type PlanFactExecutionTarget = {
   readerJob?: string;
   /** Lightweight: what product aspect this fact explains (not a fact source). */
   presentationPurpose?: string;
+  /** SOURCE FACT TYPE — claim authority (GENRE_TAG ≠ SCENE). */
+  sourceFactType?: SourceFactType;
 };
 
 const CONTRAST_MARKERS =
@@ -136,18 +142,35 @@ export function deriveRequiredAnchors(fact: string): string[] {
  * Map existing semantic primary (+ light stem fallbacks already used in article-plan)
  * → coarse information axis for Writer grouping. Not a new Planner taxonomy.
  */
-export function deriveInformationAxis(fact: string): PlanInformationAxis {
+export function deriveInformationAxis(
+  fact: string,
+  sourceFactType?: SourceFactType | null,
+): PlanInformationAxis {
   const f = (fact ?? "").trim();
   if (!f) return "other";
 
+  // GENRE_TAG never groups as scene — classification / membership axis.
+  if (sourceFactType === "GENRE_TAG") return "trait";
+  if (sourceFactType === "ACTION" && f.length <= 16) return "trait";
+  if (sourceFactType === "SCENE") return "scene";
+  if (sourceFactType === "QUANTITY") return "quantity";
+  if (sourceFactType === "IDENTITY") return "cast";
+  if (sourceFactType === "BODY_ATTRIBUTE") return "trait";
+
   // Work theme / scene facets before cast — 人妻/NTR are product content, not names.
   if (
-    /^(?:人妻|NTR|熟女|美少女|女子校生|ギャル|痴女|OL|SM)$/iu.test(f) ||
-    /(?:追撃ピストン|激ピス|杭打ち|わからせ|お仕置き)/u.test(f)
+    /^(?:人妻|人妻・主婦|NTR|熟女|美少女|女子校生|ギャル|痴女|OL|SM|淫乱・ハード系)$/iu.test(f) ||
+    /(?:追撃ピストン|激ピス|杭打ち|わからせ|お仕置き|パイズリ)/u.test(f)
   ) {
-    if (/^(?:人妻|NTR|熟女|美少女|女子校生|ギャル|痴女|OL|SM)$/iu.test(f)) {
+    if (
+      /^(?:人妻|人妻・主婦|NTR|熟女|美少女|女子校生|ギャル|痴女|OL|SM|淫乱・ハード系|パイズリ|巨乳)$/iu.test(
+        f,
+      )
+    ) {
       return "trait";
     }
+    // Short play tags stay trait/membership grouping; long action phrases may be scene.
+    if (f.length <= 16) return "trait";
     return "scene";
   }
 
@@ -240,6 +263,7 @@ function notAllowedFor(
   mode: PlanExecutionMode,
   relations: PlanRequiredRelation[],
   fact: string,
+  sourceFactType?: SourceFactType | null,
 ): string[] {
   const base = [
     "new concrete facts",
@@ -263,10 +287,22 @@ function notAllowedFor(
   if (mode === "EXACT_SURFACE") {
     base.push("paraphrasing away surface identity");
   }
-  // Short work-theme tags: SEMANTIC may connect/paraphrase membership, not invent psychology/story.
-  if (isBareWorkThemeFact(fact) || (WORK_THEME_FACET_RE.test(fact.trim()) && fact.trim().length <= 8)) {
+  const st =
+    sourceFactType ??
+    classifySourceFactType({ fact });
+  // Classification-level authority: membership OK; scene/role/relationship invention not FACT.
+  if (
+    st === "GENRE_TAG" ||
+    st === "ACTION" ||
+    isBareWorkThemeFact(fact) ||
+    (WORK_THEME_FACET_RE.test(fact.trim()) && fact.trim().length <= 12) ||
+    /^(?:人妻・主婦|淫乱・ハード系|パイズリ|巨乳|追撃ピストン)$/u.test(fact.trim())
+  ) {
     base.push(
-      "inventing emotions, psychology, narrative role, plot, or situation detail not present in the planned fact surface",
+      "inventing emotions, psychology, narrative role, plot, cast role-play, relationship dynamics, scene atmosphere, or situation detail not present in the planned fact surface",
+    );
+    base.push(
+      "elevating GENRE_TAG/ACTION membership into SCENE/RELATIONSHIP/STORY facts (e.g. treating a genre label as proof of a specific performed role or depicted relationship)",
     );
     base.push("genre-knowledge expansion beyond recorded-theme membership / variety");
   }
@@ -279,16 +315,23 @@ export function buildPlanFactExecutionTarget(
   index: number,
   readerJob?: string,
   presentationPurpose?: string,
+  sourceFactType?: SourceFactType | null,
 ): PlanFactExecutionTarget {
   const mode = deriveExecutionMode(fact, slot);
   const requiredRelations = deriveRequiredRelations(fact);
   const requiredAnchors = deriveRequiredAnchors(fact);
-  const informationAxis = deriveInformationAxis(fact);
+  const resolvedType =
+    sourceFactType ?? classifySourceFactType({ fact });
+  const informationAxis = deriveInformationAxis(fact, resolvedType);
   const contributionId =
     slot === "body" && readerJob ? `${readerJob}::${index}` : `${slot}::${index}`;
   const allowed = allowedForMode(mode);
-  if (isBareWorkThemeFact(fact) && mode === "SEMANTIC_PRESERVE") {
-    allowed.push("membership / recorded-variety framing (含む・収録・要素)");
+  if (
+    (isBareWorkThemeFact(fact) || resolvedType === "GENRE_TAG" || resolvedType === "ACTION") &&
+    mode === "SEMANTIC_PRESERVE"
+  ) {
+    allowed.push("membership / recorded-variety framing (含む・収録・要素・方向性)");
+    allowed.push("editorial breadth across planned labels without inventing scenes");
   }
   if (/^(?:この|その|あの)[\u4e00-\u9fffァ-ヶー]{2,6}$/u.test(fact.trim())) {
     allowed.push("weave with related cast/scene sentence while keeping deixis+noun identity");
@@ -304,8 +347,9 @@ export function buildPlanFactExecutionTarget(
     requiredAnchors,
     requiredRelations,
     allowed,
-    notAllowed: notAllowedFor(mode, requiredRelations, fact),
+    notAllowed: notAllowedFor(mode, requiredRelations, fact, resolvedType),
     informationAxis,
+    sourceFactType: resolvedType,
     ...(readerJob ? { readerJob } : {}),
     ...(presentationPurpose ? { presentationPurpose } : {}),
   };
@@ -319,6 +363,7 @@ export function buildArticlePlanExecutionContract(input: {
     job?: string;
     presentationPurpose?: string | null;
     factPurposes?: Array<string | null> | null;
+    factSourceTypes?: Array<SourceFactType | null> | null;
   }>;
 }): PlanFactExecutionTarget[] {
   const out: PlanFactExecutionTarget[] = [];
@@ -331,6 +376,7 @@ export function buildArticlePlanExecutionContract(input: {
     slot.facts.forEach((f, i) => {
       const purpose =
         slot.factPurposes?.[i] ?? slot.presentationPurpose ?? undefined;
+      const sourceFactType = slot.factSourceTypes?.[i] ?? undefined;
       out.push(
         buildPlanFactExecutionTarget(
           f,
@@ -338,6 +384,7 @@ export function buildArticlePlanExecutionContract(input: {
           bodyIdx++,
           readerJob,
           purpose ?? undefined,
+          sourceFactType,
         ),
       );
     });
@@ -361,6 +408,8 @@ export function toWriterExecutionContractView(
   informationAxis?: PlanInformationAxis;
   readerJob?: string;
   presentationPurpose?: string;
+  sourceFactType?: SourceFactType;
+  sourceFactTypeNote?: string;
 }> {
   return targets.map((t) => {
     const exact = t.executionMode === "EXACT_SURFACE";
@@ -387,7 +436,7 @@ export function toWriterExecutionContractView(
       notAllowed: t.notAllowed,
       ...(t.informationAxis ? { informationAxis: t.informationAxis } : {}),
       ...(t.readerJob ? { readerJob: t.readerJob } : {}),
-      ...(t.presentationPurpose ? { presentationPurpose: t.presentationPurpose } : {}),
+      // presentationPurpose / sourceFactTypeNote stay Planner-internal — not Writer HOW dump.
     };
   });
 }

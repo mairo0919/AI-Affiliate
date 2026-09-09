@@ -18,6 +18,29 @@ function daysAgo(iso: Date): number {
   return (Date.now() - iso.getTime()) / (1000 * 60 * 60 * 24);
 }
 
+function humanQualityRankBonus(sourceType: string | null | undefined, outcome: string | null): number {
+  let bonus = 0;
+  if (sourceType === "HUMAN_FEEDBACK") bonus += 2.2;
+  if (
+    outcome === "QUALITY_SUCCESS" ||
+    outcome === "HUMAN_POSITIVE" ||
+    outcome === "SUCCESS"
+  ) {
+    bonus += 1.6;
+  }
+  if (
+    outcome === "QUALITY_IMPROVEMENT" ||
+    outcome === "HUMAN_MIXED_IMPROVEMENT" ||
+    outcome === "IMPROVEMENT"
+  ) {
+    bonus += 1.2;
+  }
+  if (sourceType === "SYSTEM_VALIDATOR" && outcome === "SUCCESS") {
+    bonus -= 1.5;
+  }
+  return bonus;
+}
+
 export function rankExperienceScore(input: {
   scope: string;
   channel: string;
@@ -33,6 +56,8 @@ export function rankExperienceScore(input: {
   confidence: number;
   sampleEvidence: number;
   createdAt: Date;
+  sourceType?: string | null;
+  outcome?: string | null;
 }): number {
   let score = 0;
   // CORE is usable by all channels; CHANNEL must match
@@ -46,7 +71,9 @@ export function rankExperienceScore(input: {
   if (
     input.claimProfile &&
     input.queryClaimProfile &&
-    input.claimProfile === input.queryClaimProfile
+    (input.claimProfile === input.queryClaimProfile ||
+      (input.claimProfile.startsWith("quality:") &&
+        (input.queryClaimProfile?.startsWith("quality:") ?? false)))
   ) {
     score += 2.5;
   }
@@ -67,6 +94,7 @@ export function rankExperienceScore(input: {
 
   score += Math.min(2, input.confidence * 2);
   score += Math.min(1.5, Math.log10(1 + Math.max(0, input.sampleEvidence)) * 0.8);
+  score += humanQualityRankBonus(input.sourceType, input.outcome ?? null);
 
   const age = daysAgo(input.createdAt);
   if (age <= 14) score += 1;
@@ -111,6 +139,8 @@ export async function retrieveExperiences(
       confidence: row.confidence,
       sampleEvidence: row.sampleEvidence,
       createdAt: row.createdAt,
+      sourceType: row.sourceType,
+      outcome: row.outcome,
     });
     if (score < 0) continue;
     hits.push({
@@ -121,6 +151,7 @@ export async function retrieveExperiences(
       confidence: row.confidence,
       failureCodes: asStringArray(row.failureCodes),
       outcome: row.outcome,
+      sourceType: row.sourceType,
     });
   }
 

@@ -13,19 +13,33 @@ import {
   createWordPressPublisherFromConfig,
   wordpressCredentialsPresent,
 } from "../adapters/publisher/wordpress-api-publisher.js";
-import { validateFanzaAffiliateUrl } from "../daily-blog/affiliate-url.js";
+import { resolvePublicationOffer } from "../publication/offer-resolution.js";
 import {
   buildKnownPublication,
   checkDuplicatePublication,
 } from "../daily-blog/duplicate-gate.js";
 import { evaluatePublishGate } from "../daily-blog/publish-gate.js";
+import {
+  buildWordPressSeoAttach,
+  OTONASELECT_PRODUCTION_ORIGIN,
+  type WordPressSeoAttach,
+} from "./wordpress-seo-attach.js";
 import type { ArticleImage } from "../generation/article-images.js";
+import { parseArticleImages } from "../generation/article-images.js";
 import { formatBloggerHtml } from "../generation/blogger-formatter.js";
+import {
+  resolveArticleImagesByExternalIds,
+  resolveImagesForContentVersion,
+} from "../generation/resolve-article-images.js";
 import {
   assertPublicBodyClean,
   sanitizePublicBody,
 } from "../publication/public-body-sanitizer.js";
-import { evaluateStructuredContentImagesForWordPress } from "../publication/image-publication-eligibility.js";
+import {
+  evaluateImagesForWordPressPublication,
+} from "../publication/image-publication-eligibility.js";
+import { FANZA_PROVIDER_KEY } from "../publication/provider-registry-meta.js";
+import type { WordPressApiPublisher } from "../adapters/publisher/wordpress-api-publisher.js";
 
 export type WordPressStoredArticle = {
   title?: string;
@@ -79,6 +93,8 @@ export interface WordPressPublishPathDeps {
 export interface WordPressPublishOneInput {
   contentVersionId: string;
   canonicalId?: string | null;
+  /** Prefer product FANZA cid for image resolution (distinct from duplicate-gate keys). */
+  productCanonicalId?: string | null;
   ctaUrl?: string | null;
   /** publish | draft — default from config / allowDirectPublish */
   mode?: "publish" | "draft";
@@ -88,6 +104,12 @@ export interface WordPressPublishOneInput {
   idempotencyKey?: string;
   /** Merged into PublicationTarget.platformMetadata (daily ops mix keys, etc.). */
   platformMetadata?: Record<string, unknown>;
+  /**
+   * When a WORDPRESS DRAFT already exists for this contentVersion, rebuild HTML
+   * (including draft-eligible RC preview images) and PATCH the same post.
+   * Never creates a new post. Never touches posts 13–25 unless they are this target.
+   */
+  updateExistingDraft?: boolean;
 }
 
 export type WordPressPublishOneResult =
@@ -146,6 +168,131 @@ function resolveCanonicalId(
     }
   }
   return null;
+}
+
+function looksLikeProductExternalId(value: string): boolean {
+  const v = value.trim().toLowerCase();
+  if (!v || v.length < 4 || v.length > 32) return false;
+  if (v.includes("-") && /c[a-z0-9]{20,}/.test(v)) return false;
+  if (/^ofje-density|^tmp-|^test-/.test(v)) return false;
+  return /^[a-z][a-z0-9]{2,31}$/.test(v);
+}
+
+function resolveProductCanonicalId(input: {
+  structured: Record<string, unknown>;
+  explicit?: string | null;
+  fallbackCanonicalId?: string | null;
+  platformMetadata?: unknown;
+}): string | null {
+  if (input.explicit?.trim() && looksLikeProductExternalId(input.explicit)) {
+    return input.explicit.trim().toLowerCase();
+  }
+  for (const key of ["productCanonicalId", "canonicalId", "cid", "externalProductId"]) {
+    const v = input.structured[key];
+    if (typeof v === "string" && looksLikeProductExternalId(v)) {
+      return v.trim().toLowerCase();
+    }
+  }
+  const meta =
+    input.platformMetadata &&
+    typeof input.platformMetadata === "object" &&
+    !Array.isArray(input.platformMetadata)
+      ? (input.platformMetadata as Record<string, unknown>)
+      : null;
+  if (meta) {
+    for (const key of ["productCanonicalId", "canonicalId", "cid"]) {
+      const v = meta[key];
+      if (typeof v === "string" && looksLikeProductExternalId(v)) {
+        return v.trim().toLowerCase();
+      }
+    }
+  }
+  if (input.fallbackCanonicalId && looksLikeProductExternalId(input.fallbackCanonicalId)) {
+    return input.fallbackCanonicalId.trim().toLowerCase();
+  }
+  return null;
+}
+
+async function resolveImagesForWordPressPublish(input: {
+  deps: WordPressPublishPathDeps;
+  contentVersionId: string;
+  structured: Record<string, unknown>;
+  productCanonicalId: string | null;
+  persistResolved: boolean;
+}): Promise<{
+  imagesForEval: ArticleImage[];
+  structuredWithImages: Record<string, unknown>;
+  imageRefreshMeta: Record<string, unknown> & { notes: string[] };
+}> {
+  const notes: string[] = [];
+  const stored = parseArticleImages(input.structured.images);
+  let images = stored;
+  let source: string = stored.length > 0 ? "structured" : "empty";
+
+  if (images.length === 0) {
+    try {
+      const refreshed = await resolveImagesForContentVersion(
+        input.deps.lifecycle,
+        input.contentVersionId,
+        { refresh: true },
+      );
+      if (refreshed.images.length > 0) {
+        images = refreshed.images;
+        source = `resolved:${String(refreshed.source)}`;
+        notes.push(`image_refresh_from_topic_or_structured=${images.length}`);
+      }
+    } catch {
+      notes.push("image_refresh_topic_lookup_failed");
+    }
+  }
+
+  if (images.length === 0 && input.productCanonicalId) {
+    try {
+      const byCid = await resolveArticleImagesByExternalIds(
+        input.deps.lifecycle,
+        [input.productCanonicalId],
+      );
+      if (byCid.images.length > 0) {
+        images = byCid.images;
+        source = "resolved:productCanonicalId";
+        notes.push(`image_refresh_from_productCanonicalId=${images.length}`);
+      }
+    } catch {
+      notes.push("image_refresh_productCanonicalId_failed");
+    }
+  }
+
+  const structuredWithImages: Record<string, unknown> = {
+    ...input.structured,
+    images,
+    imageMeta: {
+      ...((input.structured.imageMeta as Record<string, unknown> | undefined) ?? {}),
+      displayMode: "url_reference",
+      researchImageCount: images.length,
+      refreshedAtPublish: source !== "structured" && source !== "empty",
+      refreshSource: source,
+      productCanonicalId: input.productCanonicalId,
+    },
+  };
+
+  if (
+    input.persistResolved &&
+    images.length > 0 &&
+    stored.length === 0 &&
+    typeof input.deps.lifecycle.updateContentVersionStructuredContent === "function"
+  ) {
+    await input.deps.lifecycle.updateContentVersionStructuredContent(
+      input.contentVersionId,
+      structuredWithImages,
+    );
+    notes.push("persisted_structuredContent.images_for_draft_preview");
+  }
+
+  return {
+    imagesForEval: images,
+    structuredWithImages,
+    imageRefreshMeta: { source, count: images.length, notes },
+  };
 }
 
 export function buildWordPressHtmlFromVersion(input: {
@@ -321,7 +468,12 @@ export async function publishContentVersionToWordPress(
       Boolean(t.publishedExternalId) &&
       (t.status === "PUBLISHED" || t.status === "DRAFT"),
   );
-  if (sameVersion) {
+  const updatingExistingDraft =
+    Boolean(input.updateExistingDraft) &&
+    sameVersion?.status === "DRAFT" &&
+    Boolean(sameVersion.publishedExternalId);
+
+  if (sameVersion && !updatingExistingDraft) {
     return {
       ok: true,
       published: false,
@@ -351,30 +503,48 @@ export async function publishContentVersionToWordPress(
         publishedAt: t.publishedAt?.toISOString() ?? null,
       }),
     );
-  const dup = checkDuplicatePublication(
-    { cid: canonicalId, canonicalId },
-    known,
-  );
-  if (dup.duplicate) {
-    return {
-      ok: true,
-      published: false,
-      skipped: true,
-      reason: `DUPLICATE_${dup.reason ?? "PRODUCT"}`,
-      contentVersionId: version.id,
-      contentId: version.contentId,
-      priorExternalId: dup.prior?.bloggerPostId ?? null,
-      priorTargetId: null,
-      duplicate: true,
-    };
+  if (!updatingExistingDraft) {
+    const dup = checkDuplicatePublication(
+      { cid: canonicalId, canonicalId },
+      known,
+    );
+    if (dup.duplicate) {
+      return {
+        ok: true,
+        published: false,
+        skipped: true,
+        reason: `DUPLICATE_${dup.reason ?? "PRODUCT"}`,
+        contentVersionId: version.id,
+        contentId: version.contentId,
+        priorExternalId: dup.prior?.bloggerPostId ?? null,
+        priorTargetId: null,
+        duplicate: true,
+      };
+    }
   }
 
-  const productUrl =
-    input.ctaUrl?.trim() ||
-    (canonicalId
-      ? `https://video.dmm.co.jp/av/content/?id=${canonicalId}`
-      : null);
-  const ctaCheck = validateFanzaAffiliateUrl(productUrl);
+  const productCanonicalId = resolveProductCanonicalId({
+    structured,
+    explicit: input.productCanonicalId,
+    fallbackCanonicalId: canonicalId,
+    platformMetadata: sameVersion?.platformMetadata ?? input.platformMetadata,
+  });
+
+  const offer = resolvePublicationOffer({
+    providerKey: FANZA_PROVIDER_KEY,
+    productId: productCanonicalId ?? canonicalId,
+    affiliateUrl: input.ctaUrl?.trim() || null,
+    canonicalProductUrl: (productCanonicalId ?? canonicalId)
+      ? `https://video.dmm.co.jp/av/content/?id=${productCanonicalId ?? canonicalId}`
+      : null,
+  });
+  const productUrl = offer.url;
+  const ctaCheck = {
+    ok: Boolean(productUrl),
+    url: productUrl,
+    failureCode: offer.failureCode,
+    hasAffiliateIdHint: offer.affiliateLinkReady,
+  };
 
   const mode: "publish" | "draft" =
     input.mode ??
@@ -383,8 +553,19 @@ export async function publishContentVersionToWordPress(
       ? "publish"
       : "draft");
 
-  const imageEval = evaluateStructuredContentImagesForWordPress({
-    structuredContent: version.structuredContent,
+  // Ensure DRAFT can embed RC preview images even when generation left images=[].
+  // Does not upgrade usageStatus to ALLOWED. PUBLIC gate stays strict.
+  const { imagesForEval, imageRefreshMeta, structuredWithImages } =
+    await resolveImagesForWordPressPublish({
+      deps,
+      contentVersionId: version.id,
+      structured,
+      productCanonicalId,
+      persistResolved: mode === "draft",
+    });
+
+  const imageEval = evaluateImagesForWordPressPublication({
+    images: imagesForEval,
     mode,
   });
   if (!imageEval.pass) {
@@ -401,7 +582,7 @@ export async function publishContentVersionToWordPress(
   }
 
   const structuredForHtml = {
-    ...structured,
+    ...structuredWithImages,
     images: imageEval.imagesForHtml,
   };
 
@@ -478,6 +659,15 @@ export async function publishContentVersionToWordPress(
   const idempotencyKey =
     input.idempotencyKey ?? `wordpress:${version.id}:${mode}`;
 
+  const seoAttach = buildSeoAttachFromStructured({
+    structured: structuredWithImages,
+    title: built.title,
+    excerptFallback: built.excerpt,
+    productCanonicalId,
+    siteOrigin: deps.config.wordpressBaseUrl ?? OTONASELECT_PRODUCTION_ORIGIN,
+  });
+  const seoTermIds = await resolveSeoTermIds(publisher, seoAttach);
+
   const prepared = await publisher.prepare({
     contentVersionId: version.id,
     title: built.title,
@@ -486,35 +676,168 @@ export async function publishContentVersionToWordPress(
     destinationRef: deps.config.wordpressBaseUrl ?? null,
     metadata: {
       mode,
-      excerpt: built.excerpt,
-      summary: built.excerpt,
+      excerpt: seoAttach.excerpt || built.excerpt,
+      summary: seoAttach.excerpt || built.excerpt,
       canonicalId,
+      productCanonicalId: productCanonicalId ?? undefined,
       route: input.route ?? "WORDPRESS_PATH",
       idempotencyKey,
       publicBodySanitized: sanitized.removed,
+      wpSeoMeta: seoAttach.meta,
+      wpTagIds: seoTermIds.tagIds,
+      wpCategoryIds: seoTermIds.categoryIds,
+      wpPerformerIds: seoTermIds.performerIds,
+      wpSeriesIds: seoTermIds.seriesIds,
+      seoAttachNotes: seoAttach.notes,
     },
   });
 
   let published;
   try {
-    published =
-      mode === "draft" && publisher.createDraft
-        ? await publisher.createDraft({ prepared })
-        : await publisher.publish({ prepared });
+    if (updatingExistingDraft && sameVersion?.publishedExternalId && publisher.update) {
+      published = await publisher.update({
+        externalId: sameVersion.publishedExternalId,
+        prepared,
+      });
+      published = {
+        ...published,
+        externalId: sameVersion.publishedExternalId,
+        status: "DRAFT",
+        url: published.url ?? sameVersion.publishedUrl ?? "",
+      };
+    } else {
+      published =
+        mode === "draft" && publisher.createDraft
+          ? await publisher.createDraft({ prepared })
+          : await publisher.publish({ prepared });
+    }
   } catch (e) {
-    return {
-      ok: false,
-      published: false,
-      skipped: false,
-      reason: "PUBLISH_FAILED",
-      contentVersionId: version.id,
-      error: e instanceof Error ? e.message.slice(0, 400) : String(e),
-    };
+    // Theme SEO meta / custom taxonomies may be unavailable until theme v1.5+.
+    // Retry once with excerpt + standard tags/categories only (body unchanged).
+    const msg = e instanceof Error ? e.message : String(e);
+    const canRetrySeo =
+      /rest_invalid|未知|invalid_param|performer|series|otonaselect_/i.test(msg) ||
+      msg.includes("UPDATE_FAILED") ||
+      msg.includes("CREATE_FAILED");
+    if (canRetrySeo && publisher.update && updatingExistingDraft && sameVersion?.publishedExternalId) {
+      try {
+        const fallbackPrepared = await publisher.prepare({
+          contentVersionId: version.id,
+          title: built.title,
+          body: sanitized.body,
+          targetFormat: "article",
+          destinationRef: deps.config.wordpressBaseUrl ?? null,
+          metadata: {
+            mode,
+            excerpt: seoAttach.excerpt || built.excerpt,
+            summary: seoAttach.excerpt || built.excerpt,
+            canonicalId,
+            productCanonicalId: productCanonicalId ?? undefined,
+            route: input.route ?? "WORDPRESS_PATH",
+            idempotencyKey: `${idempotencyKey}:seo-fallback`,
+            publicBodySanitized: sanitized.removed,
+            wpTagIds: seoTermIds.tagIds,
+            wpCategoryIds: seoTermIds.categoryIds,
+            seoAttachNotes: [...seoAttach.notes, `seo_meta_fallback:${msg.slice(0, 160)}`],
+          },
+        });
+        published = await publisher.update({
+          externalId: sameVersion.publishedExternalId,
+          prepared: fallbackPrepared,
+        });
+        published = {
+          ...published,
+          externalId: sameVersion.publishedExternalId,
+          status: "DRAFT",
+          url: published.url ?? sameVersion.publishedUrl ?? "",
+        };
+      } catch (e2) {
+        return {
+          ok: false,
+          published: false,
+          skipped: false,
+          reason: "PUBLISH_FAILED",
+          contentVersionId: version.id,
+          error: e2 instanceof Error ? e2.message.slice(0, 400) : String(e2),
+        };
+      }
+    } else {
+      return {
+        ok: false,
+        published: false,
+        skipped: false,
+        reason: "PUBLISH_FAILED",
+        contentVersionId: version.id,
+        error: msg.slice(0, 400),
+      };
+    }
   }
 
   const now = new Date();
-  const targetStatus = published.status === "DRAFT" ? "DRAFT" : "PUBLISHED";
-  const target: PublicationTarget = await deps.lifecycle.createPublicationTarget({
+  const targetStatus = published.status === "DRAFT" || mode === "draft" ? "DRAFT" : "PUBLISHED";
+  const platformMetadata = {
+    canonicalId,
+    productCanonicalId: productCanonicalId ?? undefined,
+    route: input.route ?? "WORDPRESS_PATH",
+    idempotencyKey,
+    ctaUrl: ctaCheck.url ?? productUrl,
+    hasAffiliateIdHint: ctaCheck.hasAffiliateIdHint,
+    offerKind: offer.kind,
+    monetizationStatus: offer.monetizationStatus,
+    affiliateLinkReady: offer.affiliateLinkReady,
+    wordpressMode: deps.config.wordpressMode,
+    imageEvalNotes: [...imageEval.notes, ...(imageRefreshMeta.notes ?? [])],
+    imageExcludedCount: imageEval.excluded.length,
+    imageRefresh: imageRefreshMeta,
+    draftOnly: mode === "draft",
+    ...(input.platformMetadata ?? {}),
+  };
+
+  let target: PublicationTarget;
+  if (updatingExistingDraft && sameVersion) {
+    if (typeof deps.lifecycle.updatePublicationTarget === "function") {
+      await deps.lifecycle.updatePublicationTarget(sameVersion.id, {
+        platformMetadata: {
+          ...((sameVersion.platformMetadata as Record<string, unknown> | null) ?? {}),
+          ...platformMetadata,
+          updatedVia: "updateExistingDraft",
+          updatedAt: now.toISOString(),
+        },
+        publishedUrl: published.url || sameVersion.publishedUrl,
+        publishedAt: now,
+      });
+    }
+    const record: PublicationRecord = await deps.lifecycle.createPublicationRecord({
+      publicationTargetId: sameVersion.id,
+      platform: "WORDPRESS",
+      status: "DRAFT",
+      externalId: sameVersion.publishedExternalId!,
+      url: published.url || sameVersion.publishedUrl,
+      responseSummary: {
+        ...((published.responseSummary as Record<string, unknown>) ?? {}),
+        action: "updateExistingDraft",
+        imageEvalNotes: platformMetadata.imageEvalNotes,
+      },
+    });
+    return {
+      ok: true,
+      published: true,
+      skipped: false,
+      contentVersionId: version.id,
+      contentId: version.contentId,
+      canonicalId,
+      publicationTargetId: sameVersion.id,
+      publicationRecordId: record.id,
+      externalId: sameVersion.publishedExternalId!,
+      url: published.url || sameVersion.publishedUrl || "",
+      status: "DRAFT",
+      publishedAt: now.toISOString(),
+      duplicate: false,
+      dryRun: false,
+    };
+  }
+
+  target = await deps.lifecycle.createPublicationTarget({
     contentId: version.contentId,
     contentVersionId: version.id,
     platform: "WORDPRESS",
@@ -525,17 +848,7 @@ export async function publishContentVersionToWordPress(
     publishedExternalId: published.externalId,
     publishedUrl: published.url,
     publishedAt: now,
-    platformMetadata: {
-      canonicalId,
-      route: input.route ?? "WORDPRESS_PATH",
-      idempotencyKey,
-      ctaUrl: ctaCheck.url ?? productUrl,
-      hasAffiliateIdHint: ctaCheck.hasAffiliateIdHint,
-      wordpressMode: deps.config.wordpressMode,
-      imageEvalNotes: imageEval.notes,
-      imageExcludedCount: imageEval.excluded.length,
-      ...(input.platformMetadata ?? {}),
-    },
+    platformMetadata,
   });
 
   const record: PublicationRecord = await deps.lifecycle.createPublicationRecord({
@@ -621,4 +934,151 @@ export async function runWordPressPublicationBatch(
     failed,
     results,
   };
+}
+
+function buildSeoAttachFromStructured(input: {
+  structured: Record<string, unknown>;
+  title: string;
+  excerptFallback: string;
+  productCanonicalId: string | null;
+  siteOrigin: string;
+}): WordPressSeoAttach {
+  const article =
+    input.structured.article && typeof input.structured.article === "object"
+      ? (input.structured.article as Record<string, unknown>)
+      : {};
+  const seoBlock =
+    input.structured.seo && typeof input.structured.seo === "object"
+      ? (input.structured.seo as Record<string, unknown>)
+      : {};
+
+  const performers: Array<{ name: string; ascii?: string | null }> = [];
+  const pushPerformer = (name: string, ascii?: string | null) => {
+    const n = name.trim();
+    if (!n) return;
+    if (performers.some((p) => p.name.replace(/\s+/g, "") === n.replace(/\s+/g, ""))) return;
+    performers.push({ name: n, ascii: ascii ?? null });
+  };
+
+  for (const raw of [
+    ...(Array.isArray(input.structured.performers) ? input.structured.performers : []),
+    ...(Array.isArray(seoBlock.performers) ? seoBlock.performers : []),
+    ...(Array.isArray(article.performers) ? article.performers : []),
+  ]) {
+    if (typeof raw === "string") pushPerformer(raw);
+    else if (raw && typeof raw === "object" && typeof (raw as { name?: unknown }).name === "string") {
+      const row = raw as { name: string; ascii?: string };
+      pushPerformer(row.name, row.ascii);
+    }
+  }
+
+  const titleBlob = String(seoBlock.title ?? article.seoTitle ?? article.title ?? input.title);
+  if (performers.length === 0 && titleBlob.includes("奥田咲")) {
+    pushPerformer("奥田咲", "okuda-saki");
+  }
+
+  const seriesName =
+    (typeof input.structured.seriesName === "string" && input.structured.seriesName.trim()) ||
+    (typeof seoBlock.seriesName === "string" && seoBlock.seriesName.trim()) ||
+    (typeof article.seriesName === "string" && article.seriesName.trim()) ||
+    null;
+
+  const categories = [
+    ...(Array.isArray(seoBlock.categories) ? seoBlock.categories : []),
+    ...(Array.isArray(article.categories) ? article.categories : []),
+  ]
+    .filter((c): c is string => typeof c === "string" && c.trim().length > 0)
+    .map((c) => c.trim());
+
+  const tags = [
+    ...(Array.isArray(seoBlock.tags) ? seoBlock.tags : []),
+    ...(Array.isArray(article.tags) ? article.tags : []),
+    ...performers.map((p) => p.name),
+  ]
+    .filter((t): t is string => typeof t === "string" && t.trim().length > 0)
+    .map((t) => t.trim());
+
+  return buildWordPressSeoAttach({
+    title: input.title,
+    seoTitle:
+      (typeof seoBlock.title === "string" && seoBlock.title) ||
+      (typeof article.seoTitle === "string" && article.seoTitle) ||
+      input.title,
+    metaDescription:
+      (typeof seoBlock.metaDescription === "string" && seoBlock.metaDescription) ||
+      (typeof article.metaDescription === "string" && article.metaDescription) ||
+      input.excerptFallback,
+    summary: input.excerptFallback,
+    performers,
+    seriesName,
+    categories,
+    tags,
+    productCanonicalId: input.productCanonicalId,
+    safeOgImageUrl: null,
+    siteOrigin: input.siteOrigin,
+  });
+}
+
+async function resolveSeoTermIds(
+  publisher: PublisherAdapter,
+  attach: WordPressSeoAttach,
+): Promise<{
+  tagIds: number[];
+  categoryIds: number[];
+  performerIds: number[];
+  seriesIds: number[];
+}> {
+  const ensure =
+    typeof (publisher as WordPressApiPublisher).ensureTerm === "function"
+      ? (publisher as WordPressApiPublisher).ensureTerm.bind(publisher)
+      : null;
+  if (!ensure) {
+    return { tagIds: [], categoryIds: [], performerIds: [], seriesIds: [] };
+  }
+
+  const tagIds: number[] = [];
+  for (const name of attach.tags) {
+    try {
+      const id = await ensure({ taxonomyRestBase: "tags", name });
+      if (id) tagIds.push(id);
+    } catch {
+      /* ignore */
+    }
+  }
+  const categoryIds: number[] = [];
+  for (const name of attach.categories) {
+    try {
+      const id = await ensure({ taxonomyRestBase: "categories", name });
+      if (id) categoryIds.push(id);
+    } catch {
+      /* ignore */
+    }
+  }
+  const performerIds: number[] = [];
+  for (const p of attach.performers) {
+    try {
+      const id = await ensure({
+        taxonomyRestBase: "performer",
+        name: p.name,
+        slug: p.stableSlug,
+      });
+      if (id) performerIds.push(id);
+    } catch {
+      /* taxonomy may not exist until theme v1.5 is active */
+    }
+  }
+  const seriesIds: number[] = [];
+  if (attach.series) {
+    try {
+      const id = await ensure({
+        taxonomyRestBase: "series",
+        name: attach.series.name,
+        slug: attach.series.stableSlug,
+      });
+      if (id) seriesIds.push(id);
+    } catch {
+      /* taxonomy may not exist until theme v1.5 is active */
+    }
+  }
+  return { tagIds, categoryIds, performerIds, seriesIds };
 }

@@ -84,6 +84,21 @@ export {
 } from "./core/production-authority.js";
 export type { BrainLifecycleCode } from "./core/production-authority.js";
 export { retrieveExperiences, experienceMustNotMutateLearningRules, rankExperienceScore } from "./core/retrieval.js";
+export {
+  deriveArticleExperienceContext,
+  claimProfileForExperienceRetrieval,
+  ensureBaselineHumanQualityExperiences,
+  summarizeWritingQualityGuidance,
+  formatWritingQualityGuidanceForWriter,
+  R77_SUCCESS_LESSONS,
+  POST20_MIXED_LESSONS,
+} from "./generation/success-experience.js";
+export type {
+  SuccessLessonPayload,
+  WritingQualityGuidance,
+  QualitySignalType,
+  QualityDimension,
+} from "./generation/success-experience.js";
 export { blogChannelModule, buildBlogChannelPlan, decideOmitCtaBridge } from "./channels/blog/adapter.js";
 export type { BlogChannelPlanSpecifics } from "./channels/blog/adapter.js";
 export { xChannelModule, buildXChannelPlan } from "./channels/x/adapter.js";

@@ -32,6 +32,7 @@ export {
   resolveArticleImagesForProduct,
   resolveArticleImagesForResearchItem,
   resolveArticleImagesForTopic,
+  resolveArticleImagesByExternalIds,
   resolveImagesForContentVersion,
 } from "./resolve-article-images.js";
 export {

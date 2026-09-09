@@ -1,7 +1,7 @@
 /**
  * OPTION B Blogger channel — Writer realizes ARTICLE_PLAN as Japanese JSON.
- * r114: Planner owns WHAT/ORDER/DEPTH/STOP; Writer owns surface only.
- * R151: ARTICLE_PLAN_EXECUTION adds per-fact identity/relation constraints.
+ * Planner owns WHAT / FACT boundary; Writer owns natural prose + editorial interpretation.
+ * R151: ARTICLE_PLAN_EXECUTION carries identity/relation safety — not prose templates.
  * CTA is system-appended (not Writer-generated).
  */
 
@@ -13,6 +13,65 @@ import {
 import type { ArticleOutputContract } from "../../generation/article-output-contract.js";
 import { applyArticleOutputContractToLlmSchema } from "../../generation/article-output-contract.js";
 import { OPTION_B_WRITER_SYSTEM } from "../../article-pattern/natural-product-intro-policy.js";
+import { formatWritingQualityGuidanceForWriter } from "./success-experience.js";
+
+/**
+ * Writer-visible ARTICLE_PLAN: keep facts/jobs; hide internal HOW taxonomy dumps.
+ * bodyProgression / factSourceTypes stay Planner-internal (FACT safety uses EXECUTION.notAllowed).
+ */
+export function toWriterVisibleArticlePlan(plan: unknown): unknown {
+  if (!plan || typeof plan !== "object") return plan;
+  const p = plan as Record<string, unknown>;
+  const body = Array.isArray(p.body)
+    ? (p.body as Array<Record<string, unknown>>).map((slot) => {
+        const next = { ...slot };
+        delete next.factSourceTypes;
+        // Keep presentationPurpose lightly if present — optional grouping hint only.
+        return next;
+      })
+    : p.body;
+  const out: Record<string, unknown> = {
+    schemaVersion: p.schemaVersion,
+    materialDepth: p.materialDepth,
+    productTitle: p.productTitle,
+    title: p.title,
+    lead: p.lead,
+    body,
+  };
+  if (p.purpose) out.purpose = p.purpose;
+  if (p.coreAngle) out.coreAngle = p.coreAngle;
+  // SOURCE density ceiling — length permission, not a paragraph template.
+  if (p.sourceExpansion && typeof p.sourceExpansion === "object") {
+    const se = p.sourceExpansion as Record<string, unknown>;
+    out.sourceExpansion = {
+      resolution: se.resolution,
+      writerDensityNote: se.writerDensityNote,
+    };
+  }
+  // Intentionally omit bodyProgression.writerNote / full progression dump from Writer surface.
+  return out;
+}
+
+/** Slim EXECUTION for Writer: FACT safety fields only — no taxonomy lecture notes. */
+export function toWriterVisibleExecution(execution: unknown): unknown {
+  if (!Array.isArray(execution)) return execution;
+  return execution.map((row) => {
+    if (!row || typeof row !== "object") return row;
+    const r = row as Record<string, unknown>;
+    return {
+      contributionId: r.contributionId,
+      slot: r.slot,
+      fact: r.fact,
+      executionMode: r.executionMode,
+      requiredAnchors: r.requiredAnchors,
+      requiredRelations: r.requiredRelations,
+      mustPreserve: r.mustPreserve,
+      allowed: r.allowed,
+      notAllowed: r.notAllowed,
+      ...(r.informationAxis ? { informationAxis: r.informationAxis } : {}),
+    };
+  });
+}
 
 export function buildOptionBBloggerGeneratorPrompt(input: {
   productTitle: string;
@@ -39,15 +98,26 @@ export function buildOptionBBloggerGeneratorPrompt(input: {
           .maxItems
       : null);
 
-  const plan =
+  const planRaw =
     input.generationAuthority.ARTICLE_PLAN &&
     typeof input.generationAuthority.ARTICLE_PLAN === "object"
       ? input.generationAuthority.ARTICLE_PLAN
       : null;
+  const plan = toWriterVisibleArticlePlan(planRaw);
 
-  const execution = Array.isArray(input.generationAuthority.ARTICLE_PLAN_EXECUTION)
+  const executionRaw = Array.isArray(input.generationAuthority.ARTICLE_PLAN_EXECUTION)
     ? input.generationAuthority.ARTICLE_PLAN_EXECUTION
     : null;
+  const execution = toWriterVisibleExecution(executionRaw);
+
+  const qualityGuidanceText = formatWritingQualityGuidanceForWriter(
+    input.generationAuthority.WRITING_QUALITY_GUIDANCE &&
+      typeof input.generationAuthority.WRITING_QUALITY_GUIDANCE === "object"
+      ? (input.generationAuthority.WRITING_QUALITY_GUIDANCE as Parameters<
+          typeof formatWritingQualityGuidanceForWriter
+        >[0])
+      : null,
+  );
 
   const systemInstruction = [
     OPTION_B_WRITER_SYSTEM,
@@ -65,21 +135,25 @@ export function buildOptionBBloggerGeneratorPrompt(input: {
   ].join("\n");
 
   const userPrompt = [
-    `Realize ARTICLE_PLAN as JSON fields (${required}). productTitle in the plan is identity only — do not paste wholesale as title.`,
+    `Write ARTICLE_PLAN as a natural Japanese product intro (${required}). productTitle in the plan is identity only — do not paste wholesale as title.`,
     `outputChannel=BLOGGER articleFormat=${JSON.stringify(input.articleFormat)}`,
-    "ARTICLE_PLAN:",
+    "ARTICLE_PLAN (factual boundary — weave into prose; do not dump as taxonomy):",
     JSON.stringify(plan),
     execution
       ? [
-          "ARTICLE_PLAN_EXECUTION (per contribution — preserve mustPreserve; do not invent):",
+          "ARTICLE_PLAN_EXECUTION (FACT safety per contribution — obey executionMode / mustPreserve / notAllowed; do not invent):",
           JSON.stringify(execution),
-          "Title facts with executionMode=EXACT_SURFACE: keep planned surface identity only — compose one natural Japanese product title that identifies the work (助詞/読点: の・と etc.). Never a space-separated keyword list, never unfinished clauses (〜を迎え), never mechanical concatenation of every title.fact when one already covers another. Do not add modifiers absent from title.facts.",
-          "SEMANTIC_PRESERVE (typical for body descriptive facts): natural grammar and product-intro connection OK; requiredRelations and anchors must remain; no new concrete facts. Combine related SEMANTIC_PRESERVE facts into coherent sentences and paragraphs.",
-          "Short work-theme planned facts (membership tags): state recorded membership/variety only. Obey notAllowed — do not invent emotions, psychology, narrative roles, or plot from genre knowledge.",
-          "FREE_CONNECTIVE: connection/transition only — not new facts.",
-          "Write one body section. Express every body.facts item (paraphrase OK under SEMANTIC_PRESERVE), grouping by informationAxis / presentationPurpose / related meaning — one fact ≠ one sentence/paragraph. Open by identifying the product from planned body facts, then advance remaining axes. For long scene/trait/play-style facts, make clear what product aspect those facts describe without inventing unsupported detail. materialDepth=rich means do not omit independent axes; it does not mean elaborate each fact or open a new paragraph per fact. Long compound facts are already dense: weave, do not inflate.",
-          "TERMINATION: when all planned body facts are realized, stop. Do not add a summary, recommendation, reader invitation, or evaluative wrap-up whose meaning is absent from ARTICLE_PLAN. Explicitly forbidden unless already in planned facts: 楽しめます / 堪能できる / 充実した内容 / 余すところなく / 存分に味わえる / 魅力が詰まった as closing glue. A short ending on a factual sentence is correct. Do not pad for length.",
-          "Short facts: weave with related axes. Deixis (この美女) must keep noun+deixis identity when merged. Narrative intensifiers (ただ) may soften; meaning cores must remain. Never invent promotional closers after coverage is complete.",
+          "EXACT_SURFACE (title / names / quantities): keep surface identity. Title: compose one natural Japanese title from title.facts only with 助詞/読点 — never invent modifiers/genres/appeal words absent from title.facts.",
+          "SEMANTIC_PRESERVE: natural grammar and editorial connection OK; no new concrete facts. Combine related facts into coherent paragraphs.",
+          "Write continuous adult product-intro prose. Weave short tags into the story of the product — do not explain internal labels (genre/play-style/direction categories) to the reader.",
+          "End with a short grounded reader orientation when natural — optional when SOURCE is thin (THEME_LEVEL / METADATA). Forbidden unless planned: external reputation/market claims (～で知られている / 売上No.1 / 大人気 / ファンから高評価).",
+          "If ARTICLE_PLAN.sourceExpansion.writerDensityNote is present, obey it as a length/expansion ceiling. Stop when planned facts are naturally covered.",
+        ].join("\n")
+      : "",
+    qualityGuidanceText
+      ? [
+          "WRITING_QUALITY_GUIDANCE (optional abstract HOW — not new facts; do not copy wording; do not override FACT boundary):",
+          qualityGuidanceText,
         ].join("\n")
       : "",
     input.planViolationNote

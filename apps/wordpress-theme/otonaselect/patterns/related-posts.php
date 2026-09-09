@@ -3,7 +3,7 @@
  * Title: 関連記事セクション
  * Slug: otonaselect/related-posts
  * Categories: otonaselect
- * Description: 記事詳細向け。タグ/カテゴリがある場合は functions.php の query 調整で関連寄せ。
+ * Description: 記事詳細向け。出演者→シリーズ→カテゴリの順で関連寄せ（件数を無理に埋めない）。
  */
 ?>
 <!-- wp:group {"style":{"spacing":{"blockGap":"var:preset|spacing|40"}},"layout":{"type":"constrained"}} -->

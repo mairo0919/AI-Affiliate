@@ -45,9 +45,13 @@ export type OmittedClaim = {
 };
 
 export type InferencePolicy = {
-  allowed: Array<"direct_paraphrase" | "safe_composition">;
+  allowed: Array<"direct_paraphrase" | "safe_composition" | "editorial_interpretation">;
   forbidden: Array<
-    "interpretive_inference" | "evaluative_inference" | "social_proof" | "name_derived_setting"
+    | "interpretive_inference"
+    | "evaluative_inference"
+    | "social_proof"
+    | "name_derived_setting"
+    | "external_world_claim"
   >;
 };
 
@@ -201,6 +205,7 @@ export type ExperienceRetrievalHit = {
   confidence: number;
   failureCodes: string[];
   outcome: string | null;
+  sourceType?: string | null;
 };
 
 export type ExperienceRetrievalResult = {

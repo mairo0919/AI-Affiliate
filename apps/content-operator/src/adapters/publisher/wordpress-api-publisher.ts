@@ -168,10 +168,11 @@ export class WordPressApiPublisher implements PublisherAdapter {
       return result;
     }
     this.assertCanCallApi("update");
-    return this.createOrUpdatePost(
-      { prepared: input.prepared },
-      { status: "publish", externalId: input.externalId },
-    );
+    const meta = asRecord(input.prepared.payload.metadata);
+    // Never promote a draft refresh to publish via update().
+    const status: "draft" | "publish" =
+      meta.mode === "publish" && this.config.allowDirectPublish ? "publish" : "draft";
+    return this.createOrUpdatePost({ prepared: input.prepared }, { status, externalId: input.externalId });
   }
 
   async delete(externalId: string): Promise<{ ok: boolean }> {
@@ -208,6 +209,46 @@ export class WordPressApiPublisher implements PublisherAdapter {
     };
   }
 
+  /**
+   * Ensure a taxonomy term exists (tags/categories/custom). Returns term id or null.
+   * Used for SEO attach without inventing post body content.
+   */
+  async ensureTerm(input: {
+    taxonomyRestBase: "tags" | "categories" | "performer" | "series";
+    name: string;
+    slug?: string | null;
+  }): Promise<number | null> {
+    const name = input.name.trim();
+    if (!name) return null;
+    if (this.config.mode === "mock") {
+      return Math.abs(
+        Array.from(name).reduce((a, c) => a + c.charCodeAt(0), input.taxonomyRestBase.length),
+      );
+    }
+    this.assertCanCallApi("update");
+    const slug = input.slug?.trim() || undefined;
+    const listPath =
+      slug != null
+        ? `/${input.taxonomyRestBase}?slug=${encodeURIComponent(slug)}`
+        : `/${input.taxonomyRestBase}?search=${encodeURIComponent(name)}`;
+    const listed = await this.request(listPath, { method: "GET" });
+    if (listed.ok) {
+      const rows = (await listed.json()) as Array<{ id?: number; name?: string; slug?: string }>;
+      const hit =
+        rows.find((r) => (slug ? r.slug === slug : r.name === name)) ??
+        rows.find((r) => r.name === name);
+      if (hit?.id) return Number(hit.id);
+    }
+    const created = await this.request(`/${input.taxonomyRestBase}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name, ...(slug ? { slug } : {}) }),
+    });
+    if (!created.ok) return null;
+    const json = (await created.json()) as { id?: number };
+    return json.id ? Number(json.id) : null;
+  }
+
   private async createOrUpdatePost(
     input: PublisherDraftInput | PublisherPublishInput,
     opts: { status: "draft" | "publish"; externalId?: string },
@@ -230,6 +271,20 @@ export class WordPressApiPublisher implements PublisherAdapter {
     };
     if (excerpt) body.excerpt = excerpt;
     if (slug) body.slug = slug;
+
+    const wpMeta = asRecord(meta.wpSeoMeta);
+    if (Object.keys(wpMeta).length > 0) {
+      body.meta = wpMeta;
+    }
+
+    const tagIds = asNumberArray(meta.wpTagIds);
+    if (tagIds.length > 0) body.tags = tagIds;
+    const categoryIds = asNumberArray(meta.wpCategoryIds);
+    if (categoryIds.length > 0) body.categories = categoryIds;
+    const performerIds = asNumberArray(meta.wpPerformerIds);
+    if (performerIds.length > 0) body.performer = performerIds;
+    const seriesIds = asNumberArray(meta.wpSeriesIds);
+    if (seriesIds.length > 0) body.series = seriesIds;
 
     const path = opts.externalId ? `/posts/${opts.externalId}` : "/posts";
     const method = opts.externalId ? "POST" : "POST";
@@ -320,6 +375,14 @@ export class WordPressApiPublisher implements PublisherAdapter {
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function asNumberArray(value: unknown): number[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((v) => (typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN))
+    .filter((n) => Number.isFinite(n) && n > 0)
+    .map((n) => Math.trunc(n));
 }
 
 function mapWpStatus(status: string | undefined): string {

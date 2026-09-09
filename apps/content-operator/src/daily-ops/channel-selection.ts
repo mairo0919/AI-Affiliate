@@ -19,6 +19,7 @@ import {
 } from "./content-mix.js";
 import { classifyReleaseAge, type ReleaseAgeThresholds } from "./release-age.js";
 import { chooseXPostRoute, type XPostRoute, type XRouteDecision } from "./x-route.js";
+import { validateFanzaAffiliateUrl } from "../daily-blog/affiliate-url.js";
 
 export type ChannelCandidate = DailyCandidateScore & {
   publishedBlogUrl?: string | null;
@@ -229,12 +230,18 @@ export function planDailyChannels(input: ChannelSelectionInput): ChannelDayPlan 
     xBlockReason = b.reason;
     const affiliate = xSelection.selected.affiliateUrl ?? "";
     const fromPool = annotated.find((c) => c.canonicalId === xSelection.selected!.canonicalId);
+    const affiliateHint = validateFanzaAffiliateUrl(affiliate);
     route = chooseXPostRoute({
       affiliateUrl: affiliate,
       publishedBlogUrl: fromPool?.publishedBlogUrl,
       preferBlogTrafficHint:
         blogMix.slot === "POPULAR_RANKING" || blogMix.slot === "PERFORMER_RANKING",
       recentRoutes: input.xRecentRoutes,
+      affiliateLinkReady: affiliateHint.ok && affiliateHint.hasAffiliateIdHint,
+      canonicalProductUrl:
+        !affiliateHint.hasAffiliateIdHint && xSelection.selected.canonicalId
+          ? `https://video.dmm.co.jp/av/content/?id=${xSelection.selected.canonicalId}`
+          : null,
     });
   }
 

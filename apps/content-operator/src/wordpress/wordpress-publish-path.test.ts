@@ -65,6 +65,25 @@ function mockLifecycle() {
       id: "rec_1",
       ...input,
     })),
+    updatePublicationTarget: vi.fn(async (id: string, input: Record<string, unknown>) => ({
+      id,
+      ...input,
+    })),
+    updateContentVersionStructuredContent: vi.fn(async (id: string, sc: Record<string, unknown>) => ({
+      id,
+      structuredContent: sc,
+    })),
+    findContentVersion: vi.fn(async (id: string) => ({
+      id,
+      contentId: "c1",
+      title: "t",
+      structuredContent: sampleStructured,
+    })),
+    findContent: vi.fn(async () => ({ id: "c1", topicCandidateId: null })),
+    findTopicCandidate: vi.fn(async () => null),
+    listResearchImagesByExternalIds: vi.fn(async () => []),
+    listResearchImagesByResearchItemId: vi.fn(async () => []),
+    listSourceDocumentsImageReferencesByUrls: vi.fn(async () => []),
   };
 }
 
@@ -262,6 +281,19 @@ describe("publishContentVersionToWordPress idempotency", () => {
         records.push(row);
         return row;
       }),
+      updatePublicationTarget: vi.fn(async () => ({})),
+      updateContentVersionStructuredContent: vi.fn(async () => ({})),
+      findContentVersion: vi.fn(async () => ({
+        id: "cv1",
+        contentId: "c1",
+        title: "t",
+        structuredContent: sampleStructured,
+      })),
+      findContent: vi.fn(async () => ({ id: "c1", topicCandidateId: null })),
+      findTopicCandidate: vi.fn(async () => null),
+      listResearchImagesByExternalIds: vi.fn(async () => []),
+      listResearchImagesByResearchItemId: vi.fn(async () => []),
+      listSourceDocumentsImageReferencesByUrls: vi.fn(async () => []),
     };
 
     const publisher = new WordPressApiPublisher({
@@ -331,6 +363,14 @@ describe("publishContentVersionToWordPress idempotency", () => {
         id: `r_${input.externalId}`,
         ...input,
       })),
+      findContentVersion: vi.fn(async (id: string) => ({
+        id,
+        contentId: "c",
+        title: "t",
+        structuredContent: sampleStructured,
+      })),
+      findContent: vi.fn(async () => ({ id: "c", topicCandidateId: null })),
+      listResearchImagesByExternalIds: vi.fn(async () => []),
     };
     const publisher = new WordPressApiPublisher({
       mode: "mock",

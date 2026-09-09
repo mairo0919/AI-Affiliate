@@ -75,7 +75,7 @@ async function seedAffiliateProvider(): Promise<void> {
         apiProductFetch: true,
         productFeed: false,
         manualImport: true,
-        htmlFetch: false,
+        htmlFetch: true,
         affiliateLinkGeneration: true,
         conversionReport: false,
       },
@@ -92,12 +92,21 @@ async function seedAffiliateProvider(): Promise<void> {
         adultCatalog: true,
         excludesSiteKeys: ["dmm-general", "dmm-tsuhan"],
         notes:
-          "PREFERRED_AFFILIATE_PROVIDER=fanza means FANZA adult catalog pages, not DMM通販.",
+          "PREFERRED_AFFILIATE_PROVIDER=fanza means FANZA adult catalog pages, not DMM通販. Page-evidence article generation works without ItemList API; never synthesize affiliate URLs before approval.",
       },
     },
     update: {
       displayName: "FANZA (DMM Adult)",
       isActive: true,
+      capabilities: {
+        apiSearch: true,
+        apiProductFetch: true,
+        productFeed: false,
+        manualImport: true,
+        htmlFetch: true,
+        affiliateLinkGeneration: true,
+        conversionReport: false,
+      },
       metadata: {
         family: "dmm",
         site: "fanza",
@@ -110,7 +119,7 @@ async function seedAffiliateProvider(): Promise<void> {
         adultCatalog: true,
         excludesSiteKeys: ["dmm-general", "dmm-tsuhan"],
         notes:
-          "PREFERRED_AFFILIATE_PROVIDER=fanza means FANZA adult catalog pages, not DMM通販.",
+          "PREFERRED_AFFILIATE_PROVIDER=fanza means FANZA adult catalog pages, not DMM通販. Page-evidence article generation works without ItemList API; never synthesize affiliate URLs before approval.",
       },
     },
   });

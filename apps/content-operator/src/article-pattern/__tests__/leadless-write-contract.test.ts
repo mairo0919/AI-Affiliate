@@ -98,7 +98,7 @@ describe("leadless write contract", () => {
     expect(OPTION_B_LLM_REQUIRED_KEYS).not.toContain("lead");
     const schema = getOptionBBloggerArticleLlmJsonSchema();
     expect((schema.properties as Record<string, unknown>).lead).toBeUndefined();
-    expect(OPTION_B_WRITER_SYSTEM).toMatch(/Do not output a lead field/);
+    expect(OPTION_B_WRITER_SYSTEM).toMatch(/No separate lead field|Do not output a lead field/);
     const filled = fillOptionBArticleDefaults({
       title: "タイトル",
       lead: "これはlead",

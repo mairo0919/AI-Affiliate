@@ -26,16 +26,16 @@ export const MAX_PLAN_EXECUTION_ATTEMPTS = Math.max(
 );
 
 export const PLAN_REGEN_CORRECTION_INSTRUCTION =
-  "Correct only the reported ArticlePlan execution failures. Preserve fact identity and realize omitted facts in their assigned slots. Natural grammar is allowed. Do not rewrite ARTICLE_PLAN. Do not add a new summary, recommendation, or evaluative closer.";
+  "Correct only the reported ArticlePlan execution failures. Preserve fact identity and realize omitted facts in their assigned slots. Natural grammar and editorial interpretation grounded in planned facts are allowed. Do not rewrite ARTICLE_PLAN. Do not add external factual claims (売上No.1 / 大人気 / ファンから高評価 / 最高傑作) absent from the plan.";
 
 const CONTRASTIVE_REGEN_HINT =
   "Preserve concessive/contrastive relation (e.g. 言えど, ではあるものの, にもかかわらず) — do not replace with neutral copula (である) that removes the planned contrast.";
 
 const EVAL_REGEN_HINT =
-  "For each violations[].unsupportedSentence: delete that sentence entirely. Do not replace it with another promotional closer, wrap-up, or evaluative summary. Keep all other planned-fact coverage intact.";
+  "For PLAN_UNSUPPORTED_EVAL / external factual claims: remove the unsupported external claim or empty promo closer. You may keep or rewrite as editorial interpretation that stays grounded in planned facts (volume/theme/trait). Do not replace with another unsupported external claim.";
 
 const OMISSION_REGEN_HINT =
-  "For PLAN_FACT_OMISSION: realize each listed fact in its assigned slot (weave with related facts OK). Do not drop required facts to avoid closers.";
+  "For PLAN_FACT_OMISSION: realize each listed fact in its assigned slot (weave with related facts OK). Do not drop required facts.";
 
 function regenInstructionForViolations(violations: PlanRegenViolation[]): string {
   const parts = [PLAN_REGEN_CORRECTION_INSTRUCTION];
@@ -132,7 +132,7 @@ export function buildStructuredPlanRegenViolations(
         reason:
           finding.code === "PLAN_THEME_OVERREACH"
             ? "Short theme fact expanded beyond membership/attested surface — remove the invented psychology/role/plot meaning."
-            : "Sentence adds evaluative/promotional meaning not required by ARTICLE_PLAN or attested planned facts. Remove it; do not replace with another closer.",
+            : "Sentence adds an unsupported external factual claim or empty promo closer. Remove the external claim / empty closer, or rewrite as editorial interpretation grounded in planned facts (volume/theme/trait). Do not invent 売上No.1 / 大人気 / ファンから高評価 / 最高傑作.",
         unsupportedSentence: unsupportedSentence ?? undefined,
       });
       continue;
@@ -238,8 +238,8 @@ export function buildArticlePlanViolationFeedback(
     note: [
       "Bounded regen — fix only listed violations.",
       "Realize any omitted ARTICLE_PLAN facts in assigned slots.",
-      "If unsupportedSentence is listed, delete that sentence; do not add a replacement closer.",
-      "Stop when planned facts are covered — no wrap-up required.",
+      "If unsupportedSentence is an external factual claim or empty promo closer, remove or rewrite it as plan-grounded editorial interpretation (volume/theme/who-it-suits). Grounded wrap-ups are allowed.",
+      "Coverage of planned facts is required; after coverage you MAY add a short grounded editorial ending. Do not invent external-world claims.",
     ].join(" "),
     violations: violations.length > 0 ? violations : undefined,
     instruction:

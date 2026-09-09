@@ -36,6 +36,8 @@ export type ResearchEvidence = {
   allowedForGeneration: boolean;
   claimId?: string | null;
   semanticFamilyId?: string;
+  /** GENRE_TAG / SCENE / … — claim strength authority (optional). */
+  sourceFactType?: import("./source-fact-authority.js").SourceFactType;
 };
 
 const EVAL_BLOCK_RE =

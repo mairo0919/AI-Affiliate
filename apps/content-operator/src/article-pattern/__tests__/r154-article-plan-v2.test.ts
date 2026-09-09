@@ -61,7 +61,7 @@ describe("ARTICLE_PLAN V2 Phase 1", () => {
     expect(plan.purpose == null || typeof plan.purpose.statement === "string").toBe(true);
     if (plan.purpose) {
       expect(plan.purpose.evidenceIds.length).toBeGreaterThan(0);
-      expect(plan.purpose.statement).not.toMatch(/飽き|楽しめる|世界観/);
+      expect(plan.purpose.statement).not.toMatch(/売上No\.?1|大人気|最高傑作|必見|世界観/);
     }
     expect(plan.body.length).toBeGreaterThanOrEqual(1);
     const jobs = plan.body.map((b) => b.job);

@@ -28,6 +28,11 @@ import {
   WORK_THEME_FACET_RE,
 } from "./evidence-material-role.js";
 import {
+  classifySourceFactType,
+  isCatalogGenreProvenance,
+  type SourceFactType,
+} from "./source-fact-authority.js";
+import {
   isTitleSafeExecutionTarget,
   isUnsafeTitleExecutionTarget,
 } from "./writer-evidence-filter.js";
@@ -48,8 +53,31 @@ import {
   resolveArticlePurpose,
   resolveCoreAngle,
 } from "./article-plan-editorial-frame.js";
+import {
+  buildBodyProgressionPlan,
+  compactCollectionScopeFacts,
+  expandThemeEnumerationFacts,
+  type BodyProgressionPlan,
+} from "./body-progression.js";
+import {
+  detectSourceResolution,
+  expansionPolicyForResolution,
+  isShortThemeOrPlayTag,
+  selectRepresentativeThemeTags,
+  type SourceExpansionPolicy,
+  type SourceResolution,
+} from "./source-resolution.js";
 
 export type ArticlePlanMaterialDepth = "scarce" | "standard" | "rich";
+
+/** Planner-owned expansion ceiling from SOURCE density (Writer-visible note only). */
+export type ArticlePlanSourceExpansion = {
+  resolution: SourceResolution;
+  maxBodyFacts: number;
+  maxThemeTagFacts: number;
+  requireAllThemeTagCoverage: boolean;
+  writerDensityNote: string;
+};
 
 export type ArticlePlanSlot = {
   /** Short job id — informational duty for the slot (not an essay note). */
@@ -65,6 +93,8 @@ export type ArticlePlanSlot = {
   presentationPurpose?: import("./evidence-material-role.js").BodyPresentationPurpose | null;
   /** Parallel to facts[] — per-fact presentation purpose when mixed. */
   factPurposes?: Array<import("./evidence-material-role.js").BodyPresentationPurpose | null> | null;
+  /** Parallel to facts[] — SOURCE FACT TYPE / claim authority. */
+  factSourceTypes?: Array<SourceFactType | null> | null;
 };
 
 export type {
@@ -86,6 +116,15 @@ export type ArticlePlan = {
   title: ArticlePlanSlot;
   lead: ArticlePlanSlot;
   body: ArticlePlanSlot[];
+  /**
+   * PLAN-TIME paragraph axes (open/develop/close). Not a fixed template and not a fact source.
+   */
+  bodyProgression?: BodyProgressionPlan | null;
+  /**
+   * SOURCE INFORMATION DENSITY → article expansion ceiling.
+   * Caps body facts / theme tags; Writer may stop when SOURCE is exhausted.
+   */
+  sourceExpansion?: ArticlePlanSourceExpansion | null;
   /** V2 — Evidence-derived connection framing (not a fact source). */
   purpose?: import("./article-plan-editorial-frame.js").ArticlePlanPurpose | null;
   /** V2 — highest-signal Evidence axis; null when only bare names. */
@@ -312,14 +351,20 @@ function itemSemanticFamilyId(item: EvidencePackItem): string {
 /**
  * rich: preserve independent concrete families already in EvidencePack.
  * scarce/standard: keep fixed caps (safety / thin-material stop).
+ * SOURCE density (THEME/METADATA) further caps so thin SOURCE cannot demand RICH length.
  */
 function resolveBodyFactBudget(
   depth: ArticlePlanMaterialDepth,
   pack: EvidencePack,
   titleLeadFacts: Set<string>,
+  densityCeiling?: number,
 ): number {
   if (depth === "scarce") return BODY_FACT_CAPS.scarce;
-  if (depth === "standard") return BODY_FACT_CAPS.standard;
+  if (depth === "standard") {
+    return densityCeiling != null
+      ? Math.min(BODY_FACT_CAPS.standard, densityCeiling)
+      : BODY_FACT_CAPS.standard;
+  }
 
   const families = new Set<string>();
   for (const item of pack.concreteEvidence) {
@@ -330,10 +375,72 @@ function resolveBodyFactBudget(
     if (isDemotedBodyMaterial(safe)) continue;
     families.add(itemSemanticFamilyId(item));
   }
-  return Math.min(
+  const familyBudget = Math.min(
     RICH_BODY_FACT_HARD_CEILING,
     Math.max(BODY_FACT_CAPS.rich, families.size),
   );
+  return densityCeiling != null ? Math.min(familyBudget, densityCeiling) : familyBudget;
+}
+
+function packFactsForSourceResolution(pack: EvidencePack): string[] {
+  const out: string[] = [];
+  if (pack.sourceOfficialDescription?.trim()) {
+    out.push(pack.sourceOfficialDescription.trim());
+  }
+  for (const item of pack.concreteEvidence) {
+    if (!item.generationEligible) continue;
+    const f = (item.fact ?? "").trim();
+    if (f) out.push(f);
+  }
+  return out;
+}
+
+function isThemeishPlanFact(fact: string, pack?: EvidencePack): boolean {
+  const safe = fact.trim();
+  if (!safe) return false;
+  if (isShortThemeOrPlayTag(safe) || WORK_THEME_FACET_RE.test(safe)) return true;
+  if (isOfficialProductTagFact(safe)) return true;
+  if (pack) {
+    const st = resolveFactSourceTypeFromPack(safe, pack);
+    return st === "GENRE_TAG" || (st === "ACTION" && safe.length <= 16);
+  }
+  return false;
+}
+
+/**
+ * Cap short genre/play tags + total body facts by SOURCE density.
+ * Protects quantity / identity / long descriptions; drops excess theme tags.
+ */
+function applySourceDensityToBodyFacts(
+  facts: string[],
+  policy: SourceExpansionPolicy,
+): string[] {
+  const soft = softDedupeOverlappingThemeFacts(facts);
+  const themeTags = soft.filter((f) => isShortThemeOrPlayTag(f) || WORK_THEME_FACET_RE.test(f));
+  const selectedThemes = new Set(
+    selectRepresentativeThemeTags(themeTags, policy.maxThemeTagFacts),
+  );
+  let next = soft.filter(
+    (f) => !(isShortThemeOrPlayTag(f) || WORK_THEME_FACET_RE.test(f)) || selectedThemes.has(f),
+  );
+  if (policy.resolution !== "RICH_SCENE_EVIDENCE") {
+    next = compactCollectionScopeFacts(next);
+  }
+  if (next.length <= policy.maxBodyFacts) return next;
+
+  const priority = (f: string): number => {
+    const p = derivePresentationPurpose(f);
+    if (selectedThemes.has(f)) return 90;
+    if (p === "QUANTITY_SCALE" || p === "COLLECTION_SCOPE") return 85;
+    if (p === "PRODUCT_IDENTITY") return 80;
+    if (p === "PERFORMER_TRAIT_IN_WORK") return 75;
+    if (p === "PLAY_STYLE" || p === "SCENE_VARIETY") return 70;
+    if (f.length >= 18) return 65;
+    return 20;
+  };
+  const ranked = [...next].sort((a, b) => priority(b) - priority(a));
+  const keep = new Set(ranked.slice(0, policy.maxBodyFacts));
+  return next.filter((f) => keep.has(f));
 }
 
 function packPunctuationHints(pack: EvidencePack, productTitle: string): string[] {
@@ -400,17 +507,36 @@ function safeFactFromItem(item: EvidencePackItem): string | null {
 /** Coarse diversity bucket — avoids consecutive meta/theme streaks without scene quotas. */
 type BodyFactDiversityBucket = "scene" | "quantity" | "trait" | "meta" | "theme" | "other";
 
+function resolveItemSourceFactType(item: EvidencePackItem): SourceFactType {
+  if (item.sourceFactType) return item.sourceFactType;
+  return classifySourceFactType({
+    fact: item.fact,
+    sourceRef: item.provenance?.sourceRef,
+    evidenceType: item.type,
+  });
+}
+
 function bodyFactDiversityBucket(item: EvidencePackItem): BodyFactDiversityBucket {
+  const sourceType = resolveItemSourceFactType(item);
+  // GENRE_TAG / short ACTION membership never compete as scene_or_act.
+  if (sourceType === "GENRE_TAG") return "theme";
+  if (sourceType === "ACTION" && item.fact.trim().length <= 16) return "theme";
+
   // Upstream pack type is semantic SSOT input — do not reclassify fact text for primary.
   switch (item.type) {
     case "scene_or_act":
     case "setting_or_situation":
+      // Guard: catalog genre provenance must never land in scene bucket.
+      if (isCatalogGenreProvenance(item.provenance?.sourceRef)) return "theme";
       return "scene";
     case "quantity_or_runtime":
       return "quantity";
     case "body_trait":
       return "trait";
     case "series_or_event":
+      if (/^(?:人妻|NTR|痴女|パイズリ|巨乳|淫乱)/u.test(item.fact.trim())) {
+        return "theme";
+      }
       return "meta";
     default:
       break;
@@ -420,7 +546,13 @@ function bodyFactDiversityBucket(item: EvidencePackItem): BodyFactDiversityBucke
   if (/\d+\s*(?:回|発|本|名|人|時間|分|作品|タイトル|cm|コーナー|発射|射精|本番)/u.test(f)) {
     return "quantity";
   }
-  if (/^(?:人妻|NTR|痴女|熟女|美少女|OL|女子校生|ギャル)$/iu.test(f)) return "theme";
+  if (
+    /^(?:人妻|人妻・主婦|NTR|痴女|熟女|美少女|OL|女子校生|ギャル|パイズリ|巨乳|淫乱・ハード系)$/iu.test(
+      f,
+    )
+  ) {
+    return "theme";
+  }
   if (/(?:ベスト|周年|映画|舞台|収録|作品|第\d+弾|デビュー|活躍)/u.test(f)) {
     return "meta";
   }
@@ -506,7 +638,24 @@ function bodyBucketPriorityRank(bucket: BodyFactDiversityBucket): number {
   return i >= 0 ? i : BODY_BUCKET_PRIORITY.length;
 }
 
-function attachPresentationPurposes(facts: string[]): ArticlePlanSlot {
+function resolveFactSourceTypeFromPack(
+  fact: string,
+  pack: EvidencePack | null | undefined,
+): SourceFactType {
+  const f = fact.trim();
+  if (pack) {
+    for (const item of pack.concreteEvidence) {
+      const safe = safeFactFromItem(item) ?? item.fact.trim();
+      if (safe === f) return resolveItemSourceFactType(item);
+    }
+  }
+  return classifySourceFactType({ fact: f });
+}
+
+function attachPresentationPurposes(
+  facts: string[],
+  pack?: EvidencePack | null,
+): ArticlePlanSlot {
   const filtered = facts.filter((f) => !isDemotedBodyMaterial(f));
   const use = filtered.length > 0 ? filtered : facts;
   return {
@@ -515,7 +664,38 @@ function attachPresentationPurposes(facts: string[]): ArticlePlanSlot {
     heading: null,
     presentationPurpose: dominantPresentationPurpose(use),
     factPurposes: use.map((f) => derivePresentationPurpose(f)),
+    factSourceTypes: use.map((f) => resolveFactSourceTypeFromPack(f, pack)),
   };
+}
+
+/** Official product-specific tags (genre / play) that must not lose to meta surplus. */
+const OFFICIAL_PRODUCT_TAG_RE =
+  /^(?:人妻|人妻・主婦|NTR|痴女|熟女|美少女|女子校生|ギャル|OL|SM|パイズリ|巨乳|淫乱・ハード系|追撃ピストン)$/iu;
+
+function isOfficialProductTagFact(fact: string): boolean {
+  return OFFICIAL_PRODUCT_TAG_RE.test((fact ?? "").trim());
+}
+
+/**
+ * Soft-dedupe overlapping theme surfaces (人妻 ⊂ 人妻・主婦).
+ * Prefer the longer official genre when both are present.
+ */
+function softDedupeOverlappingThemeFacts(facts: string[]): string[] {
+  const cleaned = facts.map((f) => f.trim()).filter(Boolean);
+  const drop = new Set<string>();
+  for (let i = 0; i < cleaned.length; i++) {
+    for (let j = 0; j < cleaned.length; j++) {
+      if (i === j) continue;
+      const a = cleaned[i]!;
+      const b = cleaned[j]!;
+      if (!isOfficialProductTagFact(a) && !WORK_THEME_FACET_RE.test(a)) continue;
+      if (!isOfficialProductTagFact(b) && !WORK_THEME_FACET_RE.test(b)) continue;
+      if (a === b) continue;
+      // Prefer longer when one contains the other as stem (人妻 ⊂ 人妻・主婦)
+      if (b.includes(a) && b.length > a.length) drop.add(a);
+    }
+  }
+  return cleaned.filter((f) => !drop.has(f));
 }
 
 /** Ensure short work-theme facets from the pack are not dropped from a full body budget. */
@@ -523,21 +703,56 @@ function injectMissingWorkThemes(
   facts: string[],
   pack: EvidencePack,
   ceiling: number,
+  maxThemeTags?: number,
 ): string[] {
   const have = new Set(facts);
   const missing: string[] = [];
   for (const item of pack.concreteEvidence) {
     if (!item.generationEligible) continue;
     const safe = safeFactFromItem(item);
-    if (!safe || have.has(safe) || !WORK_THEME_FACET_RE.test(safe)) continue;
+    if (!safe || have.has(safe)) continue;
+    const st = resolveItemSourceFactType(item);
+    const isThemeish =
+      WORK_THEME_FACET_RE.test(safe) ||
+      isOfficialProductTagFact(safe) ||
+      isShortThemeOrPlayTag(safe) ||
+      st === "GENRE_TAG" ||
+      (st === "ACTION" && safe.length <= 16);
+    if (!isThemeish) continue;
     if (isDemotedBodyMaterial(safe) || isNoiseContentIdFact(safe)) continue;
     missing.push(safe);
     have.add(safe);
   }
-  if (missing.length === 0) return facts;
+  // Prefer catalog-genre / play novelty first (パイズリ before generic meta fills).
+  missing.sort((a, b) => {
+    const score = (f: string) => {
+      let s = f.length;
+      if (/パイズリ|追撃ピストン|淫乱|巨乳/.test(f)) s += 20;
+      if (WORK_THEME_FACET_RE.test(f)) s += 8;
+      return s;
+    };
+    return score(b) - score(a);
+  });
+  if (missing.length === 0) return softDedupeOverlappingThemeFacts(facts);
   const next = [...facts];
+  const themeCount = () => next.filter((f) => isThemeishPlanFact(f, pack)).length;
   for (const theme of missing) {
     if (next.includes(theme)) continue;
+    if (maxThemeTags != null && themeCount() >= maxThemeTags) {
+      // Prefer swapping a weaker non-theme only when theme is higher-value novelty
+      const swapIdx = [...next.keys()]
+        .reverse()
+        .find((i) => {
+          const f = next[i]!;
+          if (isThemeishPlanFact(f, pack)) return false;
+          if (/(?:周年|活躍|映画|舞台)/u.test(f)) return true;
+          const purpose = derivePresentationPurpose(f);
+          return purpose === "OTHER" || purpose === "PRODUCT_IDENTITY";
+        });
+      if (swapIdx == null) continue;
+      next[swapIdx] = theme;
+      continue;
+    }
     if (next.length < ceiling) {
       next.push(theme);
       continue;
@@ -546,7 +761,8 @@ function injectMissingWorkThemes(
       .reverse()
       .find((i) => {
         const f = next[i]!;
-        if (WORK_THEME_FACET_RE.test(f)) return false;
+        if (isOfficialProductTagFact(f) || WORK_THEME_FACET_RE.test(f) || isShortThemeOrPlayTag(f))
+          return false;
         if (/(?:周年|活躍|映画|舞台)/u.test(f)) return true;
         const purpose = derivePresentationPurpose(f);
         return purpose === "OTHER" || purpose === "PRODUCT_IDENTITY";
@@ -568,7 +784,7 @@ function injectMissingWorkThemes(
     }
     next[swapIdx] = theme;
   }
-  return next;
+  return softDedupeOverlappingThemeFacts(next);
 }
 
 /**
@@ -705,13 +921,30 @@ function selectBodyFactsWithDiversity(input: {
   ).slice(0, input.budget);
 }
 
-/** Prefer unused work-theme facets (NTR / 人妻 …) over trailing meta when budget is full. */
+/** Prefer unused work-theme / official product tags over trailing meta when budget is full. */
 function ensureUnusedThemeFacets(
   selected: EvidencePackItem[],
   remaining: EvidencePackItem[],
   budget: number,
 ): EvidencePackItem[] {
-  const missingThemes = remaining.filter((c) => bodyFactDiversityBucket(c) === "theme");
+  const missingThemes = remaining.filter((c) => {
+    const b = bodyFactDiversityBucket(c);
+    if (b === "theme") return true;
+    const st = resolveItemSourceFactType(c);
+    return st === "GENRE_TAG" || (st === "ACTION" && c.fact.trim().length <= 16);
+  });
+  // Prefer product-specific play/body genres (パイズリ) before bare duplicates.
+  missingThemes.sort((a, b) => {
+    const score = (item: EvidencePackItem) => {
+      const f = item.fact.trim();
+      let s = 0;
+      if (isCatalogGenreProvenance(item.provenance?.sourceRef)) s += 30;
+      if (/パイズリ|追撃ピストン|淫乱|巨乳/.test(f)) s += 20;
+      if (resolveItemSourceFactType(item) === "GENRE_TAG") s += 10;
+      return s + f.length;
+    };
+    return score(b) - score(a);
+  });
   if (missingThemes.length === 0) return selected;
   const next = [...selected];
   for (const theme of missingThemes) {
@@ -1425,7 +1658,14 @@ export function buildArticlePlan(input: {
   // Leadless write: body may consume opening materials. Block only title surfaces
   // (not opening/lead candidates) so overview evidence can land in body.
   const titleLeadFacts = new Set([...titleFacts]);
-  const bodyCap = resolveBodyFactBudget(depth, input.pack, titleLeadFacts);
+  const sourceResolution = detectSourceResolution(packFactsForSourceResolution(input.pack));
+  const expansionPolicy = expansionPolicyForResolution(sourceResolution);
+  const bodyCap = resolveBodyFactBudget(
+    depth,
+    input.pack,
+    titleLeadFacts,
+    expansionPolicy.maxBodyFacts,
+  );
   const bodySlots: ArticlePlanSlot[] = [];
   const consumedIds = new Set<string>(leadConsumedUnusedIds);
 
@@ -1441,7 +1681,11 @@ export function buildArticlePlan(input: {
 
   // Planner-owned depth expansion: pull unused concrete into body (not Writer choice).
   const expandBudget =
-    depth === "rich" ? bodyCap : depth === "standard" ? Math.max(2, bodyCap - 1) : bodyCap;
+    depth === "rich"
+      ? bodyCap
+      : depth === "standard"
+        ? Math.min(Math.max(2, bodyCap - 1), expansionPolicy.maxBodyFacts)
+        : bodyCap;
 
   let flatBodyFacts = bodySlots.flatMap((s) => s.facts);
   const seedItems: EvidencePackItem[] = [];
@@ -1494,11 +1738,17 @@ export function buildArticlePlan(input: {
   }
 
   // Final pass: short work-theme facets must not be dropped when budget is full of meta/qty.
+  // THEME/METADATA: do not inject beyond maxThemeTagFacts (full-tag coverage is not success).
   if (bodySlots.length > 0 && depth !== "scarce") {
+    const injectCeiling = Math.min(
+      Math.max(expandBudget, BODY_FACT_CAPS.rich),
+      expansionPolicy.maxBodyFacts,
+    );
     const injected = injectMissingWorkThemes(
       bodySlots.flatMap((s) => s.facts),
       input.pack,
-      Math.max(expandBudget, RICH_BODY_FACT_HARD_CEILING),
+      injectCeiling,
+      expansionPolicy.maxThemeTagFacts,
     );
     if (injected.length > 0) {
       bodySlots[0] = attachPresentationPurposes(injected);
@@ -1604,13 +1854,38 @@ export function buildArticlePlan(input: {
   leadFacts = [];
   for (const slot of bodySlots) {
     slot.facts = dropCatalog(slot.facts);
+    // Expand theme enumerations → membership labels; compact redundant collection restatements.
+    slot.facts = softDedupeOverlappingThemeFacts(
+      compactCollectionScopeFacts(expandThemeEnumerationFacts(slot.facts)),
+    );
+    // SOURCE density: do not force RICH-length theme dumps on THEME/METADATA products.
+    slot.facts = applySourceDensityToBodyFacts(slot.facts, expansionPolicy);
     if (slot.factPurposes) {
       slot.factPurposes = slot.facts.map((f) => derivePresentationPurpose(f));
       slot.presentationPurpose = dominantPresentationPurpose(slot.facts);
     }
+    slot.factSourceTypes = slot.facts.map((f) =>
+      resolveFactSourceTypeFromPack(f, input.pack),
+    );
   }
 
   const flatBodyAfterDrop = bodySlots.flatMap((s) => s.facts);
+  const bodyProgression =
+    depth === "scarce"
+      ? null
+      : buildBodyProgressionPlan({
+          bodyFacts: flatBodyAfterDrop,
+          materialDepth: depth,
+          sourceResolution,
+        });
+
+  const sourceExpansion: ArticlePlanSourceExpansion = {
+    resolution: expansionPolicy.resolution,
+    maxBodyFacts: expansionPolicy.maxBodyFacts,
+    maxThemeTagFacts: expansionPolicy.maxThemeTagFacts,
+    requireAllThemeTagCoverage: expansionPolicy.requireAllThemeTagCoverage,
+    writerDensityNote: expansionPolicy.writerDensityNote,
+  };
 
   // --- Optional R154 V2 editorial frame (off by default on production) ---
   if (input.editorialFrame === true) {
@@ -1672,6 +1947,8 @@ export function buildArticlePlan(input: {
       productTitle: input.productTitle,
       purpose,
       coreAngle,
+      bodyProgression,
+      sourceExpansion,
       title: { job: ARTICLE_PLAN_JOBS.titleV2, facts: titleFacts, heading: null },
       // Leadless: empty lead retained only for transitional ArticlePlan typing.
       lead: { job: ARTICLE_PLAN_JOBS.leadV2, facts: [], heading: null },
@@ -1683,6 +1960,8 @@ export function buildArticlePlan(input: {
     schemaVersion: 1,
     materialDepth: depth,
     productTitle: input.productTitle,
+    bodyProgression,
+    sourceExpansion,
     title: { job: ARTICLE_PLAN_JOBS.title, facts: titleFacts, heading: null },
     // Leadless write: opening materials live in body; lead.facts always empty.
     lead: { job: ARTICLE_PLAN_JOBS.lead, facts: [], heading: null },

@@ -49,15 +49,20 @@ export type ReaderJobId =
   | "before_cta";
 
 const PURPOSE_STATEMENTS: Record<ArticlePurposeId, string> = {
-  cast_centered_intro: "出演者を中心に、確認できる作品情報を整理する",
-  situation_set_overview: "収録シチュエーションの構成を整理する",
-  runtime_content_map: "収録時間と作中の展開要素を整理する",
-  ensemble_feature_map: "人数・尺・プレイ構成を整理する",
-  series_or_form_map: "作品形式と収録内容を整理する",
+  cast_centered_intro:
+    "出演者を軸に、収録内容から読める魅力の方向性を説明し、事実を並べるだけで終わらない",
+  situation_set_overview:
+    "収録シチュエーションの構成を整理し、どんなエロさ・方向性が横断して見られるかを伝える",
+  runtime_content_map:
+    "収録時間と展開要素からボリューム感や向き先を編集的に解釈して伝える",
+  ensemble_feature_map:
+    "人数・尺・プレイ構成を関連づけ、作品として何がまとまっているかを説明する",
+  series_or_form_map:
+    "作品形式と収録範囲を示し、ベスト／シリーズとしての意味を読者向けに整理する",
 };
 
 const HEADING_BY_JOB: Record<ReaderJobId, string> = {
-  key_features: "主な見どころ",
+  key_features: "作品の特徴",
   notable_details: "収録の詳細",
   structure: "尺と構成",
   cast: "出演",
@@ -65,10 +70,12 @@ const HEADING_BY_JOB: Record<ReaderJobId, string> = {
   before_cta: "ページで確認できること",
 };
 
-/** Evaluative / C-class tokens forbidden in Planner templates. */
+/**
+ * External-world / hard promo tokens forbidden in Planner templates.
+ * Soft grounded editorial words (楽しめる / 充実) are Writer-side and allowed when Evidence-backed.
+ */
 const FORBIDDEN_EVAL =
-  /飽き|楽しめる|必見|満足|格別|見逃せ|魅力的|世界観|究極|最高|おすすめ|買うべき|今すぐ/;
-
+  /売上No\.?1|大人気|ファンから高評価|最高傑作と評価|必見|格別|見逃せ|世界観|究極|買うべき|今すぐ|必ず興奮|(?:として|で)知られて/;
 function safeProject(item: EvidencePackItem): string | null {
   return projectWriterSafeFactFromPackItem(item);
 }

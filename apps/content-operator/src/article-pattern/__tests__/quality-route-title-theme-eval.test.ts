@@ -270,8 +270,8 @@ describe("quality route — title / theme / eval", () => {
   });
 
   it("Writer policy states natural title + short-theme membership boundary", () => {
-    expect(OPTION_B_WRITER_SYSTEM).toMatch(/space-separated keyword list/);
-    expect(OPTION_B_WRITER_SYSTEM).toMatch(/membership or recorded variety/);
-    expect(OPTION_B_WRITER_SYSTEM).toMatch(/TERMINATION|hard stop/i);
+    expect(OPTION_B_WRITER_SYSTEM).toMatch(/Not a keyword list|keyword list/);
+    expect(OPTION_B_WRITER_SYSTEM).toMatch(/membership tags|EDITORIAL INTERPRETATION|directions\/membership/);
+    expect(OPTION_B_WRITER_SYSTEM).toMatch(/EXTERNAL FACTUAL CLAIMS/);
   });
 });

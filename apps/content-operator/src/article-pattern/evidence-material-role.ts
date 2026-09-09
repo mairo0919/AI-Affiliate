@@ -39,10 +39,10 @@ const PERFORMER_CAREER_RE =
 
 /** Work-internal theme / scene facet stems (product content, not performer name). */
 export const WORK_THEME_FACET_RE =
-  /^(?:人妻|NTR|熟女|美少女|女子校生|ギャル|痴女|OL|SM)$/iu;
+  /^(?:人妻|人妻・主婦|NTR|熟女|美少女|女子校生|ギャル|痴女|OL|SM|淫乱・ハード系)$/iu;
 
 const PLAY_STYLE_RE =
-  /(?:ピストン|激ピス|杭打ち|騎乗|中出し|わからせ|お仕置き|ハーレム|逆\s*[35]P|腿コキ)/u;
+  /(?:ピストン|パイズリ|激ピス|杭打ち|騎乗|中出し|わからせ|お仕置き|ハーレム|逆\s*[35]P|腿コキ)/u;
 
 const COLLECTION_SCOPE_RE =
   /(?:\d+\s*(?:タイトル|作品|コーナー|本番)|ベスト第?\d*弾|総集編|コレクション|全コーナー|最新\d+)/u;
@@ -132,9 +132,17 @@ export function derivePresentationPurpose(fact: string): BodyPresentationPurpose
   if (COLLECTION_SCOPE_RE.test(f) || PRODUCT_IDENTITY_RE.test(f)) return "COLLECTION_SCOPE";
   if (PLAY_STYLE_RE.test(f)) return "PLAY_STYLE";
   if (WORK_THEME_FACET_RE.test(f)) return "SCENE_VARIETY";
+  // Official genre membership (incl. body/play catalog tags) → variety axis, not invented scene.
+  if (/^(?:パイズリ|巨乳|女優ベスト・総集編)$/u.test(f)) return "SCENE_VARIETY";
 
   const primary = classifySemanticEvidence(f).primary;
-  if (primary === "SCENE_ACTION" || primary === "RELATIONSHIP") return "SCENE_VARIETY";
+  if (primary === "SCENE_ACTION" || primary === "RELATIONSHIP") {
+    // Short membership labels misclassified as SCENE_ACTION stay variety, not scene script fuel.
+    if (f.length <= 12 && !/(?:する|される|され|抱|喘|絶頂)/u.test(f)) {
+      return "SCENE_VARIETY";
+    }
+    return "SCENE_VARIETY";
+  }
   if (
     primary === "BODY_TRAIT" ||
     primary === "CHARACTER_TRAIT" ||

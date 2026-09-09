@@ -62,3 +62,38 @@ export {
   XApiHttpClient,
   assertLivePublishArgs,
 } from "./live/index.js";
+export { CONTENT_POLICY_SURFACE } from "./content-policy-surfaces.js";
+export type { ContentPolicySurface } from "./content-policy-surfaces.js";
+export {
+  detectXAdultExpressions,
+  filterClaimsForXSocialContent,
+  enforceXSocialContentBody,
+  buildXSocialSafeBodyFromEvidence,
+  X_SOCIAL_CONTENT_POLICY_VERSION,
+} from "./x-social-content-policy.js";
+export {
+  evaluateXSocialMedia,
+  selectXSocialMediaImage,
+  collectOfficialSampleCandidates,
+  parseOfficialSampleIndex,
+  assessXSocialVisualContent,
+  X_SOCIAL_MEDIA_POLICY_VERSION,
+} from "./x-social-media-gate.js";
+export type {
+  XSocialMediaDecision,
+  XSocialMediaCandidate,
+  XSocialMediaCandidateReport,
+  XSocialMediaEvaluation,
+  XSocialVisualHints,
+  XSocialVisualStatus,
+} from "./x-social-media-gate.js";
+export {
+  evaluateFanzaOfficialSampleMaterialRights,
+  FANZA_X_SAMPLE_TRANSFORM_POLICY,
+} from "./x-fanza-sample-rights.js";
+export type {
+  FanzaOfficialSampleMaterialRights,
+  FanzaXMaterialRightsStatus,
+} from "./x-fanza-sample-rights.js";
+export { buildXDryRunPayload, isXLivePostBlocked } from "./x-dry-run.js";
+export type { XDryRunPayload } from "./x-dry-run.js";

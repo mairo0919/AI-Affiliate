@@ -118,6 +118,8 @@ export function buildOptionBGenerationAuthority(input: {
   planViolationFeedback?: PlanViolationFeedback | null;
   /** R151 — structured per-contribution execution contract */
   articlePlanExecution?: unknown[] | null;
+  /** Human-validated writing quality guidance (not factual authority). */
+  writingQualityGuidance?: Record<string, unknown> | null;
   channel?: {
     ctaRequired?: boolean;
     disclosureSystemAppended?: boolean;
@@ -138,9 +140,10 @@ export function buildOptionBGenerationAuthority(input: {
   return {
     mode: "OPTION_B",
     authorityPriority: [...GENERATION_AUTHORITY_PRIORITY],
-    rule: "ARTICLE_PLAN is the sole Writer execution SSOT. Realize slot facts; do not invent concrete facts absent from the plan; do not re-select materials. ARTICLE_PLAN_EXECUTION defines what each fact must preserve. Leadless: no lead slot — opening materials are in body.",
+    rule: "ARTICLE_PLAN is the sole Writer factual SSOT. Realize slot facts; do not invent concrete facts absent from the plan; do not re-select materials. Within that boundary, write as an editorial article writer (select/order/relate/explain/interpret) — not a fact formatter. ARTICLE_PLAN_EXECUTION defines what each fact must preserve. Leadless: no lead slot — opening materials are in body. WRITING_QUALITY_GUIDANCE (when present) is abstract WHY-it-worked quality advice only — never copy wording and never invent facts.",
     ARTICLE_PLAN: writerPlan,
     ARTICLE_PLAN_EXECUTION: execution.length > 0 ? execution : null,
+    WRITING_QUALITY_GUIDANCE: input.writingQualityGuidance ?? null,
     FACTUAL_SAFETY: {
       noInventedFacts: true,
       noFabricatedSocialProof: true,
@@ -196,9 +199,11 @@ export function buildGenerationAuthorityPromptContract(input: {
   structurePatternSummary?: Record<string, unknown> | null;
   planViolationFeedback?: PlanViolationFeedback | null;
   plannerFailureTendencies?: Record<string, unknown> | null;
+  writingQualityGuidance?: Record<string, unknown> | null;
 }): Record<string, unknown> {
   void input.editorialPatternSummary;
   void input.structurePatternSummary;
+  // Failure tendencies stay out of Writer factual authority (avoid sterile coverage-only pressure).
   void input.plannerFailureTendencies;
 
   const articlePlan = pickArticlePlan(input.brainGenerationContract);
@@ -219,6 +224,7 @@ export function buildGenerationAuthorityPromptContract(input: {
       articlePlan,
       articlePlanExecution: explicit,
       planViolationFeedback: input.planViolationFeedback,
+      writingQualityGuidance: input.writingQualityGuidance ?? null,
     });
   }
 
@@ -228,6 +234,7 @@ export function buildGenerationAuthorityPromptContract(input: {
     rule: "ARTICLE_PLAN missing — use FACTUAL_SAFETY only; do not invent. Prefer DEFER over catalog padding.",
     ARTICLE_PLAN: null,
     ARTICLE_PLAN_EXECUTION: null,
+    WRITING_QUALITY_GUIDANCE: input.writingQualityGuidance ?? null,
     FACTUAL_SAFETY: {
       noInventedFacts: true,
       noFabricatedSocialProof: true,

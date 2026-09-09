@@ -168,5 +168,8 @@ describe("WordPressApiPublisher api guards", () => {
     });
     await pub.update!({ externalId: "7", prepared });
     expect(String(fetchImpl.mock.calls[0]![0])).toContain("/wp-json/wp/v2/posts/7");
+    const body = JSON.parse(String(fetchImpl.mock.calls[0]![1]?.body));
+    // Default update must not promote to publish without explicit mode=publish.
+    expect(body.status).toBe("draft");
   });
 });

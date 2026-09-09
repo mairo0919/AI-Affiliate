@@ -23,9 +23,13 @@ export type ClaimUsageAssignment = {
 };
 
 export type GroundedInferencePolicy = {
-  allowed: Array<"direct_paraphrase" | "safe_composition">;
+  allowed: Array<"direct_paraphrase" | "safe_composition" | "editorial_interpretation">;
   forbidden: Array<
-    "interpretive_inference" | "evaluative_inference" | "social_proof" | "name_derived_setting"
+    | "interpretive_inference"
+    | "evaluative_inference"
+    | "social_proof"
+    | "name_derived_setting"
+    | "external_world_claim"
   >;
   notes: string[];
 };
@@ -59,19 +63,14 @@ export type SelectedClaimForPlan = {
 };
 
 const DEFAULT_INFERENCE: GroundedInferencePolicy = {
-  allowed: ["direct_paraphrase", "safe_composition"],
-  forbidden: [
-    "interpretive_inference",
-    "evaluative_inference",
-    "social_proof",
-    "name_derived_setting",
-  ],
+  allowed: ["direct_paraphrase", "safe_composition", "editorial_interpretation"],
+  forbidden: ["social_proof", "name_derived_setting", "external_world_claim"],
   notes: [
     "direct_paraphrase: restate a SUPPORTED fact in natural Japanese without adding relations.",
     "safe_composition: join already-assigned SUPPORTED facts for the same role only.",
-    "interpretive_inference: forbidden — inventing relationships/gaps from juxtaposed traits.",
-    "evaluative_inference: forbidden — suitability, enjoyment, recommendation without SUPPORTED claim.",
+    "editorial_interpretation: allowed — relate planned facts and judge volume/theme/who-it-suits without inventing external-world claims.",
     "social_proof: forbidden — popularity/fame/'known as' without SUPPORTED claim.",
+    "external_world_claim: forbidden — 売上No.1 / 大人気 / ファンから高評価 / 最高傑作 without Evidence.",
     "name_derived_setting: forbidden — do not infer stage/location/plot from a series or title name alone.",
   ],
 };
@@ -234,7 +233,7 @@ export function toClaimUsagePlanPromptContract(plan: ClaimUsagePlan): Record<str
       "If omitInterestDevelopment=true: put substance in lead; sections[0] must be a single short non-evaluative line without new claims (schema needs ≥1 section) — never pad.",
       "claimBudget targets are soft guidance / observability only — never fail solely for being longer when information gain is high.",
       "Shorter dense articles are SUCCESS when claims are few — do not target fixed long length.",
-      "groundedInference: only direct_paraphrase and safe_composition. Forbidden: interpretive/evaluative/social_proof/name_derived_setting (e.g. inferring a stage from a series name, or 'gap/suitable/enjoyable' judgments).",
+      "groundedInference: direct_paraphrase + safe_composition + editorial_interpretation (volume/theme/who-it-suits from planned facts). Forbidden: social_proof / external_world_claim / name_derived_setting (売上No.1, 大人気, stage inferred from series name alone).",
       "summary: list/search snippet from central assigned claims — not 「〜を紹介します」 meta.",
     ],
   };

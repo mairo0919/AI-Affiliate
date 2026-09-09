@@ -19,9 +19,17 @@ export const FANZA_PROVIDER_SEED = {
     apiProductFetch: true,
     productFeed: false,
     manualImport: true,
-    htmlFetch: false,
+    htmlFetch: true,
     affiliateLinkGeneration: true,
     conversionReport: false,
+    supportsProductApi: true,
+    supportsAffiliateLink: true,
+    supportsProductImages: true,
+    supportsSampleImages: true,
+    supportsSearch: true,
+    supportsTracking: true,
+    supportsPrice: true,
+    supportsAvailability: true,
   },
   metadata: {
     family: "dmm",
@@ -37,7 +45,7 @@ export const FANZA_PROVIDER_SEED = {
     /** Explicitly excluded sibling catalogs to avoid product-domain mixups. */
     excludesSiteKeys: ["dmm-general", "dmm-tsuhan", "dmm-r18-shop-non-fanza"],
     notes:
-      "PREFERRED_AFFILIATE_PROVIDER=fanza means FANZA adult product pages. Do not treat DMM通販 or non-adult DMM SKUs as the same product domain.",
+      "PREFERRED_AFFILIATE_PROVIDER=fanza means FANZA adult product pages. Do not treat DMM通販 or non-adult DMM SKUs as the same product domain. API credentials optional for page-evidence article generation; never synthesize affiliate URLs before approval.",
   },
 } as const;
 

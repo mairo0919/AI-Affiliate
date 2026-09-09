@@ -38,6 +38,10 @@ import {
   performerEntityKey,
   type PerformerEntity,
 } from "./performer-identity.js";
+import {
+  classifySourceFactType,
+  type SourceFactType,
+} from "./source-fact-authority.js";
 
 export type { PerformerEntity, PerformerEntitySource } from "./performer-identity.js";
 
@@ -57,6 +61,8 @@ export type EvidencePackItem = {
    * Plan/Pack must not re-run classifySemanticEvidence just to recover this.
    */
   semanticFamilyId?: string;
+  /** Claim authority — GENRE_TAG must not be treated as SCENE. */
+  sourceFactType?: SourceFactType;
 };
 
 /** Prefer stored familyId; derive from pack type + fact surface only when absent (tests / legacy). */
@@ -595,6 +601,13 @@ export function buildEvidencePack(input: {
       facetType: e.facetType,
     });
     const fact = bucket === "concrete" ? stripCatalogWrapper(raw) || raw : stripCatalogWrapper(raw) || raw;
+    const sourceFactType =
+      e.sourceFactType ??
+      classifySourceFactType({
+        fact,
+        sourceRef: e.sourceRef,
+        evidenceType: bucket === "catalog" ? "catalog_shell" : e.facetType,
+      });
     const item: EvidencePackItem = {
       id: e.evidenceId,
       type: bucket === "catalog" ? "catalog_shell" : e.facetType,
@@ -607,6 +620,7 @@ export function buildEvidencePack(input: {
       confidence: e.confidence,
       generationEligible: bucket === "concrete" && e.allowedForGeneration && e.confidence !== "low",
       semanticFamilyId: e.semanticFamilyId,
+      sourceFactType,
     };
     if (bucket === "catalog" || CATALOG_FACET_TYPES.has(e.facetType)) {
       item.generationEligible = false;
@@ -819,6 +833,7 @@ export function claimStatementsFromPageEvidence(input: {
  */
 export type ProjectWriterSafeFactOpts = {
   packConcrete?: boolean;
+  sourceFactType?: SourceFactType;
 };
 
 /**
@@ -838,7 +853,18 @@ export function projectWriterSafeFact(
   const raw = (fact ?? "").trim();
   if (raw.length < 2 || isWriterCatalogConfirmation(raw)) return null;
 
-  const clause = writerSafeClauseFromPageFact(raw);
+  // Pack-certified official genre/play tags: do not re-reject via dialogue-stem classifier.
+  let clause: string | null;
+  if (opts?.packConcrete && opts.sourceFactType === "GENRE_TAG") {
+    clause = raw;
+  } else if (
+    opts?.packConcrete &&
+    /^(?:パイズリ|追撃ピストン|巨乳|人妻・主婦|淫乱・ハード系)$/u.test(raw)
+  ) {
+    clause = raw;
+  } else {
+    clause = writerSafeClauseFromPageFact(raw);
+  }
   if (!clause) return null;
 
   let projected;
@@ -891,7 +917,7 @@ export function projectWriterSafeFactFromPackItem(item: EvidencePackItem): strin
     item.fact,
     String(item.type),
     item.provenance.sourceType,
-    { packConcrete: true },
+    { packConcrete: true, sourceFactType: item.sourceFactType },
   );
 }
 

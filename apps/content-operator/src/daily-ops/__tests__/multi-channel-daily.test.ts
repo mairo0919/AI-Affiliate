@@ -95,8 +95,20 @@ describe("multi-channel daily (LLM=0)", () => {
       affiliateUrl: "https://al.fanza.co.jp/?af_id=1",
       publishedBlogUrl: "https://blog.example/p/1",
       recentRoutes: ["BLOG_TRAFFIC", "BLOG_TRAFFIC", "BLOG_TRAFFIC"],
+      affiliateLinkReady: true,
     });
     expect(d.route).toBe("DIRECT_AFFILIATE");
+  });
+
+  it("X route prefers blog when affiliate is pending", () => {
+    const d = chooseXPostRoute({
+      affiliateUrl: "https://video.dmm.co.jp/av/content/?id=ofje00230",
+      publishedBlogUrl: "https://blog.example/p/26",
+      affiliateLinkReady: false,
+      canonicalProductUrl: "https://video.dmm.co.jp/av/content/?id=ofje00230",
+    });
+    expect(d.route).toBe("BLOG_TRAFFIC");
+    expect(d.affiliateLinkReady).toBe(false);
   });
 
   it("X route can choose BLOG_TRAFFIC for ranking hint when URL exists", () => {
@@ -104,6 +116,7 @@ describe("multi-channel daily (LLM=0)", () => {
       affiliateUrl: "https://al.fanza.co.jp/?af_id=1",
       publishedBlogUrl: "https://blog.example/ranking",
       preferBlogTrafficHint: true,
+      affiliateLinkReady: true,
     });
     expect(d.route).toBe("BLOG_TRAFFIC");
     expect(d.destinationUrl).toContain("ranking");

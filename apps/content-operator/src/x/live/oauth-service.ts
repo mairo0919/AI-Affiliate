@@ -77,9 +77,11 @@ export class XOAuthService {
   async startAuthorization(): Promise<OAuthStartResult> {
     const clientId = this.deps.config.xApiClientId;
     if (!clientId) {
-      throw new XPublishError("X_API_CLIENT_ID is required", "Configuration", {
-        retryable: false,
-      });
+      throw new XPublishError(
+        "X_API_CLIENT_ID is required — set a non-empty value in repo root .env (missing or empty after load)",
+        "Configuration",
+        { retryable: false },
+      );
     }
     const callbackUrl = this.deps.config.xOAuthCallbackUrl;
     const state = base64Url(randomBytes(32));

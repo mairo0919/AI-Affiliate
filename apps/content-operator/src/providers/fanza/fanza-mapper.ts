@@ -26,6 +26,13 @@ export interface MapItemOutcome {
 const SAFE_IMAGE_NOTE =
   "Official usage scope varies by service/product. Confirm before ad use. Only proportional resize is allowed; cropping/editing/AI input is forbidden.";
 
+/**
+ * FANZA ItemList images stay REQUIRES_CONFIRMATION until affiliate media terms are
+ * human-verified. See publication/image-usage-decision.ts
+ * (FANZA_AFFILIATE_IMAGE_TERMS_CHECKLIST / resolveImageUsageStatus).
+ * Do not flip to ALLOWED based on trusted host alone.
+ */
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }

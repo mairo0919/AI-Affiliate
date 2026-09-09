@@ -27,10 +27,10 @@ describe("R157 Writer expansion execution modes", () => {
     expect(deriveExecutionMode("追撃ピストン", "body")).toBe("SEMANTIC_PRESERVE");
   });
 
-  it("Writer system asks for rich multi-unit development without eval padding", () => {
-    expect(OPTION_B_WRITER_SYSTEM).toMatch(/materialDepth[= ]?=?rich|materialDepth is rich|rich means/i);
-    expect(OPTION_B_WRITER_SYSTEM).toMatch(/TERMINATION|hard stop|wrap-up/i);
-    expect(OPTION_B_WRITER_SYSTEM).toMatch(/checklist|Coverage ≠ expansion|coverage ≠ expansion/i);
+  it("Writer system asks for rich multi-unit development without empty promo padding", () => {
+    expect(OPTION_B_WRITER_SYSTEM).toMatch(/materialDepth[= ]?=?rich|materialDepth is rich|rich:/i);
+    expect(OPTION_B_WRITER_SYSTEM).toMatch(/EXTERNAL FACTUAL CLAIMS|EDITORIAL INTERPRETATION/);
+    expect(OPTION_B_WRITER_SYSTEM).toMatch(/fact formatter|Coverage:|realize the meaning/i);
     expect(OPTION_B_WRITER_SYSTEM).not.toMatch(/最低250|必ず3段落/);
   });
 

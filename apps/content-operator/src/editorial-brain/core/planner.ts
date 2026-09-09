@@ -17,13 +17,8 @@ import type {
 const META_PLAN_KINDS = new Set(["maker", "availability", "temporal_sale", "label"]);
 
 const DEFAULT_INFERENCE: InferencePolicy = {
-  allowed: ["direct_paraphrase", "safe_composition"],
-  forbidden: [
-    "interpretive_inference",
-    "evaluative_inference",
-    "social_proof",
-    "name_derived_setting",
-  ],
+  allowed: ["direct_paraphrase", "safe_composition", "editorial_interpretation"],
+  forbidden: ["social_proof", "name_derived_setting", "external_world_claim"],
 };
 
 export type PlannerClaimInput = {

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { createServer } from "node:http";
 import { loadConfig } from "@ai-affiliate/config";
 import {
   ContentRepository,
@@ -35,9 +36,148 @@ function flagString(flags: Record<string, string | boolean>, key: string): strin
   return typeof v === "string" ? v : undefined;
 }
 
+/** Bind only for local OAuth redirect URLs (Developer Console loopback). */
+function resolveLocalCallbackBind(callbackUrl: string): {
+  host: string;
+  port: number;
+  pathname: string;
+} | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(callbackUrl);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+  if (parsed.hostname !== "127.0.0.1" && parsed.hostname !== "localhost") return null;
+  const port = parsed.port
+    ? Number.parseInt(parsed.port, 10)
+    : parsed.protocol === "https:"
+      ? 443
+      : 80;
+  if (!Number.isFinite(port) || port <= 0) return null;
+  return { host: parsed.hostname, port, pathname: parsed.pathname || "/" };
+}
+
+function startOAuthCallbackServer(options: {
+  host: string;
+  port: number;
+  pathname: string;
+  timeoutMs: number;
+}): {
+  ready: Promise<void>;
+  result: Promise<
+    | { ok: true; code: string; state: string }
+    | { ok: false; error: string; errorDescription?: string }
+  >;
+} {
+  let settleResult:
+    | ((
+        value:
+          | { ok: true; code: string; state: string }
+          | { ok: false; error: string; errorDescription?: string },
+      ) => void)
+    | null = null;
+  let rejectResult: ((error: unknown) => void) | null = null;
+  let settleReady: (() => void) | null = null;
+  let rejectReady: ((error: unknown) => void) | null = null;
+  let settled = false;
+
+  const ready = new Promise<void>((resolve, reject) => {
+    settleReady = resolve;
+    rejectReady = reject;
+  });
+  const result = new Promise<
+    | { ok: true; code: string; state: string }
+    | { ok: false; error: string; errorDescription?: string }
+  >((resolve, reject) => {
+    settleResult = resolve;
+    rejectResult = reject;
+  });
+
+  const server = createServer((req, res) => {
+    try {
+      const url = new URL(req.url ?? "/", `http://${options.host}:${options.port}`);
+      if (url.pathname !== options.pathname) {
+        res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+        res.end("Not found");
+        return;
+      }
+
+      const oauthError = url.searchParams.get("error");
+      if (oauthError) {
+        const errorDescription = url.searchParams.get("error_description") ?? undefined;
+        res.writeHead(400, { "content-type": "text/html; charset=utf-8" });
+        res.end(
+          "<!doctype html><html><body><h1>Authorization failed</h1><p>You can close this window.</p></body></html>",
+        );
+        finish({ ok: false, error: oauthError, errorDescription });
+        return;
+      }
+
+      const code = url.searchParams.get("code");
+      const state = url.searchParams.get("state");
+      if (!code || !state) {
+        res.writeHead(400, { "content-type": "text/plain; charset=utf-8" });
+        res.end("Missing code or state");
+        return;
+      }
+
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(
+        "<!doctype html><html><body><h1>Authorization received</h1><p>You can close this window and return to the terminal.</p></body></html>",
+      );
+      finish({ ok: true, code, state });
+    } catch (error) {
+      finishError(error);
+    }
+  });
+
+  const timer = setTimeout(() => {
+    finishError(new Error("Timed out waiting for OAuth callback"));
+  }, options.timeoutMs);
+
+  function cleanup(): void {
+    clearTimeout(timer);
+    server.close();
+  }
+
+  function finish(
+    value:
+      | { ok: true; code: string; state: string }
+      | { ok: false; error: string; errorDescription?: string },
+  ): void {
+    if (settled) return;
+    settled = true;
+    cleanup();
+    settleResult?.(value);
+  }
+
+  function finishError(error: unknown): void {
+    if (settled) return;
+    settled = true;
+    cleanup();
+    rejectResult?.(error);
+    rejectReady?.(error);
+  }
+
+  server.on("error", (error) => {
+    finishError(error);
+  });
+
+  server.listen(options.port, options.host, () => {
+    settleReady?.();
+  });
+
+  return { ready, result };
+}
+
 async function withDb<T>(
   run: (db: ReturnType<typeof createDatabaseClient>) => Promise<T>,
 ): Promise<T> {
+  // pnpm --filter runs with cwd=apps/content-operator; loadConfig resolves ../../.env (repo root).
+  // Must populate process.env.DATABASE_URL before PrismaClient constructs.
+  loadConfig({ requireDatabaseUrl: true });
   const database = createDatabaseClient();
   await database.connect();
   try {
@@ -70,8 +210,62 @@ function redactSecrets(value: unknown): unknown {
 export async function runXAuthStart(): Promise<void> {
   await withDb(async (database) => {
     const config = loadConfig();
-    const stack = createLiveStack({ config, prisma: database.prisma, allowWrites: false });
+    const logger = createLogger(config.logLevel);
+    const notifications = new NotificationService({
+      logger,
+      config,
+      notifications: new NotificationRepository(database.prisma),
+    });
+    const stack = createLiveStack({
+      config,
+      prisma: database.prisma,
+      allowWrites: false,
+      notifications: {
+        emitXEvent: (eventType, payload) =>
+          notifications
+            .emitXEvent(
+              eventType as Parameters<NotificationService["emitXEvent"]>[0],
+              payload,
+            )
+            .then(() => undefined),
+      },
+    });
+
+    const bind = resolveLocalCallbackBind(config.xOAuthCallbackUrl);
     const started = await stack.oauth.startAuthorization();
+    const timeoutMs = Math.max(
+      5_000,
+      started.expiresAt.getTime() - Date.now(),
+    );
+
+    if (!bind) {
+      console.log(
+        JSON.stringify(
+          {
+            authorizationUrl: started.authorizationUrl,
+            sessionId: started.sessionId,
+            expiresAt: started.expiresAt.toISOString(),
+            scopes: started.scopes,
+            callbackListener: false,
+            callbackUrl: config.xOAuthCallbackUrl,
+            note: "Callback is not a local loopback URL. Open authorizationUrl, then run x:auth:complete with --state and --code.",
+            state: started.state,
+          },
+          null,
+          2,
+        ),
+      );
+      return;
+    }
+
+    const listener = startOAuthCallbackServer({
+      host: bind.host,
+      port: bind.port,
+      pathname: bind.pathname,
+      timeoutMs,
+    });
+    await listener.ready;
+
     console.log(
       JSON.stringify(
         {
@@ -79,8 +273,47 @@ export async function runXAuthStart(): Promise<void> {
           sessionId: started.sessionId,
           expiresAt: started.expiresAt.toISOString(),
           scopes: started.scopes,
-          note: "Open authorizationUrl, then run x:auth:complete with --state and --code. State is shown once and not stored plaintext.",
+          callbackListener: true,
+          listening: `http://${bind.host}:${bind.port}${bind.pathname}`,
+          note: "Open authorizationUrl in a browser. This process waits for the local callback, then exchanges the code (tokens are never printed).",
           state: started.state,
+        },
+        null,
+        2,
+      ),
+    );
+
+    const callback = await listener.result;
+
+    if (!callback.ok) {
+      console.error(
+        JSON.stringify(
+          {
+            ok: false,
+            error: callback.error,
+            errorDescription: callback.errorDescription ?? null,
+          },
+          null,
+          2,
+        ),
+      );
+      process.exitCode = 1;
+      return;
+    }
+
+    const result = await stack.oauth.completeAuthorization({
+      state: callback.state,
+      code: callback.code,
+    });
+    console.log(
+      JSON.stringify(
+        {
+          ok: true,
+          accountId: result.accountId,
+          username: result.username ?? null,
+          scopes: result.scopes,
+          authorizedAt: result.authorizedAt.toISOString(),
+          note: "OAuth complete. Refresh/access tokens stored encrypted; values are not printed.",
         },
         null,
         2,

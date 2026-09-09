@@ -56,7 +56,22 @@ export class MockAffiliateProvider implements AffiliateProvider {
     htmlFetch: false,
     affiliateLinkGeneration: true,
     conversionReport: false,
+    supportsProductApi: true,
+    supportsAffiliateLink: true,
+    supportsSearch: true,
   };
+
+  getRuntimeStatus() {
+    return {
+      providerKey: this.providerKey,
+      status: "READY" as const,
+      apiAvailable: true,
+      affiliateLinkReady: true,
+      sourceAcquisitionAvailable: true,
+      reasons: ["mock_always_ready"],
+      checkedAt: new Date().toISOString(),
+    };
+  }
 
   async searchProducts(query: string, limit = 10): Promise<AffiliateProductNormalized[]> {
     const q = query.trim().toLowerCase();

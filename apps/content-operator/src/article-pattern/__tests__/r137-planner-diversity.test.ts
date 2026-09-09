@@ -42,10 +42,9 @@ describe("R137 planner body fact diversity", () => {
     const plan = buildOfjePlan();
     const body = plan.body.flatMap((b) => b.facts);
     const all = articlePlanAllFacts(plan);
-    // Bare 追撃ピストン is subsumed into theme-scope compound (relation-preserving).
-    expect(
-      body.some((f) => /追撃ピストン/.test(f) && /などを収録$/.test(f)),
-    ).toBe(true);
+    // Theme enumeration compounds are expanded to membership labels for Writer development.
+    expect(body).toEqual(expect.arrayContaining(["人妻", "NTR", "痴女", "追撃ピストン"]));
+    expect(body.some((f) => /などを収録$/.test(f))).toBe(false);
     expect(all.some((f) => /ベスト第\d+弾/.test(f))).toBe(true);
     // rich body budget is family-preserving (hard ceiling only), not fixed-8.
     expect(body.length).toBeLessThanOrEqual(18);
