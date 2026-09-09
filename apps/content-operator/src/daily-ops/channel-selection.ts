@@ -9,6 +9,7 @@ import {
   type DailySelectionResult,
 } from "../daily-blog/selection.js";
 import { isBlockedOnChannel, type ChannelPublicationRecord, type ChannelDuplicateConfig } from "./channel-duplicate.js";
+import { filterPoolExcludingArticledBlogProducts } from "./blog-product-exclusion.js";
 import {
   chooseContentMixSlot,
   slotToAgeBucket,
@@ -138,7 +139,13 @@ export function planDailyChannels(input: ChannelSelectionInput): ChannelDayPlan 
     excludeSlot: blogMix.slot,
   });
 
-  const blogPool = annotated.filter((c) => {
+  // Normal daily PRODUCT articles: permanently exclude already DRAFT/PUBLISHED products.
+  // (Cooldown still applies as a secondary signal via isBlockedOnChannel.)
+  const { eligible: notYetArticled } = filterPoolExcludingArticledBlogProducts(
+    annotated,
+    input.channelHistory,
+  );
+  const blogPool = notYetArticled.filter((c) => {
     const b = isBlockedOnChannel({
       channel: "BLOG",
       canonicalId: c.canonicalId,

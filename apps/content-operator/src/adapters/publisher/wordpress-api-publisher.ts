@@ -227,24 +227,47 @@ export class WordPressApiPublisher implements PublisherAdapter {
     }
     this.assertCanCallApi("update");
     const slug = input.slug?.trim() || undefined;
-    const listPath =
-      slug != null
-        ? `/${input.taxonomyRestBase}?slug=${encodeURIComponent(slug)}`
-        : `/${input.taxonomyRestBase}?search=${encodeURIComponent(name)}`;
-    const listed = await this.request(listPath, { method: "GET" });
-    if (listed.ok) {
+    const normalize = (s: string) => s.replace(/\s+/g, "").toLowerCase();
+    const nameKey = normalize(name);
+
+    // Prefer slug lookup, then search — reuse existing terms to avoid duplicates.
+    const listPaths = [
+      slug ? `/${input.taxonomyRestBase}?slug=${encodeURIComponent(slug)}` : null,
+      `/${input.taxonomyRestBase}?search=${encodeURIComponent(name)}&per_page=20`,
+    ].filter((p): p is string => Boolean(p));
+
+    for (const listPath of listPaths) {
+      const listed = await this.request(listPath, { method: "GET" });
+      if (!listed.ok) continue;
       const rows = (await listed.json()) as Array<{ id?: number; name?: string; slug?: string }>;
       const hit =
-        rows.find((r) => (slug ? r.slug === slug : r.name === name)) ??
-        rows.find((r) => r.name === name);
+        (slug ? rows.find((r) => r.slug === slug) : undefined) ??
+        rows.find((r) => r.name === name) ??
+        rows.find((r) => r.name && normalize(r.name) === nameKey);
       if (hit?.id) return Number(hit.id);
     }
+
     const created = await this.request(`/${input.taxonomyRestBase}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ name, ...(slug ? { slug } : {}) }),
     });
-    if (!created.ok) return null;
+    if (!created.ok) {
+      // Race: term may already exist — re-search once.
+      const again = await this.request(
+        `/${input.taxonomyRestBase}?search=${encodeURIComponent(name)}&per_page=20`,
+        { method: "GET" },
+      );
+      if (again.ok) {
+        const rows = (await again.json()) as Array<{ id?: number; name?: string; slug?: string }>;
+        const hit =
+          rows.find((r) => r.name === name) ??
+          rows.find((r) => r.name && normalize(r.name) === nameKey) ??
+          (slug ? rows.find((r) => r.slug === slug) : undefined);
+        if (hit?.id) return Number(hit.id);
+      }
+      return null;
+    }
     const json = (await created.json()) as { id?: number };
     return json.id ? Number(json.id) : null;
   }
@@ -271,6 +294,11 @@ export class WordPressApiPublisher implements PublisherAdapter {
     };
     if (excerpt) body.excerpt = excerpt;
     if (slug) body.slug = slug;
+
+    const postDate = typeof meta.wpDate === "string" ? meta.wpDate.trim() : "";
+    const postDateGmt = typeof meta.wpDateGmt === "string" ? meta.wpDateGmt.trim() : "";
+    if (postDate) body.date = postDate;
+    if (postDateGmt) body.date_gmt = postDateGmt;
 
     const wpMeta = asRecord(meta.wpSeoMeta);
     if (Object.keys(wpMeta).length > 0) {

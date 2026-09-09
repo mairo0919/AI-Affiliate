@@ -6,6 +6,7 @@
 
 import type { DatabaseClient } from "@ai-affiliate/database";
 import { tokyoDateString } from "../daily-blog/idempotency.js";
+import { baseProductCid } from "./blog-product-exclusion.js";
 import type { ChannelPublicationRecord } from "./channel-duplicate.js";
 import type { MixHistoryEntry } from "./content-mix.js";
 import { normalizeMixSlot } from "./content-mix.js";
@@ -38,26 +39,33 @@ export async function loadChannelPublicationHistory(
   const blogTargets = await prisma.publicationTarget.findMany({
     where: {
       platform: { in: [...BLOG_PUBLICATION_PLATFORMS] },
-      status: { in: ["PUBLISHED", "DRAFT"] },
-      publishedAt: { not: null },
+      status: { in: ["PUBLISHED", "DRAFT", "AWAITING_APPROVAL"] },
     },
-    orderBy: { publishedAt: "desc" },
+    orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }],
     take: limit,
     select: {
       publishedAt: true,
+      createdAt: true,
       platformMetadata: true,
     },
   });
+  const seenBlogCid = new Set<string>();
   for (const t of blogTargets) {
     const meta = asRecord(t.platformMetadata);
-    const cid =
+    const rawCid =
       (typeof meta.canonicalId === "string" && meta.canonicalId) ||
-      (typeof meta.externalId === "string" && meta.externalId);
-    if (!cid || !t.publishedAt) continue;
+      (typeof meta.productCanonicalId === "string" && meta.productCanonicalId) ||
+      (typeof meta.externalId === "string" && meta.externalId) ||
+      null;
+    const cid = baseProductCid(rawCid) ?? (rawCid ? String(rawCid).trim().toLowerCase() : null);
+    if (!cid) continue;
+    if (seenBlogCid.has(cid)) continue;
+    seenBlogCid.add(cid);
+    const when = t.publishedAt ?? t.createdAt;
     out.push({
       channel: "BLOG",
       canonicalId: cid,
-      publishedAt: t.publishedAt.toISOString(),
+      publishedAt: when.toISOString(),
     });
   }
 

@@ -24,6 +24,11 @@ import {
   OTONASELECT_PRODUCTION_ORIGIN,
   type WordPressSeoAttach,
 } from "./wordpress-seo-attach.js";
+import {
+  deriveWordPressTaxonomyFromEvidence,
+  type EvidenceTaxonomyLabel,
+} from "./evidence-taxonomy.js";
+import { resolveWordPressPostDates } from "./wordpress-datetime.js";
 import type { ArticleImage } from "../generation/article-images.js";
 import { parseArticleImages } from "../generation/article-images.js";
 import { formatBloggerHtml } from "../generation/blogger-formatter.js";
@@ -56,7 +61,7 @@ export interface WordPressPublishPathDeps {
   lifecycle: LifecycleRepository;
   /** Inject for tests; default from config. */
   publisher?: PublisherAdapter;
-  /** Prisma subset used for version lookup + duplicate queries */
+  /** Prisma subset used for version lookup + duplicate queries + evidence tags */
   prisma: {
     contentVersion: {
       findUnique: (args: {
@@ -665,8 +670,13 @@ export async function publishContentVersionToWordPress(
     excerptFallback: built.excerpt,
     productCanonicalId,
     siteOrigin: deps.config.wordpressBaseUrl ?? OTONASELECT_PRODUCTION_ORIGIN,
+    evidenceLabels: await loadEvidenceLabelsForProduct(deps.prisma, productCanonicalId),
   });
   const seoTermIds = await resolveSeoTermIds(publisher, seoAttach);
+  const postDates = resolveWordPressPostDates(
+    new Date(),
+    deps.config.publicationTimezone || "Asia/Tokyo",
+  );
 
   const prepared = await publisher.prepare({
     contentVersionId: version.id,
@@ -689,6 +699,8 @@ export async function publishContentVersionToWordPress(
       wpPerformerIds: seoTermIds.performerIds,
       wpSeriesIds: seoTermIds.seriesIds,
       seoAttachNotes: seoAttach.notes,
+      wpDate: postDates.date,
+      wpDateGmt: postDates.date_gmt,
     },
   });
 
@@ -738,6 +750,8 @@ export async function publishContentVersionToWordPress(
             publicBodySanitized: sanitized.removed,
             wpTagIds: seoTermIds.tagIds,
             wpCategoryIds: seoTermIds.categoryIds,
+            wpDate: postDates.date,
+            wpDateGmt: postDates.date_gmt,
             seoAttachNotes: [...seoAttach.notes, `seo_meta_fallback:${msg.slice(0, 160)}`],
           },
         });
@@ -942,6 +956,7 @@ function buildSeoAttachFromStructured(input: {
   excerptFallback: string;
   productCanonicalId: string | null;
   siteOrigin: string;
+  evidenceLabels?: EvidenceTaxonomyLabel[];
 }): WordPressSeoAttach {
   const article =
     input.structured.article && typeof input.structured.article === "object"
@@ -972,33 +987,39 @@ function buildSeoAttachFromStructured(input: {
     }
   }
 
-  const titleBlob = String(seoBlock.title ?? article.seoTitle ?? article.title ?? input.title);
-  if (performers.length === 0 && titleBlob.includes("奥田咲")) {
-    pushPerformer("奥田咲", "okuda-saki");
-  }
-
-  const seriesName =
+  const seriesNameFromStructured =
     (typeof input.structured.seriesName === "string" && input.structured.seriesName.trim()) ||
     (typeof seoBlock.seriesName === "string" && seoBlock.seriesName.trim()) ||
     (typeof article.seriesName === "string" && article.seriesName.trim()) ||
     null;
 
-  const categories = [
+  const structuredCategories = [
     ...(Array.isArray(seoBlock.categories) ? seoBlock.categories : []),
     ...(Array.isArray(article.categories) ? article.categories : []),
   ]
     .filter((c): c is string => typeof c === "string" && c.trim().length > 0)
     .map((c) => c.trim());
 
-  const tags = [
+  const structuredTags = [
     ...(Array.isArray(seoBlock.tags) ? seoBlock.tags : []),
     ...(Array.isArray(article.tags) ? article.tags : []),
-    ...performers.map((p) => p.name),
   ]
     .filter((t): t is string => typeof t === "string" && t.trim().length > 0)
     .map((t) => t.trim());
 
-  return buildWordPressSeoAttach({
+  const derived = deriveWordPressTaxonomyFromEvidence({
+    labels: input.evidenceLabels ?? [],
+    title: input.title,
+    extraPerformers: performers.map((p) => p.name),
+    extraSeriesName: seriesNameFromStructured,
+    allowCategoryFallback: true,
+  });
+
+  // Merge structured categories/tags (only when already present — never invent).
+  const categories = [...new Set([...derived.categories, ...structuredCategories])];
+  const tags = [...new Set([...derived.tags, ...structuredTags])];
+
+  const attach = buildWordPressSeoAttach({
     title: input.title,
     seoTitle:
       (typeof seoBlock.title === "string" && seoBlock.title) ||
@@ -1009,14 +1030,60 @@ function buildSeoAttachFromStructured(input: {
       (typeof article.metaDescription === "string" && article.metaDescription) ||
       input.excerptFallback,
     summary: input.excerptFallback,
-    performers,
-    seriesName,
+    performers: derived.performers.map((name) => {
+      const hit = performers.find((p) => p.name.replace(/\s+/g, "") === name.replace(/\s+/g, ""));
+      return { name, ascii: hit?.ascii ?? null };
+    }),
+    seriesName: derived.seriesName,
     categories,
     tags,
     productCanonicalId: input.productCanonicalId,
     safeOgImageUrl: null,
     siteOrigin: input.siteOrigin,
   });
+  return {
+    ...attach,
+    notes: [...attach.notes, ...derived.notes],
+  };
+}
+
+async function loadEvidenceLabelsForProduct(
+  prisma: WordPressPublishPathDeps["prisma"],
+  productCanonicalId: string | null,
+): Promise<EvidenceTaxonomyLabel[]> {
+  if (!productCanonicalId?.trim()) return [];
+  const cid = productCanonicalId.trim().toLowerCase();
+  const researchItem = (
+    prisma as {
+      researchItem?: {
+        findFirst: (args: Record<string, unknown>) => Promise<{
+          tags?: Array<{ researchTag: { type: string; name: string } }>;
+        } | null>;
+      };
+    }
+  ).researchItem;
+  if (!researchItem?.findFirst) return [];
+  try {
+    const item = await researchItem.findFirst({
+      where: {
+        OR: [
+          { externalId: { equals: cid, mode: "insensitive" } },
+          { externalId: { startsWith: cid, mode: "insensitive" } },
+        ],
+      },
+      orderBy: { collectedAt: "desc" },
+      include: {
+        tags: { include: { researchTag: true } },
+      },
+    });
+    if (!item?.tags?.length) return [];
+    return item.tags.map((t) => ({
+      type: t.researchTag.type,
+      name: t.researchTag.name,
+    }));
+  } catch {
+    return [];
+  }
 }
 
 async function resolveSeoTermIds(
@@ -1054,6 +1121,8 @@ async function resolveSeoTermIds(
       /* ignore */
     }
   }
+  // When meaningful categories resolved, WordPress replaces Uncategorized via categories[].
+  // If empty, do not invent — leave WP default (caller notes via seoAttach).
   const performerIds: number[] = [];
   for (const p of attach.performers) {
     try {

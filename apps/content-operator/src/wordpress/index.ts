@@ -24,6 +24,19 @@ export type {
   WordPressSeoPerformer,
 } from "./wordpress-seo-attach.js";
 export {
+  deriveWordPressTaxonomyFromEvidence,
+  PRODUCT_ARTICLE_CATEGORY_FALLBACK,
+} from "./evidence-taxonomy.js";
+export type {
+  DerivedWordPressTaxonomy,
+  EvidenceTaxonomyLabel,
+} from "./evidence-taxonomy.js";
+export {
+  resolveWordPressPostDates,
+  isWordPressTimezoneTokyo,
+} from "./wordpress-datetime.js";
+export type { WordPressPostDateFields } from "./wordpress-datetime.js";
+export {
   buildWordPressPublishDeps,
   runWordPressSchedulerPhase,
   type WordPressSchedulerPhaseInput,
