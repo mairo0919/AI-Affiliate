@@ -59,6 +59,30 @@ export const RESEARCH_PROVIDER_CATALOG: readonly ResearchProviderDescriptor[] = 
     scheduleable: false,
     implemented: true,
   },
+  {
+    key: "fc2_video",
+    displayName: "FC2 Video",
+    scheduleable: false,
+    implemented: false,
+  },
+  {
+    key: "fc2_contents",
+    displayName: "FC2 Contents Market",
+    scheduleable: false,
+    implemented: false,
+  },
+  {
+    key: "mgs",
+    displayName: "MGS",
+    scheduleable: false,
+    implemented: false,
+  },
+  {
+    key: "apex",
+    displayName: "APEX",
+    scheduleable: false,
+    implemented: false,
+  },
 ] as const;
 
 export function listResearchProviderCatalog(): ResearchProviderDescriptor[] {

@@ -39,6 +39,10 @@ import { loadDailyMultiChannelConfig } from "../daily-ops/config.js";
 import { runDailyMultiChannelLive, type DailyLiveResult } from "../daily-ops/live-orchestrator.js";
 import { LifecycleRepository } from "@ai-affiliate/database";
 import { ensureResearchCollectionSchedules } from "../research/ensure-collection-schedules.js";
+import { loadStockRuntimeConfig } from "../stock/stock-config.js";
+import { runStockGenerationBatch, type StockGenerationResult } from "../stock/stock-generation-worker.js";
+import { runPublishSlotScheduler, type PublishSlotScheduleResult } from "../stock/publish-slot-scheduler.js";
+import { probeEnabledAdultProviders } from "../providers/adult-provider-registry.js";
 
 export const DEFAULT_DUE_SCHEDULE_LIMIT = 20;
 export const DEFAULT_DUE_RETRY_LIMIT = 20;
@@ -52,6 +56,13 @@ export interface SchedulerPipelineResult {
   analysis: AnalysisRunResult | Skipped;
   content: ContentGenerateResult | Skipped;
   dailyOps: DailyLiveResult | Skipped;
+  stockGeneration: StockGenerationResult | Skipped;
+  publishSlots: PublishSlotScheduleResult | Skipped;
+  providerProbe: Array<{
+    key: string;
+    status: string;
+    skipReason: string | null;
+  }>;
   xPublish: { published: number } | Skipped;
   xMetrics: MetricsCollectResult | Skipped;
   xStrategy: StrategyEvaluationReport | Skipped;
@@ -394,6 +405,15 @@ export class SchedulerPipeline {
       skipped: true,
       skipReason: "DAILY_OPS_DISABLED_OR_NOT_RUN",
     };
+    let stockGeneration: SchedulerPipelineResult["stockGeneration"] = {
+      skipped: true,
+      skipReason: "STOCK_GENERATION_NOT_RUN",
+    };
+    let publishSlots: SchedulerPipelineResult["publishSlots"] = {
+      skipped: true,
+      skipReason: "PUBLISH_SLOTS_NOT_RUN",
+    };
+    let providerProbe: SchedulerPipelineResult["providerProbe"] = [];
     let xPublish: SchedulerPipelineResult["xPublish"] = {
       skipped: true,
       skipReason: "X_AUTO_PUBLICATION_DISABLED",
@@ -430,6 +450,19 @@ export class SchedulerPipeline {
     }
 
     try {
+      providerProbe = (await probeEnabledAdultProviders(this.config)).map((p) => ({
+        key: p.key,
+        status: String(p.status),
+        skipReason: p.skipReason,
+      }));
+      this.logger.info(
+        `provider probe: ${providerProbe.map((p) => `${p.key}=${p.status}`).join(", ")}`,
+      );
+    } catch (error) {
+      this.logger.warn(`provider probe failed: ${String(error)}`);
+    }
+
+    try {
       schedules = await this.scheduleRunner.runDueSchedules();
     } catch (error) {
       this.logger.warn(`due schedule phase failed: ${String(error)}`);
@@ -460,6 +493,20 @@ export class SchedulerPipeline {
     } catch (error) {
       this.logger.warn(`daily ops phase failed: ${String(error)}`);
       dailyOps = { skipped: true, skipReason: `daily ops error: ${String(error)}` };
+    }
+
+    try {
+      stockGeneration = await this.runStockGenerationPhase();
+    } catch (error) {
+      this.logger.warn(`stock generation phase failed: ${String(error)}`);
+      stockGeneration = { skipped: true, skipReason: `stock generation error: ${String(error)}` };
+    }
+
+    try {
+      publishSlots = await this.runPublishSlotsPhase();
+    } catch (error) {
+      this.logger.warn(`publish slots phase failed: ${String(error)}`);
+      publishSlots = { skipped: true, skipReason: `publish slots error: ${String(error)}` };
     }
 
     try {
@@ -517,6 +564,9 @@ export class SchedulerPipeline {
       analysis,
       content,
       dailyOps,
+      stockGeneration,
+      publishSlots,
+      providerProbe,
       xPublish,
       xMetrics,
       xStrategy,
@@ -524,6 +574,42 @@ export class SchedulerPipeline {
       xOptimizationImpact,
       notifications,
     };
+  }
+
+  /** Continuous APPROVED stock fill (batch-limited). Independent of WP publish rate. */
+  private async runStockGenerationPhase(): Promise<SchedulerPipelineResult["stockGeneration"]> {
+    const runtime = loadStockRuntimeConfig();
+    if (!runtime.stockGenerationEnabled) {
+      return { skipped: true, skipReason: "STOCK_GENERATION_ENABLED_FALSE" };
+    }
+    // Do not force STOCK_CONTINUOUS here — only fill toward minStock (cost control).
+    // Ops can set STOCK_CONTINUOUS=true in env for gradual growth above min.
+    const lifecycle = new LifecycleRepository(this.database.prisma);
+    return runStockGenerationBatch({
+      database: this.database,
+      lifecycle,
+      config: this.config,
+      now: this.now(),
+    });
+  }
+
+  /** Fill next JST 12/21/23 future slots from PUBLIC-eligible APPROVED stock. */
+  private async runPublishSlotsPhase(): Promise<SchedulerPipelineResult["publishSlots"]> {
+    const runtime = loadStockRuntimeConfig();
+    if (!runtime.stockPublishSchedulerEnabled) {
+      return { skipped: true, skipReason: "STOCK_PUBLISH_SCHEDULER_ENABLED_FALSE" };
+    }
+    if (!this.config.wordpressAllowFutureSchedule && !this.config.wordpressAllowDirectPublish) {
+      return { skipped: true, skipReason: "FUTURE_SCHEDULE_DISABLED" };
+    }
+    const lifecycle = new LifecycleRepository(this.database.prisma);
+    return runPublishSlotScheduler({
+      database: this.database,
+      lifecycle,
+      config: this.config,
+      now: this.now(),
+      days: 3,
+    });
   }
 
   /** Daily Blog + X production (OPTION B Blog / ContentEngine X). */

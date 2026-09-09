@@ -15,6 +15,7 @@ import {
   listApprovedStock,
   countUnusedApprovedStock,
   loadStockRuntimeConfig,
+  confirmFanzaAffiliateImageTerms,
 } from "./index.js";
 
 function parseFlags(argv: string[]): Record<string, string> {
@@ -126,6 +127,29 @@ export async function runStockStatusCli(): Promise<void> {
         reasons: r.publicBlockReasons,
       })),
     });
+  } finally {
+    await database.disconnect();
+  }
+}
+
+/**
+ * Operator asserts FANZA affiliate image terms checklist completed.
+ * Usage: confirm-fanza-image-terms --i-confirm-checklist=1 --actor=ops
+ */
+export async function runConfirmFanzaImageTermsCli(argv: string[]): Promise<void> {
+  const flags = parseFlags(argv);
+  loadConfig({ requireDatabaseUrl: true });
+  const database = createDatabaseClient();
+  await database.connect();
+  try {
+    const result = await confirmFanzaAffiliateImageTerms({
+      prisma: database.prisma,
+      iConfirmChecklist:
+        flags["i-confirm-checklist"] === "1" || flags["i-confirm-checklist"] === "true",
+      actor: flags.actor ?? "ops-cli",
+    });
+    printJson(result);
+    if (!result.ok) process.exitCode = 1;
   } finally {
     await database.disconnect();
   }

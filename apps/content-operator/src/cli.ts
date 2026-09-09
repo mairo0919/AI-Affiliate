@@ -147,6 +147,7 @@ import {
   runWpFutureScheduleCli,
   runStockStatusCli,
   runStockPipelineCli,
+  runConfirmFanzaImageTermsCli,
 } from "./stock/cli-handlers.js";
 import {
   runP45ApproveContent,
@@ -2483,6 +2484,9 @@ async function main(): Promise<void> {
       break;
     case "stock-pipeline":
       await runStockPipelineCli(rest);
+      break;
+    case "confirm-fanza-image-terms":
+      await runConfirmFanzaImageTermsCli(rest);
       break;
     default:
       console.error(

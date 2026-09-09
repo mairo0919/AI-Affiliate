@@ -51,6 +51,31 @@ describe("WordPressApiPublisher mock mode", () => {
     expect(draft.externalId).toContain("draft");
   });
 
+  it("mode=future wins over defaultPublishMode=draft", async () => {
+    const pub = new WordPressApiPublisher({
+      mode: "mock",
+      allowExternal: false,
+      allowDirectPublish: false,
+      defaultPublishMode: "draft",
+      apiNamespace: "wp/v2",
+    });
+    const prepared = await pub.prepare({
+      contentVersionId: "cv_future",
+      title: "future",
+      body: "body",
+      metadata: {
+        mode: "future",
+        status: "future",
+        wpStatus: "future",
+        wpDate: "2026-09-10T21:00:00",
+        wpDateGmt: "2026-09-10T12:00:00",
+      },
+    });
+    const result = await pub.publish({ prepared });
+    expect(result.responseSummary).toMatchObject({ action: "schedule", wpStatus: "future" });
+    expect(result.status).toBe("DRAFT"); // internal map of WP future
+  });
+
   it("update works in mock", async () => {
     const pub = createWordPressPublisherFromConfig({
       wordpressMode: "mock",

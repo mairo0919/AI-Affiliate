@@ -15,7 +15,13 @@ import {
   type WordPressPublishOneResult,
 } from "../wordpress/wordpress-publish-path.js";
 import { listUpcomingPublishSlots } from "../wordpress/wordpress-datetime.js";
-import { listApprovedStock, type ApprovedStockRow } from "./approved-stock.js";
+import {
+  listApprovedStock,
+  evaluatePublicEligibilityFromStructured,
+  extractProductKeyFromStructured,
+  extractProviderHint,
+  type ApprovedStockRow,
+} from "./approved-stock.js";
 import { loadStockRuntimeConfig } from "./stock-config.js";
 
 export type PublishSlotScheduleResult = {
@@ -103,7 +109,7 @@ export async function runPublishSlotScheduler(deps: {
     limit: 200,
   });
   const publicBlocked: PublishSlotScheduleResult["publicBlocked"] = [];
-  const queue: ApprovedStockRow[] = [];
+  const queue: Array<ApprovedStockRow & { updateExistingDraft?: boolean }> = [];
   for (const row of stock) {
     if (!row.publicEligible) {
       publicBlocked.push({
@@ -116,6 +122,59 @@ export async function runPublishSlotScheduler(deps: {
       continue;
     }
     queue.push(row);
+  }
+
+  // Existing WP inventory (#43/#46): keep DRAFT until PUBLIC-eligible, then promote to future.
+  const protectedIds = runtime.protectedWpPostIds.map(String);
+  const inventoryTargets = await deps.database.prisma.publicationTarget.findMany({
+    where: {
+      platform: "WORDPRESS",
+      status: "DRAFT",
+      publishedExternalId: { in: protectedIds },
+    },
+    select: {
+      contentVersionId: true,
+      publishedExternalId: true,
+      platformMetadata: true,
+    },
+    take: 10,
+  });
+  for (const t of inventoryTargets) {
+    const version = await deps.database.prisma.contentVersion.findUnique({
+      where: { id: t.contentVersionId },
+      select: {
+        id: true,
+        contentId: true,
+        title: true,
+        status: true,
+        structuredContent: true,
+        updatedAt: true,
+      },
+    });
+    if (!version || version.status !== "APPROVED") continue;
+    const pub = evaluatePublicEligibilityFromStructured(version.structuredContent);
+    const row: ApprovedStockRow & { updateExistingDraft?: boolean } = {
+      contentVersionId: version.id,
+      contentId: version.contentId,
+      title: version.title,
+      productKey: extractProductKeyFromStructured(version.structuredContent),
+      providerHint: extractProviderHint(version.structuredContent),
+      updatedAt: version.updatedAt,
+      hasWordPressTarget: true,
+      publicEligible: pub.eligible,
+      publicBlockReasons: pub.eligible ? [] : pub.evaluation.failureCodes,
+      updateExistingDraft: true,
+    };
+    if (!row.publicEligible) {
+      publicBlocked.push({
+        contentVersionId: row.contentVersionId,
+        productKey: row.productKey,
+        reasons: row.publicBlockReasons,
+      });
+      continue;
+    }
+    // Prefer inventory posts early in the queue (already on production site).
+    queue.unshift(row);
   }
 
   const publisher = createWordPressPublisherFromConfig(deps.config);
@@ -145,6 +204,9 @@ export async function runPublishSlotScheduler(deps: {
           productCanonicalId: candidate.productKey,
           mode: "future",
           scheduledAt: slot.at,
+          updateExistingDraft: Boolean(
+            (candidate as { updateExistingDraft?: boolean }).updateExistingDraft,
+          ),
           route: "WP_FUTURE_SCHEDULER",
           idempotencyKey: `wordpress-future:${candidate.contentVersionId}:${key}`,
           platformMetadata: {
@@ -152,6 +214,9 @@ export async function runPublishSlotScheduler(deps: {
             scheduledAt: key,
             protectedWpPosts: runtime.protectedWpPostIds,
             productKey: candidate.productKey,
+            inventoryPromote: Boolean(
+              (candidate as { updateExistingDraft?: boolean }).updateExistingDraft,
+            ),
           },
         },
       );

@@ -496,6 +496,34 @@ export async function publishContentVersionToWordPress(
     };
   }
 
+  // Protect inventory posts 43/46: never retarget unrelated ContentVersions onto them.
+  // Future promotion of the *same* linked ContentVersion is allowed.
+  {
+    const protectedIds = new Set([43, 46]);
+    const extNum = sameVersion?.publishedExternalId
+      ? Number(sameVersion.publishedExternalId)
+      : NaN;
+    if (
+      Number.isFinite(extNum) &&
+      protectedIds.has(extNum) &&
+      updatingExistingDraft &&
+      sameVersion &&
+      sameVersion.contentVersionId !== version.id
+    ) {
+      return {
+        ok: true,
+        published: false,
+        skipped: true,
+        reason: "PROTECTED_WORDPRESS_POST",
+        contentVersionId: version.id,
+        contentId: version.contentId,
+        priorExternalId: sameVersion.publishedExternalId,
+        priorTargetId: sameVersion.id,
+        duplicate: true,
+      };
+    }
+  }
+
   const known = existing
     .filter((t) => {
       if (t.contentVersionId === version.id) return true;
@@ -857,6 +885,8 @@ export async function publishContentVersionToWordPress(
   if (updatingExistingDraft && sameVersion) {
     if (typeof deps.lifecycle.updatePublicationTarget === "function") {
       await deps.lifecycle.updatePublicationTarget(sameVersion.id, {
+        status: targetStatus,
+        scheduledAt: scheduleInstant ?? undefined,
         platformMetadata: {
           ...((sameVersion.platformMetadata as Record<string, unknown> | null) ?? {}),
           ...platformMetadata,
@@ -870,12 +900,12 @@ export async function publishContentVersionToWordPress(
     const record: PublicationRecord = await deps.lifecycle.createPublicationRecord({
       publicationTargetId: sameVersion.id,
       platform: "WORDPRESS",
-      status: "DRAFT",
+      status: targetStatus,
       externalId: sameVersion.publishedExternalId!,
       url: published.url || sameVersion.publishedUrl,
       responseSummary: {
         ...((published.responseSummary as Record<string, unknown>) ?? {}),
-        action: "updateExistingDraft",
+        action: effectiveMode === "future" ? "scheduleExistingDraft" : "updateExistingDraft",
         imageEvalNotes: platformMetadata.imageEvalNotes,
       },
     });
@@ -890,7 +920,7 @@ export async function publishContentVersionToWordPress(
       publicationRecordId: record.id,
       externalId: sameVersion.publishedExternalId!,
       url: published.url || sameVersion.publishedUrl || "",
-      status: "DRAFT",
+      status: targetStatus,
       publishedAt: now.toISOString(),
       duplicate: false,
       dryRun: false,

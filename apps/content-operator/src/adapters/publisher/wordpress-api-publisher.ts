@@ -71,7 +71,9 @@ export class WordPressApiPublisher implements PublisherAdapter {
 
   constructor(private readonly config: WordPressApiPublisherConfig) {}
 
-  assertCanCallApi(action: "createDraft" | "publish" | "update" | "delete" | "getStatus"): void {
+  assertCanCallApi(
+    action: "createDraft" | "publish" | "update" | "delete" | "getStatus" | "schedule",
+  ): void {
     if (this.config.mode !== "api") {
       throw new WordPressPublisherError(
         "WORDPRESS_MODE is not api (use mock or set WORDPRESS_MODE=api)",
@@ -137,6 +139,18 @@ export class WordPressApiPublisher implements PublisherAdapter {
 
   async publish(input: PublisherPublishInput): Promise<PublisherPublishResult> {
     const meta = asRecord(input.prepared.payload.metadata);
+    const asFuture =
+      meta.mode === "future" ||
+      meta.status === "future" ||
+      meta.wpStatus === "future";
+    // Future schedule must win over defaultPublishMode=draft.
+    if (asFuture) {
+      if (this.config.mode === "mock") {
+        return this.mockCreate(input, false, true);
+      }
+      this.assertCanCallApi("schedule");
+      return this.createOrUpdatePost(input, { status: "future" });
+    }
     const asDraft =
       this.config.defaultPublishMode === "draft" ||
       meta.mode === "draft" ||
@@ -144,17 +158,11 @@ export class WordPressApiPublisher implements PublisherAdapter {
     if (asDraft) {
       return this.createDraft(input);
     }
-    const asFuture =
-      meta.mode === "future" ||
-      meta.status === "future" ||
-      meta.wpStatus === "future";
     if (this.config.mode === "mock") {
-      return this.mockCreate(input, false, asFuture);
+      return this.mockCreate(input, false, false);
     }
     this.assertCanCallApi("publish");
-    return this.createOrUpdatePost(input, {
-      status: asFuture ? "future" : "publish",
-    });
+    return this.createOrUpdatePost(input, { status: "publish" });
   }
 
   async update(input: PublisherUpdateInput): Promise<PublisherPublishResult> {

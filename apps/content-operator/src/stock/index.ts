@@ -8,3 +8,4 @@ export {
 export { runLocalFanzaPageResearchCollect } from "./local-page-collector.js";
 export { runStockGenerationBatch } from "./stock-generation-worker.js";
 export { runPublishSlotScheduler } from "./publish-slot-scheduler.js";
+export { confirmFanzaAffiliateImageTerms } from "./confirm-fanza-image-terms.js";
