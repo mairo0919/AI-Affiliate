@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  baseProductCid,
   filterPoolExcludingArticledBlogProducts,
   isProductAlreadyArticledForDailyBlog,
+  normalizeProductKey,
 } from "../blog-product-exclusion.js";
 import { planDailyChannels } from "../channel-selection.js";
 import type { ChannelCandidate } from "../channel-selection.js";
@@ -24,7 +24,7 @@ function cand(
     actressKey: partial.actressKey ?? null,
     makerKey: partial.makerKey ?? null,
     seriesKey: partial.seriesKey ?? null,
-    affiliateUrl: partial.affiliateUrl ?? "https://al.fanza.co.jp/?af_id=1",
+    affiliateUrl: partial.affiliateUrl ?? "https://example.test/a/1",
     title: partial.title,
     publishedAt: partial.publishedAt ?? "2020-01-01T00:00:00Z",
     releaseAgeBucket: partial.releaseAgeBucket ?? "OLDER",
@@ -41,38 +41,38 @@ const weights = {
 };
 
 describe("blog-product-exclusion", () => {
-  it("normalizes base FANZA cid across suffix variants", () => {
-    expect(baseProductCid("ofje00230")).toBe("ofje00230");
-    expect(baseProductCid("OFJE00230-genreauth-v1")).toBe("ofje00230");
-  });
-
-  it("excludes already articled products from daily blog pool forever (not cooldown-only)", () => {
-    const history = [
-      {
-        channel: "BLOG" as const,
-        canonicalId: "ofje00230",
-        publishedAt: "2020-01-01T00:00:00Z", // older than any cooldown
-      },
-    ];
+  it("matches same product across provider prefixes", () => {
+    expect(normalizeProductKey("fanza:ofje00230")).toBe("ofje00230");
+    expect(normalizeProductKey("OFJE00230-genreauth-v1")).toBe("ofje00230");
     expect(
       isProductAlreadyArticledForDailyBlog({
-        canonicalId: "ofje00230",
-        history,
+        canonicalId: "fanza:ofje00230",
+        history: [
+          { channel: "BLOG", canonicalId: "ofje00230", publishedAt: "2020-01-01T00:00:00Z" },
+        ],
       }).excluded,
     ).toBe(true);
+  });
 
+  it("excludes already articled products from daily blog pool", () => {
     const { eligible, excluded } = filterPoolExcludingArticledBlogProducts(
       [
         cand({ canonicalId: "ofje00230", title: "old articled" }),
         cand({ canonicalId: "ssis00999", title: "fresh" }),
       ],
-      history,
+      [
+        {
+          channel: "BLOG",
+          canonicalId: "ofje00230",
+          publishedAt: "2020-01-01T00:00:00Z",
+        },
+      ],
     );
     expect(excluded.map((e) => e.canonicalId)).toEqual(["ofje00230"]);
     expect(eligible.map((c) => c.canonicalId)).toEqual(["ssis00999"]);
   });
 
-  it("planDailyChannels prefers unarticled product even when articled scores higher", () => {
+  it("planDailyChannels prefers unarticled product", () => {
     const plan = planDailyChannels({
       pool: [
         cand({
@@ -95,7 +95,7 @@ describe("blog-product-exclusion", () => {
       channelHistory: [
         {
           channel: "BLOG",
-          canonicalId: "ofje00230",
+          canonicalId: "fanza:ofje00230",
           publishedAt: "2020-01-01T00:00:00Z",
         },
       ],

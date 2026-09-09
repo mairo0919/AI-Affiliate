@@ -6,7 +6,7 @@
 
 import type { DatabaseClient } from "@ai-affiliate/database";
 import { tokyoDateString } from "../daily-blog/idempotency.js";
-import { baseProductCid } from "./blog-product-exclusion.js";
+import { normalizeProductKey } from "./blog-product-exclusion.js";
 import type { ChannelPublicationRecord } from "./channel-duplicate.js";
 import type { MixHistoryEntry } from "./content-mix.js";
 import { normalizeMixSlot } from "./content-mix.js";
@@ -57,7 +57,7 @@ export async function loadChannelPublicationHistory(
       (typeof meta.productCanonicalId === "string" && meta.productCanonicalId) ||
       (typeof meta.externalId === "string" && meta.externalId) ||
       null;
-    const cid = baseProductCid(rawCid) ?? (rawCid ? String(rawCid).trim().toLowerCase() : null);
+    const cid = normalizeProductKey(rawCid) ?? (rawCid ? String(rawCid).trim().toLowerCase() : null);
     if (!cid) continue;
     if (seenBlogCid.has(cid)) continue;
     seenBlogCid.add(cid);

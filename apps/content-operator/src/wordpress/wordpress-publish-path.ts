@@ -1034,6 +1034,7 @@ function buildSeoAttachFromStructured(input: {
       const hit = performers.find((p) => p.name.replace(/\s+/g, "") === name.replace(/\s+/g, ""));
       return { name, ascii: hit?.ascii ?? null };
     }),
+    seriesNames: derived.seriesNames,
     seriesName: derived.seriesName,
     categories,
     tags,
@@ -1137,12 +1138,12 @@ async function resolveSeoTermIds(
     }
   }
   const seriesIds: number[] = [];
-  if (attach.series) {
+  for (const s of attach.seriesList.length > 0 ? attach.seriesList : attach.series ? [attach.series] : []) {
     try {
       const id = await ensure({
         taxonomyRestBase: "series",
-        name: attach.series.name,
-        slug: attach.series.stableSlug,
+        name: s.name,
+        slug: s.stableSlug,
       });
       if (id) seriesIds.push(id);
     } catch {

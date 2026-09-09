@@ -1,36 +1,51 @@
 /**
  * Daily PRODUCT article exclusion — already articled products leave the normal pool.
- * Does not permanently ban future article kinds (re-review / roundup); those paths
- * must opt in explicitly later. This module is for normal daily-ops PRODUCT selection.
+ * Provider-agnostic: matches on normalized product keys (with or without provider: prefix).
+ * Does not permanently ban future article kinds (re-review / roundup).
  */
 
-import { normalizeCid } from "../daily-blog/product-identity.js";
 import type { ChannelPublicationRecord } from "./channel-duplicate.js";
 
 /**
- * Extract base FANZA content id for matching (ofje00230 from ofje00230-…).
+ * Normalize product identity across AffiliateProviders.
+ * Examples: `fanza:ofje00230`, `ofje00230-run1`, `amazon:B0XXXX` → stable compare keys.
  */
-export function baseProductCid(raw: string | null | undefined): string | null {
-  const n = normalizeCid(raw);
-  if (!n) return null;
-  const head = n.split("-")[0] ?? n;
-  if (/^[a-z][a-z0-9]{2,31}$/i.test(head) && /\d/.test(head)) {
-    return head.toLowerCase();
+export function normalizeProductKey(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  let t = raw.trim().toLowerCase();
+  if (!t) return null;
+  t = t.replace(/^[a-z][a-z0-9_-]{0,32}:/, "");
+  t = t.replace(/^cid=/i, "");
+  if (t.includes("/")) {
+    t = t.split("/").filter(Boolean).pop() ?? t;
   }
-  return n;
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(t)) {
+    return t;
+  }
+  const head = t.split("-")[0] ?? t;
+  if (/^[a-z0-9]{3,64}$/i.test(head) && /\d/.test(head)) {
+    return head;
+  }
+  if (/^[a-z0-9][a-z0-9._-]{2,127}$/i.test(t)) return t;
+  return t || null;
+}
+
+/** @deprecated Use normalizeProductKey — kept for call-site compatibility. */
+export function baseProductCid(raw: string | null | undefined): string | null {
+  return normalizeProductKey(raw);
 }
 
 export function isProductAlreadyArticledForDailyBlog(input: {
   canonicalId: string;
   history: ChannelPublicationRecord[];
 }): { excluded: boolean; reason: string | null; matchedCanonicalId: string | null } {
-  const target = baseProductCid(input.canonicalId);
+  const target = normalizeProductKey(input.canonicalId);
   if (!target) {
     return { excluded: false, reason: null, matchedCanonicalId: null };
   }
   for (const h of input.history) {
     if (h.channel !== "BLOG") continue;
-    const prior = baseProductCid(h.canonicalId);
+    const prior = normalizeProductKey(h.canonicalId);
     if (prior && prior === target) {
       return {
         excluded: true,

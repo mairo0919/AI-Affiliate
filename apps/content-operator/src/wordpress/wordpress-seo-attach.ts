@@ -28,10 +28,17 @@ export type WordPressSeoAttachInput = {
   summary?: string | null;
   lead?: string | null;
   performers?: WordPressSeoPerformer[] | string[] | null;
+  /** Primary / first series (compat). Prefer seriesNames when multiple. */
   seriesName?: string | null;
   seriesAscii?: string | null;
+  /** Multiple series (official + semantic groupings). */
+  seriesNames?: string[] | null;
   categories?: string[] | null;
   tags?: string[] | null;
+  /**
+   * Provider-agnostic product key (AffiliateProduct / Research external id).
+   * Accepts plain ids or `provider:id` forms.
+   */
   productCanonicalId?: string | null;
   /** Only pass when confirmed X_SOCIAL_SAFE / site-owned. Never FANZA sample CDN. */
   safeOgImageUrl?: string | null;
@@ -43,7 +50,9 @@ export type WordPressSeoAttach = {
   excerpt: string;
   meta: Record<string, string>;
   performers: Array<{ name: string; ascii: string | null; stableSlug: string }>;
+  /** @deprecated Prefer seriesList — first series for meta/backward compat. */
   series: { name: string; ascii: string | null; stableSlug: string } | null;
+  seriesList: Array<{ name: string; ascii: string | null; stableSlug: string }>;
   categories: string[];
   tags: string[];
   productCanonicalId: string | null;
@@ -118,6 +127,28 @@ function normalizePerformers(
   return out;
 }
 
+/** Provider-agnostic product key normalization for meta / identity. */
+export function normalizeProductCanonicalId(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  let t = raw.trim().toLowerCase();
+  if (!t) return null;
+  t = t.replace(/^[a-z][a-z0-9_-]{0,32}:/, ""); // strip provider: prefix
+  t = t.replace(/^cid=/i, "");
+  if (t.includes("/")) {
+    t = t.split("/").filter(Boolean).pop() ?? t;
+  }
+  // Opaque UUID-like — keep full key
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(t)) {
+    return t;
+  }
+  const head = t.split("-")[0] ?? t;
+  if (/^[a-z0-9]{3,64}$/i.test(head) && /\d/.test(head)) {
+    return head;
+  }
+  if (/^[a-z0-9][a-z0-9._-]{2,127}$/i.test(t)) return t;
+  return null;
+}
+
 /**
  * Build SEO attach payload from already-generated article fields + evidence labels.
  */
@@ -146,24 +177,36 @@ export function buildWordPressSeoAttach(input: WordPressSeoAttachInput): WordPre
     stableSlug: stableTermSlug(p.name, "p", p.ascii),
   }));
 
-  const seriesName = input.seriesName?.trim() || null;
-  const series = seriesName
-    ? {
-        name: seriesName,
-        ascii: input.seriesAscii?.trim() || null,
-        stableSlug: stableTermSlug(seriesName, "s", input.seriesAscii),
-      }
-    : null;
+  const seriesNameSet: string[] = [];
+  for (const n of [
+    ...(input.seriesNames ?? []),
+    ...(input.seriesName?.trim() ? [input.seriesName.trim()] : []),
+  ]) {
+    const t = n.trim();
+    if (t) seriesNameSet.push(t);
+  }
+  const uniqueSeriesNames: string[] = [];
+  const seenSeries = new Set<string>();
+  for (const n of seriesNameSet) {
+    const key = n.replace(/\s+/g, "").toLowerCase();
+    if (seenSeries.has(key)) continue;
+    seenSeries.add(key);
+    uniqueSeriesNames.push(n);
+  }
+
+  const seriesList = uniqueSeriesNames.map((name, idx) => ({
+    name,
+    ascii: idx === 0 ? input.seriesAscii?.trim() || null : null,
+    stableSlug: stableTermSlug(name, "s", idx === 0 ? input.seriesAscii : null),
+  }));
+  const series = seriesList[0] ?? null;
 
   const categories = [...new Set((input.categories ?? []).map((c) => c.trim()).filter(Boolean))];
   const tags = [...new Set((input.tags ?? []).map((t) => t.trim()).filter(Boolean))];
 
-  let productCanonicalId: string | null = null;
-  const cid = input.productCanonicalId?.trim().toLowerCase() ?? "";
-  if (/^[a-z][a-z0-9]{2,31}$/.test(cid) && !cid.includes("-")) {
-    productCanonicalId = cid;
-  } else if (cid) {
-    notes.push("productCanonicalId_rejected_not_fanza_like");
+  const productCanonicalId = normalizeProductCanonicalId(input.productCanonicalId);
+  if (input.productCanonicalId?.trim() && !productCanonicalId) {
+    notes.push("productCanonicalId_rejected_invalid");
   }
 
   const meta: Record<string, string> = {
@@ -171,7 +214,10 @@ export function buildWordPressSeoAttach(input: WordPressSeoAttachInput): WordPre
     [WP_SEO_META_KEYS.seoDescription]: excerpt,
   };
   if (productCanonicalId) meta[WP_SEO_META_KEYS.productCid] = productCanonicalId;
-  if (seriesName) meta[WP_SEO_META_KEYS.seriesName] = seriesName;
+  if (seriesList[0]) meta[WP_SEO_META_KEYS.seriesName] = seriesList[0].name;
+  if (seriesList.length > 1) {
+    meta.otonaselect_series_names = seriesList.map((s) => s.name).join("|");
+  }
 
   const og = input.safeOgImageUrl?.trim() ?? "";
   if (og && isSafeOgImageUrl(og)) {
@@ -186,6 +232,7 @@ export function buildWordPressSeoAttach(input: WordPressSeoAttachInput): WordPre
     meta,
     performers,
     series,
+    seriesList,
     categories,
     tags,
     productCanonicalId,
@@ -202,6 +249,7 @@ export function toWordPressRestSeoFields(attach: WordPressSeoAttach): {
   seoTaxonomyHints: {
     performers: WordPressSeoAttach["performers"];
     series: WordPressSeoAttach["series"];
+    seriesList: WordPressSeoAttach["seriesList"];
     categories: string[];
     tags: string[];
   };
@@ -212,6 +260,7 @@ export function toWordPressRestSeoFields(attach: WordPressSeoAttach): {
     seoTaxonomyHints: {
       performers: attach.performers,
       series: attach.series,
+      seriesList: attach.seriesList,
       categories: attach.categories,
       tags: attach.tags,
     },

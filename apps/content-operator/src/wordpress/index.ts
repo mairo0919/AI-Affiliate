@@ -17,6 +17,7 @@ export {
   WP_SEO_META_KEYS,
   stableTermSlug,
   isSafeOgImageUrl,
+  normalizeProductCanonicalId,
 } from "./wordpress-seo-attach.js";
 export type {
   WordPressSeoAttach,
@@ -25,6 +26,8 @@ export type {
 } from "./wordpress-seo-attach.js";
 export {
   deriveWordPressTaxonomyFromEvidence,
+  deriveSeriesNamesFromEvidence,
+  normalizeTaxonomyDisplayName,
   PRODUCT_ARTICLE_CATEGORY_FALLBACK,
 } from "./evidence-taxonomy.js";
 export type {
