@@ -7,6 +7,10 @@ FROM node:${NODE_VERSION}-bookworm-slim AS base
 ARG PNPM_VERSION
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
+# bookworm-slim omits OpenSSL; Prisma needs libssl to detect engine binary (openssl-3.0.x).
+RUN apt-get update -y \
+  && apt-get install -y --no-install-recommends openssl \
+  && rm -rf /var/lib/apt/lists/*
 RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
 WORKDIR /app
 
