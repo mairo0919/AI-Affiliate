@@ -100,8 +100,13 @@ export interface WordPressPublishOneInput {
   /** Prefer product FANZA cid for image resolution (distinct from duplicate-gate keys). */
   productCanonicalId?: string | null;
   ctaUrl?: string | null;
-  /** publish | draft — default from config / allowDirectPublish */
-  mode?: "publish" | "draft";
+  /** publish | draft | future — future requires scheduledAt and PUBLIC image gate */
+  mode?: "publish" | "draft" | "future";
+  /**
+   * Absolute Instant for WordPress future reservation (JST slots via caller).
+   * When set with mode=future|publish, post dates use this Instant.
+   */
+  scheduledAt?: Date;
   /** Override dry-run (no external call, no DB write of PUBLISHED when true) */
   dryRun?: boolean;
   route?: string;
@@ -550,12 +555,16 @@ export async function publishContentVersionToWordPress(
     hasAffiliateIdHint: offer.affiliateLinkReady,
   };
 
-  const mode: "publish" | "draft" =
+  const mode: "publish" | "draft" | "future" =
     input.mode ??
     (deps.config.wordpressAllowDirectPublish &&
     deps.config.wordpressDefaultPublishMode === "publish"
       ? "publish"
       : "draft");
+
+  // future/publish both require PUBLIC image eligibility (ALLOWED hero).
+  const imageMode: "draft" | "publish" =
+    mode === "draft" ? "draft" : "publish";
 
   // Ensure DRAFT can embed RC preview images even when generation left images=[].
   // Does not upgrade usageStatus to ALLOWED. PUBLIC gate stays strict.
@@ -570,7 +579,7 @@ export async function publishContentVersionToWordPress(
 
   const imageEval = evaluateImagesForWordPressPublication({
     images: imagesForEval,
-    mode,
+    mode: imageMode,
   });
   if (!imageEval.pass) {
     return {
@@ -627,7 +636,11 @@ export async function publishContentVersionToWordPress(
     duplicate: false,
     dryRun: Boolean(input.dryRun),
     autoPublishEnabled: true,
-    allowDirectPublish: mode === "draft" ? true : deps.config.wordpressAllowDirectPublish,
+    allowDirectPublish:
+      mode === "draft"
+        ? true
+        : deps.config.wordpressAllowDirectPublish ||
+          (mode === "future" && deps.config.wordpressAllowFutureSchedule),
   });
 
   if (gate.decision === "HOLD") {
@@ -672,8 +685,31 @@ export async function publishContentVersionToWordPress(
     evidenceLabels: await loadEvidenceLabelsForProduct(deps.prisma, productCanonicalId),
   });
   const seoTermIds = await resolveSeoTermIds(publisher, seoAttach);
+  const scheduleInstant =
+    input.scheduledAt &&
+    (mode === "future" || mode === "publish") &&
+    input.scheduledAt.getTime() > Date.now()
+      ? input.scheduledAt
+      : null;
+  const effectiveMode: "draft" | "publish" | "future" =
+    scheduleInstant && mode !== "draft" ? "future" : mode;
+  if (
+    effectiveMode === "future" &&
+    !deps.config.wordpressAllowDirectPublish &&
+    !deps.config.wordpressAllowFutureSchedule
+  ) {
+    return {
+      ok: true,
+      published: false,
+      skipped: true,
+      reason: "FUTURE_SCHEDULE_DISABLED",
+      contentVersionId: version.id,
+      contentId: version.contentId,
+      duplicate: false,
+    };
+  }
   const postDates = resolveWordPressPostDates(
-    new Date(),
+    scheduleInstant ?? new Date(),
     deps.config.publicationTimezone || "Asia/Tokyo",
   );
 
@@ -684,7 +720,9 @@ export async function publishContentVersionToWordPress(
     targetFormat: "article",
     destinationRef: deps.config.wordpressBaseUrl ?? null,
     metadata: {
-      mode,
+      mode: effectiveMode,
+      status: effectiveMode,
+      wpStatus: effectiveMode === "future" ? "future" : effectiveMode,
       excerpt: seoAttach.excerpt || built.excerpt,
       summary: seoAttach.excerpt || built.excerpt,
       canonicalId,
@@ -700,6 +738,7 @@ export async function publishContentVersionToWordPress(
       seoAttachNotes: seoAttach.notes,
       wpDate: postDates.date,
       wpDateGmt: postDates.date_gmt,
+      scheduledAt: scheduleInstant?.toISOString() ?? null,
     },
   });
 
@@ -713,12 +752,12 @@ export async function publishContentVersionToWordPress(
       published = {
         ...published,
         externalId: sameVersion.publishedExternalId,
-        status: "DRAFT",
+        status: effectiveMode === "future" ? "DRAFT" : "DRAFT",
         url: published.url ?? sameVersion.publishedUrl ?? "",
       };
     } else {
       published =
-        mode === "draft" && publisher.createDraft
+        effectiveMode === "draft" && publisher.createDraft
           ? await publisher.createDraft({ prepared })
           : await publisher.publish({ prepared });
     }
@@ -787,7 +826,12 @@ export async function publishContentVersionToWordPress(
   }
 
   const now = new Date();
-  const targetStatus = published.status === "DRAFT" || mode === "draft" ? "DRAFT" : "PUBLISHED";
+  const targetStatus =
+    effectiveMode === "future"
+      ? "SCHEDULED"
+      : published.status === "DRAFT" || effectiveMode === "draft"
+        ? "DRAFT"
+        : "PUBLISHED";
   const platformMetadata = {
     canonicalId,
     productCanonicalId: productCanonicalId ?? undefined,
@@ -802,7 +846,11 @@ export async function publishContentVersionToWordPress(
     imageEvalNotes: [...imageEval.notes, ...(imageRefreshMeta.notes ?? [])],
     imageExcludedCount: imageEval.excluded.length,
     imageRefresh: imageRefreshMeta,
-    draftOnly: mode === "draft",
+    draftOnly: effectiveMode === "draft",
+    scheduledAt: scheduleInstant?.toISOString() ?? null,
+    wpDate: postDates.date,
+    wpDateGmt: postDates.date_gmt,
+    protectedWpPosts: [43, 46],
     ...(input.platformMetadata ?? {}),
   };
 

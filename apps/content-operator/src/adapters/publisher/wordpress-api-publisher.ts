@@ -56,7 +56,7 @@ export class WordPressApiPublisher implements PublisherAdapter {
     shortForm: false,
     thread: false,
     draft: true,
-    schedule: false,
+    schedule: true,
     update: true,
     delete: true,
     affiliateLinks: true,
@@ -144,11 +144,17 @@ export class WordPressApiPublisher implements PublisherAdapter {
     if (asDraft) {
       return this.createDraft(input);
     }
+    const asFuture =
+      meta.mode === "future" ||
+      meta.status === "future" ||
+      meta.wpStatus === "future";
     if (this.config.mode === "mock") {
-      return this.mockCreate(input, false);
+      return this.mockCreate(input, false, asFuture);
     }
     this.assertCanCallApi("publish");
-    return this.createOrUpdatePost(input, { status: "publish" });
+    return this.createOrUpdatePost(input, {
+      status: asFuture ? "future" : "publish",
+    });
   }
 
   async update(input: PublisherUpdateInput): Promise<PublisherPublishResult> {
@@ -169,9 +175,13 @@ export class WordPressApiPublisher implements PublisherAdapter {
     }
     this.assertCanCallApi("update");
     const meta = asRecord(input.prepared.payload.metadata);
-    // Never promote a draft refresh to publish via update().
-    const status: "draft" | "publish" =
-      meta.mode === "publish" && this.config.allowDirectPublish ? "publish" : "draft";
+    // Never promote a draft refresh to publish via update() unless explicitly future/publish.
+    let status: "draft" | "publish" | "future" = "draft";
+    if (meta.mode === "future" || meta.status === "future" || meta.wpStatus === "future") {
+      status = "future";
+    } else if (meta.mode === "publish" && this.config.allowDirectPublish) {
+      status = "publish";
+    }
     return this.createOrUpdatePost({ prepared: input.prepared }, { status, externalId: input.externalId });
   }
 
@@ -274,7 +284,7 @@ export class WordPressApiPublisher implements PublisherAdapter {
 
   private async createOrUpdatePost(
     input: PublisherDraftInput | PublisherPublishInput,
-    opts: { status: "draft" | "publish"; externalId?: string },
+    opts: { status: "draft" | "publish" | "future"; externalId?: string },
   ): Promise<PublisherPublishResult> {
     const title = String(input.prepared.payload.title ?? "");
     const content = String(input.prepared.payload.body ?? "");
@@ -336,7 +346,13 @@ export class WordPressApiPublisher implements PublisherAdapter {
       status: mapWpStatus(json.status ?? opts.status),
       responseSummary: {
         wordpressMode: "api",
-        action: opts.externalId ? "update" : opts.status === "draft" ? "createDraft" : "publish",
+        action: opts.externalId
+          ? "update"
+          : opts.status === "draft"
+            ? "createDraft"
+            : opts.status === "future"
+              ? "schedule"
+              : "publish",
         wpStatus: json.status ?? opts.status,
         slug: json.slug ?? slug ?? null,
       },
@@ -352,6 +368,7 @@ export class WordPressApiPublisher implements PublisherAdapter {
   private mockCreate(
     input: PublisherDraftInput | PublisherPublishInput,
     isDraft: boolean,
+    isFuture = false,
   ): PublisherPublishResult {
     const meta = asRecord(input.prepared.payload.metadata);
     const key =
@@ -359,20 +376,22 @@ export class WordPressApiPublisher implements PublisherAdapter {
       (typeof input.prepared.payload.contentVersionId === "string" &&
         input.prepared.payload.contentVersionId) ||
       `${String(input.prepared.payload.title)}:${String(input.prepared.payload.body).slice(0, 64)}`;
+    const kind = isDraft ? "draft" : isFuture ? "future" : "publish";
     const digest = createHash("sha256")
-      .update(`WORDPRESS|${isDraft ? "draft" : "publish"}|${key}`)
+      .update(`WORDPRESS|${kind}|${key}`)
       .digest("hex")
       .slice(0, 16);
-    const externalId = `mock-wordpress-${isDraft ? "draft-" : ""}${digest}`;
-    const url = `https://example.invalid/wordpress/${isDraft ? "drafts" : "posts"}/${externalId}`;
-    const status = isDraft ? "DRAFT" : "PUBLISHED";
+    const externalId = `mock-wordpress-${kind === "draft" ? "draft-" : ""}${digest}`;
+    const url = `https://example.invalid/wordpress/${kind === "draft" ? "drafts" : "posts"}/${externalId}`;
+    const status = isDraft || isFuture ? "DRAFT" : "PUBLISHED";
     const result: PublisherPublishResult = {
       externalId,
       url,
       status,
       responseSummary: {
         wordpressMode: "mock",
-        action: isDraft ? "createDraft" : "publish",
+        action: isDraft ? "createDraft" : isFuture ? "schedule" : "publish",
+        wpStatus: kind,
       },
     };
     this.statuses.set(externalId, { externalId, status, url });

@@ -289,6 +289,8 @@ export interface AppConfig {
   wordpressApplicationPassword: string | undefined;
   wordpressDefaultPublishMode: "draft" | "publish";
   wordpressAllowDirectPublish: boolean;
+  /** Allow WordPress status=future reservation without enabling unrestricted live publish. */
+  wordpressAllowFutureSchedule: boolean;
   wordpressAllowExternalRequests: boolean;
   wordpressApiNamespace: string;
   /** P7 Admin API / Console */
@@ -1084,6 +1086,10 @@ export function loadConfig(options?: { requireDatabaseUrl?: boolean }): AppConfi
         : "draft",
     wordpressAllowDirectPublish: parseBooleanEnv(
       process.env.WORDPRESS_ALLOW_DIRECT_PUBLISH,
+      false,
+    ),
+    wordpressAllowFutureSchedule: parseBooleanEnv(
+      process.env.WORDPRESS_ALLOW_FUTURE_SCHEDULE,
       false,
     ),
     wordpressAllowExternalRequests: parseBooleanEnv(

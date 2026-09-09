@@ -142,6 +142,13 @@ import {
   runOpsXExport,
 } from "./ops/cli-handlers.js";
 import {
+  runLocalFanzaResearchCollectCli,
+  runStockGenerateCli,
+  runWpFutureScheduleCli,
+  runStockStatusCli,
+  runStockPipelineCli,
+} from "./stock/cli-handlers.js";
+import {
   runP45ApproveContent,
   runP45CreateBloggerDraft,
   runP45DeleteBloggerDraft,
@@ -2462,9 +2469,24 @@ async function main(): Promise<void> {
     case "ops-daily-status":
       await runOpsDailyStatus();
       break;
+    case "local-fanza-research-collect":
+      await runLocalFanzaResearchCollectCli(rest);
+      break;
+    case "stock-generate":
+      await runStockGenerateCli(rest);
+      break;
+    case "wp-future-schedule":
+      await runWpFutureScheduleCli(rest);
+      break;
+    case "stock-status":
+      await runStockStatusCli();
+      break;
+    case "stock-pipeline":
+      await runStockPipelineCli(rest);
+      break;
     default:
       console.error(
-        "Usage: node dist/cli.js <...|p9-vertical|production-research-url|p8-vertical|production-check|...>",
+        "Usage: node dist/cli.js <...|stock-pipeline|local-fanza-research-collect|stock-generate|wp-future-schedule|stock-status|...>",
       );
       process.exitCode = 1;
   }
