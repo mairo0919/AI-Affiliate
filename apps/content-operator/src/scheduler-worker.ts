@@ -44,9 +44,15 @@ async function main(): Promise<void> {
       logger.info(
         `scheduler-worker tick complete schedules=${result.schedules.length} retries=${result.retries.length} analysisSkipped=${
           "skipped" in result.analysis && result.analysis.skipped
-        } contentSkipped=${"skipped" in result.content && result.content.skipped} xPublishSkipped=${
-          "skipped" in result.xPublish && result.xPublish.skipped
-        }`,
+        } contentSkipped=${"skipped" in result.content && result.content.skipped} stockSkipped=${
+          "skipped" in result.stockGeneration && result.stockGeneration.skipped
+        } publishSlotsSkipped=${
+          "skipped" in result.publishSlots && result.publishSlots.skipped
+        } reserved=${
+          "reserved" in result.publishSlots && Array.isArray(result.publishSlots.reserved)
+            ? result.publishSlots.reserved.length
+            : 0
+        } xPublishSkipped=${"skipped" in result.xPublish && result.xPublish.skipped}`,
       );
     } catch (error) {
       logger.error(
