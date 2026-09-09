@@ -44,7 +44,9 @@ async function main(): Promise<void> {
       logger.info(
         `scheduler-worker tick complete schedules=${result.schedules.length} retries=${result.retries.length} analysisSkipped=${
           "skipped" in result.analysis && result.analysis.skipped
-        } contentSkipped=${"skipped" in result.content && result.content.skipped} stockSkipped=${
+        } contentSkipped=${"skipped" in result.content && result.content.skipped} stockResearchSkipped=${
+          "skipped" in result.stockResearch && result.stockResearch.skipped
+        } stockSkipped=${
           "skipped" in result.stockGeneration && result.stockGeneration.skipped
         } publishSlotsSkipped=${
           "skipped" in result.publishSlots && result.publishSlots.skipped

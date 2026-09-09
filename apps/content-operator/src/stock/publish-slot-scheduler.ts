@@ -44,23 +44,28 @@ function slotKey(year: number, month: number, day: number, hour: number): string
   return `${year}-${p(month)}-${p(day)}T${p(hour)}:00:00+09:00`;
 }
 
-async function alreadyReservedForSlot(
+async function loadReservedSlotKeys(
   prisma: DatabaseClient["prisma"],
-  slot: string,
-): Promise<boolean> {
+): Promise<Set<string>> {
   const rows = await prisma.publicationTarget.findMany({
     where: {
       platform: "WORDPRESS",
       status: { in: ["SCHEDULED", "PUBLISHED", "DRAFT"] },
     },
     select: { platformMetadata: true },
-    take: 500,
+    take: 2_000,
   });
+  const keys = new Set<string>();
   for (const r of rows) {
     const meta = (r.platformMetadata ?? {}) as Record<string, unknown>;
-    if (meta.publishSlotKey === slot || meta.scheduledAt === slot) return true;
+    if (typeof meta.publishSlotKey === "string" && meta.publishSlotKey) {
+      keys.add(meta.publishSlotKey);
+    }
+    if (typeof meta.scheduledAt === "string" && meta.scheduledAt) {
+      keys.add(meta.scheduledAt);
+    }
   }
-  return false;
+  return keys;
 }
 
 export async function runPublishSlotScheduler(deps: {
@@ -96,17 +101,18 @@ export async function runPublishSlotScheduler(deps: {
     };
   }
 
+  const horizonDays = deps.days ?? runtime.scheduleHorizonDays;
   const slots = listUpcomingPublishSlots({
     now,
     timeZone: deps.config.publicationTimezone || "Asia/Tokyo",
     hours: runtime.publishSlotHoursJst,
-    days: deps.days ?? 3,
+    days: horizonDays,
     includePastToday: false,
   });
 
   const stock = await listApprovedStock(deps.database.prisma, {
     unusedOnly: true,
-    limit: 200,
+    limit: Math.max(300, runtime.scheduleMaxPerTick * 4),
   });
   const publicBlocked: PublishSlotScheduleResult["publicBlocked"] = [];
   const queue: Array<ApprovedStockRow & { updateExistingDraft?: boolean }> = [];
@@ -181,10 +187,15 @@ export async function runPublishSlotScheduler(deps: {
   const reserved: PublishSlotScheduleResult["reserved"] = [];
   const otherSkipped: PublishSlotScheduleResult["otherSkipped"] = [];
   let queueIdx = 0;
+  const reservedKeys = await loadReservedSlotKeys(deps.database.prisma);
+  const maxPerTick = runtime.scheduleMaxPerTick;
 
   for (const slot of slots) {
+    if (reserved.length >= maxPerTick) {
+      break;
+    }
     const key = slotKey(slot.year, slot.month, slot.day, slot.hour);
-    if (await alreadyReservedForSlot(deps.database.prisma, key)) {
+    if (reservedKeys.has(key)) {
       continue;
     }
 
@@ -229,6 +240,7 @@ export async function runPublishSlotScheduler(deps: {
           externalId: result.externalId,
           url: result.url,
         });
+        reservedKeys.add(key);
         placed = true;
       } else if (result.ok && result.skipped) {
         if (result.reason === "IMAGE_PUBLIC_ELIGIBILITY") {

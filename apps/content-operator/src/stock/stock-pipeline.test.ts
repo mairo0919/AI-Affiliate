@@ -8,12 +8,28 @@ import { normalizeProductKey } from "../daily-ops/blog-product-exclusion.js";
 import { isLikelyFanzaContentId, extractContentIdsFromHtml } from "./local-page-collector.js";
 
 describe("stock config + publish slots", () => {
-  it("defaults min stock 9 and batch 3", () => {
+  it("defaults continuous gen + 90d horizon (no hard 9/101 caps)", () => {
     const cfg = loadStockRuntimeConfig({});
-    expect(cfg.minApprovedStock).toBe(9);
+    expect(cfg.minApprovedStock).toBe(0);
     expect(cfg.generationBatch).toBe(3);
+    expect(cfg.maxGenerationsPerDay).toBe(48);
+    expect(cfg.scheduleHorizonDays).toBe(90);
+    expect(cfg.scheduleMaxPerTick).toBe(15);
+    expect(cfg.researchSoftTarget).toBe(500);
+    expect(cfg.localPageResearchInScheduler).toBe(false);
     expect(cfg.publishSlotHoursJst).toEqual([12, 21, 23]);
     expect(cfg.protectedWpPostIds).toEqual([43, 46]);
+  });
+
+  it("lists slots across 90-day horizon", () => {
+    const now = new Date("2026-09-09T01:00:00.000Z");
+    const slots = listUpcomingPublishSlots({
+      now,
+      hours: [12, 21, 23],
+      days: 90,
+    });
+    expect(slots.length).toBeGreaterThan(200);
+    expect(slots.length).toBeLessThanOrEqual(270);
   });
 
   it("lists remaining JST slots after morning", () => {

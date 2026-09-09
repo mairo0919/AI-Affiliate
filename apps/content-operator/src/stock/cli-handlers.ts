@@ -87,6 +87,7 @@ export async function runStockGenerateCli(argv: string[]): Promise<void> {
 export async function runWpFutureScheduleCli(argv: string[]): Promise<void> {
   const flags = parseFlags(argv);
   const config = loadConfig({ requireDatabaseUrl: true });
+  const runtime = loadStockRuntimeConfig();
   const database = createDatabaseClient();
   await database.connect();
   try {
@@ -95,7 +96,7 @@ export async function runWpFutureScheduleCli(argv: string[]): Promise<void> {
       database,
       lifecycle,
       config,
-      days: flags.days ? Number(flags.days) : 3,
+      days: flags.days ? Number(flags.days) : runtime.scheduleHorizonDays,
     });
     printJson({ ok: true, ...result });
   } finally {
@@ -158,8 +159,11 @@ export async function runConfirmFanzaImageTermsCli(argv: string[]): Promise<void
 /** Full local ops tick: research collect → stock generate → future schedule. */
 export async function runStockPipelineCli(argv: string[]): Promise<void> {
   const flags = parseFlags(argv);
+  const runtime = loadStockRuntimeConfig();
   await runLocalFanzaResearchCollectCli(argv);
-  await runStockGenerateCli(["--batch", flags.batch ?? "3"]);
-  await runWpFutureScheduleCli(["--days", flags.days ?? "3"]);
+  await runStockGenerateCli(["--batch", flags.batch ?? String(runtime.generationBatch)]);
+  await runWpFutureScheduleCli(
+    flags.days ? [`--days=${flags.days}`] : [`--days=${runtime.scheduleHorizonDays}`],
+  );
   await runStockStatusCli();
 }

@@ -42,6 +42,10 @@ import { ensureResearchCollectionSchedules } from "../research/ensure-collection
 import { loadStockRuntimeConfig } from "../stock/stock-config.js";
 import { runStockGenerationBatch, type StockGenerationResult } from "../stock/stock-generation-worker.js";
 import { runPublishSlotScheduler, type PublishSlotScheduleResult } from "../stock/publish-slot-scheduler.js";
+import {
+  runLocalFanzaPageResearchCollect,
+  type LocalPageCollectResult,
+} from "../stock/local-page-collector.js";
 import { probeEnabledAdultProviders } from "../providers/adult-provider-registry.js";
 
 export const DEFAULT_DUE_SCHEDULE_LIMIT = 20;
@@ -56,6 +60,7 @@ export interface SchedulerPipelineResult {
   analysis: AnalysisRunResult | Skipped;
   content: ContentGenerateResult | Skipped;
   dailyOps: DailyLiveResult | Skipped;
+  stockResearch: LocalPageCollectResult | Skipped;
   stockGeneration: StockGenerationResult | Skipped;
   publishSlots: PublishSlotScheduleResult | Skipped;
   providerProbe: Array<{
@@ -405,6 +410,10 @@ export class SchedulerPipeline {
       skipped: true,
       skipReason: "DAILY_OPS_DISABLED_OR_NOT_RUN",
     };
+    let stockResearch: SchedulerPipelineResult["stockResearch"] = {
+      skipped: true,
+      skipReason: "STOCK_RESEARCH_NOT_RUN",
+    };
     let stockGeneration: SchedulerPipelineResult["stockGeneration"] = {
       skipped: true,
       skipReason: "STOCK_GENERATION_NOT_RUN",
@@ -496,6 +505,13 @@ export class SchedulerPipeline {
     }
 
     try {
+      stockResearch = await this.runStockResearchPhase();
+    } catch (error) {
+      this.logger.warn(`stock research phase failed: ${String(error)}`);
+      stockResearch = { skipped: true, skipReason: `stock research error: ${String(error)}` };
+    }
+
+    try {
       stockGeneration = await this.runStockGenerationPhase();
     } catch (error) {
       this.logger.warn(`stock generation phase failed: ${String(error)}`);
@@ -564,6 +580,7 @@ export class SchedulerPipeline {
       analysis,
       content,
       dailyOps,
+      stockResearch,
       stockGeneration,
       publishSlots,
       providerProbe,
@@ -576,14 +593,43 @@ export class SchedulerPipeline {
     };
   }
 
+  /**
+   * Optional local FANZA page Research replenishment (batch-capped).
+   * Provider ItemList schedules remain the primary Railway path.
+   * Soft target is guidance only — never a hard stop at 101/500.
+   */
+  private async runStockResearchPhase(): Promise<SchedulerPipelineResult["stockResearch"]> {
+    const runtime = loadStockRuntimeConfig();
+    if (!runtime.localPageResearchInScheduler) {
+      return { skipped: true, skipReason: "STOCK_LOCAL_PAGE_RESEARCH_IN_SCHEDULER_FALSE" };
+    }
+    if (!this.config.researchAllowExternalRequests) {
+      return { skipped: true, skipReason: "RESEARCH_ALLOW_EXTERNAL_REQUESTS_FALSE" };
+    }
+    const lifecycle = new LifecycleRepository(this.database.prisma);
+    const research = new ResearchRepository(this.database.prisma);
+    const before = await this.database.prisma.researchItem.count();
+    const result = await runLocalFanzaPageResearchCollect({
+      lifecycle,
+      research,
+      config: this.config,
+      maxItems: runtime.localPageResearchMaxPerRun,
+      intervalMs: runtime.localPageResearchIntervalMs,
+    });
+    const after = await this.database.prisma.researchItem.count();
+    this.logger.info(
+      `stock research replenish before=${before} after=${after} softTarget=${runtime.researchSoftTarget} createdOrUpdated=${result.createdOrUpdated} attempted=${result.attempted}`,
+    );
+    return result;
+  }
+
   /** Continuous APPROVED stock fill (batch-limited). Independent of WP publish rate. */
   private async runStockGenerationPhase(): Promise<SchedulerPipelineResult["stockGeneration"]> {
     const runtime = loadStockRuntimeConfig();
     if (!runtime.stockGenerationEnabled) {
       return { skipped: true, skipReason: "STOCK_GENERATION_ENABLED_FALSE" };
     }
-    // Do not force STOCK_CONTINUOUS here — only fill toward minStock (cost control).
-    // Ops can set STOCK_CONTINUOUS=true in env for gradual growth above min.
+    // Continuous generation while unarticled Research remains; batch + daily caps only.
     const lifecycle = new LifecycleRepository(this.database.prisma);
     return runStockGenerationBatch({
       database: this.database,
@@ -593,7 +639,7 @@ export class SchedulerPipeline {
     });
   }
 
-  /** Fill next JST 12/21/23 future slots from PUBLIC-eligible APPROVED stock. */
+  /** Fill empty JST 12/21/23 future slots within horizon from PUBLIC-eligible APPROVED stock. */
   private async runPublishSlotsPhase(): Promise<SchedulerPipelineResult["publishSlots"]> {
     const runtime = loadStockRuntimeConfig();
     if (!runtime.stockPublishSchedulerEnabled) {
@@ -608,7 +654,7 @@ export class SchedulerPipeline {
       lifecycle,
       config: this.config,
       now: this.now(),
-      days: 3,
+      days: runtime.scheduleHorizonDays,
     });
   }
 

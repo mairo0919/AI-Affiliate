@@ -123,7 +123,7 @@ export function listUpcomingPublishSlots(input: {
   const now = input.now ?? new Date();
   const timeZone = input.timeZone ?? "Asia/Tokyo";
   const hours = [...(input.hours ?? [12, 21, 23])].sort((a, b) => a - b);
-  const dayCount = Math.max(1, Math.min(input.days ?? 7, 30));
+  const dayCount = Math.max(1, Math.min(input.days ?? 7, 120));
   const localFmt = new Intl.DateTimeFormat("en-CA", {
     timeZone,
     year: "numeric",

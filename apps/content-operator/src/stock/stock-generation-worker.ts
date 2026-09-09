@@ -32,6 +32,24 @@ import {
 } from "./approved-stock.js";
 import { loadStockRuntimeConfig } from "./stock-config.js";
 
+/** Count ContentVersions stamped with stockRoute on a Tokyo calendar day. */
+async function countStockGenerationsOnTokyoDay(
+  prisma: DatabaseClient["prisma"],
+  dayKey: string,
+): Promise<number> {
+  const start = new Date(`${dayKey}T00:00:00+09:00`);
+  const end = new Date(start.getTime() + 86_400_000);
+  return prisma.contentVersion.count({
+    where: {
+      createdAt: { gte: start, lt: end },
+      structuredContent: {
+        path: ["stockRoute"],
+        equals: "STOCK_GENERATION",
+      },
+    },
+  });
+}
+
 export type StockGenerationResult = {
   skipped: boolean;
   skipReason: string | null;
@@ -139,28 +157,41 @@ export async function runStockGenerationBatch(deps: {
     };
   }
 
-  const deficit = Math.max(0, runtime.minApprovedStock - unusedBefore);
-  // When above min stock, still allow one gradual batch if unarticled research remains
-  // — but never more than generationBatch per tick.
-  const batchLimit = Math.min(
-    runtime.generationBatch,
-    deps.forceBatch ?? Math.max(deficit, unusedBefore < runtime.minApprovedStock * 2 ? runtime.generationBatch : 0),
+  // Continuous generation: never stop solely because APPROVED >= 9.
+  // Cap per tick = generationBatch; optional soft daily cap for LLM cost.
+  const generatedToday = await countStockGenerationsOnTokyoDay(
+    deps.database.prisma,
+    tokyoDateString(now, daily.timezone),
   );
+  if (generatedToday >= runtime.maxGenerationsPerDay) {
+    return {
+      skipped: true,
+      skipReason: "STOCK_MAX_GENERATIONS_PER_DAY",
+      unusedApprovedBefore: unusedBefore,
+      unusedApprovedAfter: unusedBefore,
+      minStock: runtime.minApprovedStock,
+      batchLimit: runtime.generationBatch,
+      analysisOk: false,
+      analysisCandidates: 0,
+      generated: 0,
+      reviewPassed: 0,
+      excludedAsDuplicate: 0,
+      held: [],
+      approvedVersionIds: [],
+    };
+  }
 
-  // Always allow at least filling to min; if already at/above min, still generate
-  // up to batch when forceBatch set or STOCK_CONTINUOUS=true.
-  const continuous =
-    process.env.STOCK_CONTINUOUS === "1" ||
-    process.env.STOCK_CONTINUOUS === "true" ||
-    Boolean(deps.forceBatch);
-  const toGenerate = continuous
-    ? Math.min(runtime.generationBatch, deps.forceBatch ?? runtime.generationBatch)
-    : batchLimit;
+  const remainingDaily = Math.max(0, runtime.maxGenerationsPerDay - generatedToday);
+  const toGenerate = Math.min(
+    runtime.generationBatch,
+    remainingDaily,
+    deps.forceBatch ?? runtime.generationBatch,
+  );
 
   if (toGenerate <= 0) {
     return {
       skipped: true,
-      skipReason: "STOCK_ABOVE_MIN_NO_CONTINUOUS",
+      skipReason: "EMPTY_GENERATION_BUDGET",
       unusedApprovedBefore: unusedBefore,
       unusedApprovedAfter: unusedBefore,
       minStock: runtime.minApprovedStock,
