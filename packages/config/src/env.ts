@@ -41,6 +41,20 @@ export interface AppConfig {
    * WAITING_FOR_AFFILIATE_SITE_APPROVAL without fabricating material ALLOWED.
    */
   fanzaXSiteApproved: boolean;
+  /**
+   * When true, DMM ItemList is treated as approval-pending even if credentials exist.
+   * Scheduler skips FANZA collection only (CREDENTIAL/APPROVAL isolation).
+   */
+  dmmApiApprovalPending: boolean;
+  /** Auto-ensure system ResearchSchedule rows for enabled providers each tick. */
+  researchCollectionEnabled: boolean;
+  /** CSV of research acquisition provider keys (e.g. fanza,mock). Multi-ASP list. */
+  researchEnabledProviders: string[];
+  researchCollectionCron: string;
+  researchCollectionTimezone: string;
+  researchFanzaMaxPages: number;
+  researchFanzaMaxItems: number;
+  researchFanzaSort: string;
   researchScheduleFailureLimit: number;
   researchScheduleGraceMs: number;
   researchRetryEnabled: boolean;
@@ -569,6 +583,21 @@ export function loadConfig(options?: { requireDatabaseUrl?: boolean }): AppConfi
     fanzaRequestTimeoutMs: parsePositiveInt(process.env.FANZA_REQUEST_TIMEOUT_MS, 15_000),
     fanzaMaxRetries: parsePositiveInt(process.env.FANZA_MAX_RETRIES, 3),
     fanzaXSiteApproved: parseBooleanEnv(process.env.FANZA_X_SITE_APPROVED, false),
+    dmmApiApprovalPending: parseBooleanEnv(process.env.DMM_API_APPROVAL_PENDING, false),
+    researchCollectionEnabled: parseBooleanEnv(process.env.RESEARCH_COLLECTION_ENABLED, true),
+    researchEnabledProviders: (process.env.RESEARCH_ENABLED_PROVIDERS ?? "fanza")
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean),
+    researchCollectionCron: process.env.RESEARCH_COLLECTION_CRON?.trim() || "0 */6 * * *",
+    researchCollectionTimezone:
+      process.env.RESEARCH_COLLECTION_TIMEZONE?.trim() || "Asia/Tokyo",
+    researchFanzaMaxPages: parsePositiveInt(process.env.RESEARCH_FANZA_MAX_PAGES, 1),
+    researchFanzaMaxItems: Math.min(
+      parsePositiveInt(process.env.RESEARCH_FANZA_MAX_ITEMS, 100),
+      500,
+    ),
+    researchFanzaSort: process.env.RESEARCH_FANZA_SORT?.trim() || "date",
     researchScheduleFailureLimit: parsePositiveInt(
       process.env.RESEARCH_SCHEDULE_FAILURE_LIMIT,
       5,

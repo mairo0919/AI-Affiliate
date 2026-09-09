@@ -9,6 +9,7 @@ import type {
   AffiliateProviderRuntimeSnapshot,
   AffiliateProviderRuntimeStatus,
 } from "../types.js";
+import { classifyResearchProviderStatus } from "./research-availability.js";
 
 export function dmmApiCredentialsPresent(config: Pick<AppConfig, "dmmApiId" | "dmmAffiliateId">): boolean {
   return Boolean(config.dmmApiId?.trim() && config.dmmAffiliateId?.trim());
@@ -70,25 +71,28 @@ export async function readAffiliateProviderRuntimeStatus(
  */
 export function researchProviderAvailability(
   providerName: string,
-  config: Pick<AppConfig, "dmmApiId" | "dmmAffiliateId">,
-): { available: boolean; skipReason: string | null } {
-  const key = providerName.trim().toLowerCase();
-  if (key === "mock") return { available: true, skipReason: null };
-  if (key === "fanza") {
-    if (dmmApiCredentialsPresent(config)) return { available: true, skipReason: null };
-    return {
-      available: false,
-      skipReason:
-        "FANZA_API_UNAVAILABLE: DMM credentials missing or approval pending — skip FANZA API discovery only",
-    };
+  config: Pick<
+    AppConfig,
+    | "dmmApiId"
+    | "dmmAffiliateId"
+    | "dmmApiApprovalPending"
+    | "researchEnabledProviders"
+    | "researchCollectionEnabled"
+  >,
+): { available: boolean; skipReason: string | null; status?: string } {
+  const classified = classifyResearchProviderStatus(providerName, {
+    dmmApiId: config.dmmApiId,
+    dmmAffiliateId: config.dmmAffiliateId,
+    dmmApiApprovalPending: config.dmmApiApprovalPending ?? false,
+    researchEnabledProviders: config.researchEnabledProviders ?? ["fanza"],
+    researchCollectionEnabled: config.researchCollectionEnabled ?? true,
+  });
+  if (classified.status === "AVAILABLE") {
+    return { available: true, skipReason: null, status: classified.status };
   }
-  if (key === "fanza-page" || key === "fanza_page_evidence") {
-    // Official product page / JSON-LD ingest — no ItemList API required.
-    return { available: true, skipReason: null };
-  }
-  // Unknown future ASP: do not invent credentials; leave schedule as unsupported.
   return {
     available: false,
-    skipReason: `unsupported_or_unconfigured_provider:${key}`,
+    skipReason: classified.skipReason,
+    status: classified.status,
   };
 }

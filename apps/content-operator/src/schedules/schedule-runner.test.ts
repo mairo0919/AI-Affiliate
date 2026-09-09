@@ -300,7 +300,7 @@ describe("ScheduleRunner", () => {
     }).runDueSchedules();
 
     expect(outcome.status).toBe("SKIPPED");
-    expect(outcome.errorMessage).toMatch(/credentials|configuration/i);
+    expect(outcome.errorMessage).toMatch(/CREDENTIAL_MISSING|credentials|configuration/i);
     const refreshed = await schedules.findScheduleById(schedule.id);
     expect(refreshed?.consecutiveFailureCount).toBe(0);
     expect(refreshed?.isActive).toBe(true);

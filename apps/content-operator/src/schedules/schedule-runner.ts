@@ -544,7 +544,11 @@ export class ScheduleRunner {
         toDate: typeof parameters.toDate === "string" ? parameters.toDate : undefined,
       });
     }
-    throw new Error(`unsupported provider: ${schedule.providerName}`);
+    // Future ASP adapters register here. Unknown providers are skipped via checkProviderReady;
+    // this throw is a last-resort isolation boundary (caught per-schedule).
+    throw new Error(
+      `NOT_IMPLEMENTED: unsupported research provider adapter: ${schedule.providerName}`,
+    );
   }
 
   private safeNextRunAt(schedule: ResearchSchedule, after: Date): Date | null {

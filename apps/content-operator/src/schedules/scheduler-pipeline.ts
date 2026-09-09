@@ -38,6 +38,7 @@ import { RetryRunner } from "./retry-runner.js";
 import { loadDailyMultiChannelConfig } from "../daily-ops/config.js";
 import { runDailyMultiChannelLive, type DailyLiveResult } from "../daily-ops/live-orchestrator.js";
 import { LifecycleRepository } from "@ai-affiliate/database";
+import { ensureResearchCollectionSchedules } from "../research/ensure-collection-schedules.js";
 
 export const DEFAULT_DUE_SCHEDULE_LIMIT = 20;
 export const DEFAULT_DUE_RETRY_LIMIT = 20;
@@ -124,6 +125,7 @@ export class SchedulerPipeline {
   private readonly xRepo: XPublicationRepository;
   private readonly optimizationRepo: XOptimizationRepository;
   private readonly opsRepo: XOpsRepository;
+  private readonly scheduleRepository: ScheduleRepository;
 
   constructor(deps: SchedulerPipelineDeps) {
     this.logger = deps.logger;
@@ -131,6 +133,7 @@ export class SchedulerPipeline {
     this.database = deps.database;
     this.now = deps.now ?? (() => new Date());
     const schedules = new ScheduleRepository(deps.database.prisma);
+    this.scheduleRepository = schedules;
     const jobs = new JobRepository(deps.database.prisma);
     const notificationRepo = new NotificationRepository(deps.database.prisma);
     this.analysisRepo = new AnalysisRepository(deps.database.prisma);
@@ -412,6 +415,19 @@ export class SchedulerPipeline {
       skipReason: "X_OPTIMIZATION_IMPACT_EVALUATION_DISABLED",
     };
     let notifications = { processed: 0, sent: 0, failed: 0, skipped: 0 };
+
+    try {
+      // Multi-ASP: ensure system schedules for enabled providers before due runs.
+      // Missing credentials only skip that provider at execution time.
+      await ensureResearchCollectionSchedules({
+        schedules: this.scheduleRepository,
+        config: this.config,
+        logger: this.logger,
+        now: this.now,
+      });
+    } catch (error) {
+      this.logger.warn(`research auto-schedule ensure failed: ${String(error)}`);
+    }
 
     try {
       schedules = await this.scheduleRunner.runDueSchedules();

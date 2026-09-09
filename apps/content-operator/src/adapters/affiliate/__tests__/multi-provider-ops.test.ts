@@ -35,19 +35,30 @@ describe("multi-provider affiliate + X dry-run", () => {
     const fanza = researchProviderAvailability("fanza", {
       dmmApiId: undefined,
       dmmAffiliateId: undefined,
+      dmmApiApprovalPending: false,
+      researchCollectionEnabled: true,
+      researchEnabledProviders: ["fanza"],
     });
     expect(fanza.available).toBe(false);
-    expect(fanza.skipReason).toMatch(/FANZA_API_UNAVAILABLE/);
+    expect(fanza.skipReason).toMatch(/CREDENTIAL_MISSING|FANZA_API_UNAVAILABLE/);
 
     const page = researchProviderAvailability("fanza-page", {
       dmmApiId: undefined,
       dmmAffiliateId: undefined,
+      dmmApiApprovalPending: false,
+      researchCollectionEnabled: true,
+      researchEnabledProviders: ["fanza"],
     });
-    expect(page.available).toBe(true);
+    // Official HTML is not an auto ResearchItem source from Railway.
+    expect(page.available).toBe(false);
+    expect(page.skipReason).toMatch(/SOURCE_BLOCKED_FROM_RAILWAY/);
 
     const mock = researchProviderAvailability("mock", {
       dmmApiId: undefined,
       dmmAffiliateId: undefined,
+      dmmApiApprovalPending: false,
+      researchCollectionEnabled: true,
+      researchEnabledProviders: ["fanza", "mock"],
     });
     expect(mock.available).toBe(true);
   });

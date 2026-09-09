@@ -163,6 +163,14 @@ export class ScheduleRepository {
     return schedule;
   }
 
+  /** Latest non-deleted schedule with the given stable name (system auto schedules). */
+  async findScheduleByName(name: string): Promise<ResearchSchedule | null> {
+    return this.prisma.researchSchedule.findFirst({
+      where: { name, deletedAt: null },
+      orderBy: { createdAt: "desc" },
+    });
+  }
+
   async listSchedules(options?: {
     includeDeleted?: boolean;
     includeInactive?: boolean;
