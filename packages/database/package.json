@@ -12,7 +12,7 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "node ./scripts/prisma.mjs generate && tsc -p tsconfig.json",
     "generate": "node ./scripts/prisma.mjs generate",
     "migrate": "node ./scripts/prisma.mjs migrate deploy",
     "migrate:dev": "node ./scripts/prisma.mjs migrate dev",
