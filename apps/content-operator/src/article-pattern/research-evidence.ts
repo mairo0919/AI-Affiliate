@@ -84,7 +84,7 @@ export function buildResearchEvidence(input: {
     });
     // Title facets — same grain as EvidencePack (profile SSOT)
     const facets = title
-      .split(/[\s　【】\[\]\|｜]+/)
+      .split(/[\s\u3000【】[\]|｜]+/)
       .map((p) => p.trim())
       .filter((p) => p.length >= 2 && p.length <= 40 && /[\u4e00-\u9fffァ-ヶー]/.test(p));
     const qty = title.match(/\d+\s*(?:名|人|時間|分|作品)/g) ?? [];

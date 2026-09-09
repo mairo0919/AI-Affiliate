@@ -6,7 +6,6 @@
 import { describe, expect, it } from "vitest";
 import {
   GENERATION_AUTHORITY_PRIORITY,
-  LEGACY_GENERATION_AUTHORITY_PRIORITY,
   buildGenerationAuthorityPromptContract,
   buildOptionBGenerationAuthority,
   estimateAuthorityJsonBytes,
@@ -22,7 +21,6 @@ import {
   writingSkeletonFallback,
   toWritingSkeletonPromptContract,
 } from "../../article-pattern/writing-skeleton.js";
-import { assignEvidenceToWritingSkeleton } from "../../article-pattern/skeleton-evidence-assignment.js";
 import { buildProductMaterialProfileFromPack } from "../../article-pattern/reference-type-profile.js";
 import { ensureFeasibleWritingSkeleton } from "../../article-pattern/skeleton-feasibility.js";
 import { extractTransformationFromEditorialBlueprint } from "../../article-pattern/reference-editorial-transformation.js";

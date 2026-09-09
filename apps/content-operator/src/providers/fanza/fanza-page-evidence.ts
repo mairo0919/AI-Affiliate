@@ -461,7 +461,11 @@ export function mergeItemListAndPageImages(input: {
     );
   }
 
-  const merged = [...map.values()].map(({ _rawCount: _, ...rest }) => rest);
+  const merged = [...map.values()].map((entry): MergedProductImageEvidence => {
+    const rest = { ...entry } as Acc & { _rawCount?: number };
+    Reflect.deleteProperty(rest, "_rawCount");
+    return rest as MergedProductImageEvidence;
+  });
   const uniquePackageCount = merged.filter((m) => m.family === "package").length;
   const uniqueSampleSceneCount = merged.filter((m) => m.family === "sample").length;
   return {

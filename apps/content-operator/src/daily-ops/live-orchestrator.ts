@@ -659,7 +659,7 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
           } else {
             const contents = new ContentRepository(deps.database.prisma);
             const contentId = created.contentId;
-            let row = await contents.findGeneratedContentById(contentId);
+            const row = await contents.findGeneratedContentById(contentId);
             if (!row) throw new Error("generated content missing");
 
             // Ensure destination matches route (DIRECT affiliate vs blog URL)

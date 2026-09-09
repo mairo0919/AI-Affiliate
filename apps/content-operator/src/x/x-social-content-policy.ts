@@ -126,7 +126,7 @@ function extractActressHint(title: string, facets: string[]): string | null {
   }
   // Common JP title pattern: leading personal name before product keywords
   const m = title.match(
-    /^([一-龯ぁ-んァ-ンー]{2,12})(?=\s|　|の|S1|エスワン|ベスト|総集|8時間|\d)/u,
+    /^([一-龯ぁ-んァ-ンー]{2,12})(?=\s|\u3000|の|S1|エスワン|ベスト|総集|8時間|\d)/u,
   );
   return m?.[1] ?? null;
 }

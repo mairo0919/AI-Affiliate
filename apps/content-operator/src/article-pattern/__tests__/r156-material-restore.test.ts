@@ -61,7 +61,6 @@ describe("R156 material restore", () => {
     const { plan, profile } = planFor(MIZD_TITLE, MIZD_DESC, ["松本いちか"]);
     expect(profile.materialDepth).toBe("rich");
     const body = plan.body.flatMap((b) => b.facts);
-    const all = articlePlanAllFacts(plan).join("\n");
     // Short theme tags may be absorbed into broader clauses under current projection.
     expect(body.some((f) => f.includes("小悪魔") || /痴女|激ピス|メスガキ/.test(f))).toBe(true);
     expect(body.length).toBeGreaterThan(5);

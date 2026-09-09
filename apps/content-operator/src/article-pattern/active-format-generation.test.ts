@@ -10,13 +10,9 @@ import {
 } from "@ai-affiliate/database";
 import { MockLLMProvider } from "../adapters/llm/mock-llm-provider.js";
 import { ContentGenerationService } from "../generation/content-generation-service.js";
-import { QualityGateService } from "../generation/quality-gate.js";
 import { seedP45Prompts } from "../generation/p45-service.js";
 import { ArticlePatternService } from "./article-pattern-service.js";
-import {
-  asResolveFormatSpec,
-  createResolveActiveFormat,
-} from "./resolve-active-format.js";
+import { createResolveActiveFormat } from "./resolve-active-format.js";
 import type { ArticleFormatSpec } from "./types.js";
 import { DEFAULT_SINGLE_WRITING_POLICY } from "./types.js";
 

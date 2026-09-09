@@ -130,9 +130,7 @@ import {
 import {
   buildEvidencePack,
   evidenceAllowlistIdsFromPack,
-  toOptionBWriterSourceMaterial,
   toOptionBWriterSourceMaterialFromPack,
-  claimStatementsFromPageEvidence,
 } from "../article-pattern/evidence-pack.js";
 import { isWriterCatalogConfirmation } from "../article-pattern/writer-evidence-filter.js";
 import { buildProductMaterialProfileFromPack } from "../article-pattern/reference-type-profile.js";
@@ -618,8 +616,6 @@ export class ContentGenerationService {
         : "bridge_only_if_editorial_value",
     });
     const brainChannelPlan = buildBlogChannelPlan(brainCorePlan);
-    let brainGenerationContract: ReturnType<typeof buildBrainGenerationInputContract>;
-    let brainGenerationPromptContract: Record<string, unknown>;
     // r79 — always bind section cardinality (Structure Pattern optional)
     const scarceDepth = editorialExecution.materialDepth === "scarce";
     const boundMaxSections = scarceDepth
@@ -746,7 +742,7 @@ export class ContentGenerationService {
         articleOutputContract.maxArticleSections,
       );
     }
-    brainGenerationContract = buildBrainGenerationInputContract({
+    const brainGenerationContract = buildBrainGenerationInputContract({
       corePlan: brainCorePlan,
       channelPlan: brainChannelPlan,
       claims: claimSelection.selectedClaims.map((c) => ({
@@ -756,7 +752,8 @@ export class ContentGenerationService {
       })),
       articlePlan,
     });
-    brainGenerationPromptContract = toBrainGenerationPromptContract(brainGenerationContract);
+    let brainGenerationPromptContract: Record<string, unknown> =
+      toBrainGenerationPromptContract(brainGenerationContract);
 
     // Keep Reference contract for Brain/compliance advisory — NOT Generator dump
     const referenceGuidedPrompt = toReferenceGuidedPromptContract(referenceGuided);
@@ -1008,19 +1005,9 @@ export class ContentGenerationService {
       experienceApplyTrace = { error: "experience_retrieve_or_seed_failed" };
     }
 
-    const claimSelectionPolicy = {
-      mode: "selective",
-      maxClaimsSuggested: claimSelection.maxClaimsSuggested,
-      deferredClaimIds: claimSelection.deferredClaimIds,
-      openingClaimIds: claimSelection.openingClaimIds,
-      hookClaimIds: claimUsagePlan.hookClaimIds,
-      developmentClaimIds: claimUsagePlan.developmentClaimIds,
-      note: "Use generationAuthority + brainGenerationContract segmentExecution. Each claimId in at most one role. Do not force-use deferredClaimIds.",
-    };
-
     // Seed schema from SSOT (includes segmentContributionProvenance); DB schema may be stale.
     const baseSchema = getBloggerArticleLlmJsonSchema();
-    let outputSchema = applyArticleOutputContractToLlmSchema(baseSchema, articleOutputContract);
+    const outputSchema = applyArticleOutputContractToLlmSchema(baseSchema, articleOutputContract);
 
     const modelRun = await this.repo.createModelRun({
       provider: this.llm.providerKey,
@@ -1092,7 +1079,7 @@ export class ContentGenerationService {
     let planViolationFeedback: PlanViolationFeedback | null = null;
     let rawPlanComplianceMeta: Record<string, unknown> | null = null;
     let articlePlanComplianceMeta: Record<string, unknown> | null = null;
-    let publishValidation = {
+    const publishValidation = {
       articlePlanCompliancePass: true,
       claimValidationPass: true,
       integrityPass: true,
@@ -2663,24 +2650,6 @@ export class ContentGenerationService {
 }
 
 export { BudgetBlockedError };
-
-function compactFacetsToXPost(input: {
-  hookFacets: string[];
-  supportFacets: string[];
-  url: string | null;
-}): string {
-  const hook = input.hookFacets.filter(Boolean).slice(0, 2);
-  const support = input.supportFacets.filter(Boolean).slice(0, 1);
-  let t =
-    hook.length === 0
-      ? ""
-      : support.length > 0
-        ? `${hook.join("、")}。${support[0]}。`
-        : `${hook.join("、")}。`;
-  if (!t) t = "公開事実を確認。";
-  if (input.url) t = `${t} ${input.url}`;
-  return t;
-}
 
 function createBodyFingerprint(title: string, body: string): string {
   return createHash("sha256").update(`${title}\n${body}`).digest("hex");

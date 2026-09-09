@@ -1,4 +1,4 @@
-// @ts-nocheck
+/// <reference lib="dom" />
 /**
  * Browser-rendered FANZA product page research (Playwright).
  * Restored for page-evidence browser fallback; evaluate callbacks use DOM APIs.
@@ -194,7 +194,7 @@ export async function fetchFanzaBrowserRenderedPage(
 
     return {
       ok: pageNorm.canUseAsProductSource,
-      reason: pageNorm.canUseAsProductSource ? undefined : pageNorm.classificationReason,
+      reason: pageNorm.canUseAsProductSource ? undefined : (pageNorm.classificationReason ?? undefined),
       page: pageNorm,
       ageGateHandled,
       renderDurationMs,
@@ -335,7 +335,7 @@ function fetchFromFixtureHtmlWithoutBrowser(input: {
 
   return {
     ok: pageNorm.canUseAsProductSource,
-    reason: pageNorm.canUseAsProductSource ? undefined : pageNorm.classificationReason,
+    reason: pageNorm.canUseAsProductSource ? undefined : (pageNorm.classificationReason ?? undefined),
     page: pageNorm,
     ageGateHandled: false,
     renderDurationMs,

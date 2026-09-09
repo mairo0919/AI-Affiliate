@@ -384,7 +384,8 @@ export function fillOptionBArticleDefaults(
     raw.cta && typeof raw.cta === "object" && !Array.isArray(raw.cta)
       ? (raw.cta as { label?: string; url?: string | null })
       : { label: OPTION_B_CTA_DEFAULT_LABEL, url: null };
-  const { lead: _legacyLeadIgnored, ...withoutLead } = raw;
+  const withoutLead = { ...raw };
+  delete withoutLead.lead;
   return {
     ...withoutLead,
     title: title || "商品紹介",

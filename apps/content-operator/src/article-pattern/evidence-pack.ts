@@ -324,7 +324,7 @@ function titleFacets(title: string): string[] {
   // Remaining chunks outside balanced pairs — strip unpaired openers only.
   const withoutBalanced = balanced.reduce((acc, b) => acc.split(b).join(" "), t);
   for (const part of withoutBalanced
-    .split(/[\s　【】\[\]\|｜]+/)
+    .split(/[\s\u3000【】[\]|｜]+/)
     .filter((p) => p.length >= 4 && p.length <= 40)) {
     if (!/[\u4e00-\u9fffァ-ヶー]/.test(part)) continue;
     if (!/独占|特別|緊急/.test(part) || part.length >= 8) out.push(part);

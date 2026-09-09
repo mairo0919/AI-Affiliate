@@ -76,7 +76,7 @@ export function looksLikeJammedCastNames(namePayload: string): boolean {
   const raw = namePayload.trim();
   if (!raw) return false;
   if (/[・、，,]/.test(raw)) return false; // explicit list separators → OK
-  const compact = raw.replace(/[\s「」『』【】\[\]()（）]/g, "");
+  const compact = raw.replace(/[\s「」『』【】[\]()（）]/g, "");
   // Pure CJK/kana blob long enough to be two+ names smashed together
   if (/^[\u3040-\u30ff\u4e00-\u9faf]{8,}$/.test(compact)) return true;
   return false;

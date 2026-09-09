@@ -16,11 +16,6 @@ import {
   isTitleSafeExecutionTarget,
   isUnsafeTitleExecutionTarget,
 } from "./writer-evidence-filter.js";
-import {
-  balanceReaderFacingPunctuation,
-  repairBracketSplitPlanFacts,
-  hasOrphanPairedPunctuation,
-} from "./punctuation-balance.js";
 
 export {
   balanceReaderFacingPunctuation,
@@ -62,7 +57,7 @@ export function compactTitleDisplaySurface(fact: string): string | null {
   if (m) return `デビュー${m[1]}周年`;
   // Long work-form clause → trailing SOURCE noun (e.g. …究極のピストン作品).
   // Substring only — no invented modifiers. Skip spaced product titles.
-  if (f.length > 32 && !/\s|　/u.test(f)) {
+  if (f.length > 32 && !/\s|\u3000/u.test(f)) {
     // Clause-like dumps only (not already-compact labels).
     if (/(?:させる|した|する|ない|れる|られる|て|を|が|と言)/u.test(f)) {
       m = f.match(

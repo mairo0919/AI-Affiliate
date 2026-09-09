@@ -6,7 +6,6 @@ import type { AppConfig } from "@ai-affiliate/config";
 import type {
   LifecycleRepository,
   PublicationRecord,
-  PublicationTarget,
 } from "@ai-affiliate/database";
 import type { PublisherAdapter } from "../adapters/types.js";
 import {
@@ -807,7 +806,6 @@ export async function publishContentVersionToWordPress(
     ...(input.platformMetadata ?? {}),
   };
 
-  let target: PublicationTarget;
   if (updatingExistingDraft && sameVersion) {
     if (typeof deps.lifecycle.updatePublicationTarget === "function") {
       await deps.lifecycle.updatePublicationTarget(sameVersion.id, {
@@ -851,7 +849,7 @@ export async function publishContentVersionToWordPress(
     };
   }
 
-  target = await deps.lifecycle.createPublicationTarget({
+  const target = await deps.lifecycle.createPublicationTarget({
     contentId: version.contentId,
     contentVersionId: version.id,
     platform: "WORDPRESS",

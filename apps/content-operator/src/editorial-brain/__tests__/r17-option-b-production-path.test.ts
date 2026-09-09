@@ -301,7 +301,7 @@ describe("OPTION B production path (LLM=0)", () => {
       "utf8",
     );
     expect(xAdapter).toMatch(/buildXChannelPlan/);
-    expect(xAdapter).toMatch(/channel:\s*[\"']X[\"']/);
+    expect(xAdapter).toMatch(/channel:\s*["']X["']/);
   });
 
   it("O. LearningRule unchanged in OPTION B modules", () => {

@@ -10,18 +10,13 @@ import {
   buildProductMaterialProfileFromFacts,
   buildProductMaterialProfileFromPack,
   profileSatisfiesReferenceRequirements,
-  classifyProductMaterialProfile,
-  referenceTypeCompatible,
 } from "../../article-pattern/reference-type-profile.js";
 import { assignEvidenceToWritingSkeleton } from "../../article-pattern/skeleton-evidence-assignment.js";
 import {
   ensureFeasibleWritingSkeleton,
   skeletonFromMaterialProfile,
 } from "../../article-pattern/skeleton-feasibility.js";
-import {
-  writingSkeletonFromReference,
-  writingSkeletonFallback,
-} from "../../article-pattern/writing-skeleton.js";
+import { writingSkeletonFallback } from "../../article-pattern/writing-skeleton.js";
 import type { WritingSkeleton } from "../../article-pattern/writing-skeleton.js";
 import { detectReferenceNearCopy } from "../../article-pattern/reference-near-copy.js";
 import { resolveEditorialBrainMode } from "../index.js";

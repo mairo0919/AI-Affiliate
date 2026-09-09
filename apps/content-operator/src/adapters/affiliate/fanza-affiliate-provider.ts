@@ -73,7 +73,7 @@ export class FanzaAffiliateProvider implements AffiliateProvider {
     });
   }
 
-  async searchProducts(_query: string, _limit = 10): Promise<AffiliateProductNormalized[]> {
+  async searchProducts(): Promise<AffiliateProductNormalized[]> {
     // API discovery is ResearchProvider (FanzaResearchProvider) responsibility.
     // Without credentials we return [] so callers can continue with other providers.
     if (!dmmApiCredentialsPresent(this.opts.config)) {

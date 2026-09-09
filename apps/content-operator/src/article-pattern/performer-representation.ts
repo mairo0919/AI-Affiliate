@@ -498,7 +498,6 @@ export function representationCoverage(
   planFacts: { title: string[]; lead: string[] },
   rep: PerformerRepresentation,
 ): RepresentationCoverage {
-  const leadTitle = [...planFacts.title, ...planFacts.lead];
   if (rep.mode === "single") return "individual";
   if (rep.mode === "dual_host") {
     return dualHostLeadCoversFacts(planFacts.lead, rep) ? "dual_combined" : "none";

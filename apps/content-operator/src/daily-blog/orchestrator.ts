@@ -145,7 +145,7 @@ export function runDailyBlogOrchestratorDry(
     input.knownPublications,
   );
   void skipped;
-  for (const _ of eligible) {
+  for (let i = 0; i < eligible.length; i++) {
     if (!noteCandidateScan(budget, {
       maxLlmProductsPerRun: input.config.maxLlmProductsPerRun,
       maxLlmCallsPerRun: input.config.maxLlmCallsPerRun,

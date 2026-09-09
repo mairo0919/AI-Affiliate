@@ -1,5 +1,4 @@
 import type { AppConfig } from "@ai-affiliate/config";
-import { requireDmmCredentials } from "@ai-affiliate/config";
 import type { DatabaseClient, ScheduleParameters } from "@ai-affiliate/database";
 import {
   DEFAULT_SCHEDULE_GRACE_MS,

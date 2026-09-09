@@ -27,7 +27,7 @@ export function isCatalogGenreProvenance(
     s.includes("catalog.genre") ||
     s.includes("videoobject.genre") ||
     s.includes("product.genre") ||
-    /(?:^|[:.])genre(?:$|[.\[])/.test(s)
+    /(?:^|[:.])genre(?:$|[.[])/.test(s)
   );
 }
 

@@ -42,7 +42,7 @@ const EVIDENCE_TAG_TOKENS = [
  */
 const CATEGORY_EVIDENCE_RULES: Array<{ needle: RegExp; category: string }> = [
   { needle: /ベスト|総集編|\bBEST\b/i, category: "ベスト・総集編" },
-  { needle: /(?:^|[\s　/／])VR(?:$|[\s　/／])|ＶＲ|\bVR\b/, category: "VR" },
+  { needle: /(?:^|[\s\u3000/／])VR(?:$|[\s\u3000/／])|ＶＲ|\bVR\b/, category: "VR" },
   { needle: /単体作品/, category: "単体作品" },
   { needle: /企画/, category: "企画" },
 ];

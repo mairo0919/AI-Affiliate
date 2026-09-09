@@ -206,7 +206,7 @@ export function resolveCoreAngle(input: {
     if (!fact || fact.length < 10) continue;
     if (/^[\u4e00-\u9fffァ-ヶー]{2,8}$/u.test(fact)) continue; // bare name
     let score = 0;
-    let reason: CoreAngleRankReason = "discriminative";
+    const reason: CoreAngleRankReason = "discriminative";
     if (e.provenance.sourceType === "product_title") score += 80;
     if (fact.length >= 16) score += 40;
     if (/ハーレム|ベスト|ノンストップ|写真館|騎乗|逆\d*P/.test(fact)) score += 30;

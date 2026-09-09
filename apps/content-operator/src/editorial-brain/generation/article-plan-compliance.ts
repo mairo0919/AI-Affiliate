@@ -690,7 +690,6 @@ export function applyArticlePlanComplianceMutations(input: {
       continue;
     }
 
-    const trialKept = currentKept.filter((_, j) => j !== dropIdx);
     const trialArticle = bodySentencesToArticle(input.article, body, keptFlags, i);
     const complianceIfDropped = validateArticlePlanCompliance({
       article: trialArticle,

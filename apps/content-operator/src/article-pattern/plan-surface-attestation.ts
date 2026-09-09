@@ -106,7 +106,7 @@ function planThemeOrPlayTokens(planFacts: readonly string[]): string[] {
     if (isBareWorkThemeFact(t) || /人妻|NTR|痴女|追撃ピストン|プレイ|シーン/u.test(t)) {
       out.push(t);
     }
-    for (const part of t.split(/[・、,／\/\|]/u)) {
+    for (const part of t.split(/[・、,／/|]/u)) {
       const p = part.replace(/などを収録|を収録|など/gu, "").trim();
       if (
         p.length >= 2 &&

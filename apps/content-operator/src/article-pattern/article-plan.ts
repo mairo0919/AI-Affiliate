@@ -318,32 +318,6 @@ function isUnsafeLeadExecutionTarget(text: string): boolean {
   return isUnsafeTitleExecutionTarget(text) || isNoiseContentIdFact(text);
 }
 
-function isProtectedRepresentationLeadFact(
-  fact: string,
-  rep?: ProductMaterialProfile["performerRepresentation"],
-): boolean {
-  if (!rep) return false;
-  const f = fact.trim();
-  if (!f) return false;
-  const labels = [
-    rep.representationLabel,
-    rep.collectionLabel,
-    rep.combinedLabel,
-    rep.neutralMultiLabel,
-  ].filter((x): x is string => typeof x === "string" && x.trim().length > 0);
-  return labels.some((l) => l.trim() === f);
-}
-
-function leadFactAllowed(
-  fact: string,
-  rep?: ProductMaterialProfile["performerRepresentation"],
-): boolean {
-  const f = fact.trim();
-  if (!f) return false;
-  if (isProtectedRepresentationLeadFact(f, rep)) return true;
-  return !isUnsafeLeadExecutionTarget(f);
-}
-
 function itemSemanticFamilyId(item: EvidencePackItem): string {
   return packItemSemanticFamilyId(item);
 }
@@ -563,21 +537,6 @@ function isBlockedByTitleLead(safe: string, titleLeadFacts: Set<string>): boolea
   if (!titleLeadFacts.has(safe)) return false;
   // Short work-theme facets may also fuel body product-understanding (not title-only).
   if (WORK_THEME_FACET_RE.test(safe)) return false;
-  return true;
-}
-
-function expansionCandidateEligible(
-  item: EvidencePackItem,
-  titleLeadFacts: Set<string>,
-  selectedFacts: Set<string>,
-): boolean {
-  if (item.type === "product_identity") return false;
-  const safe = safeFactFromItem(item);
-  if (!safe) return false;
-  if (selectedFacts.has(safe)) return false;
-  if (isBlockedByTitleLead(safe, titleLeadFacts)) return false;
-  // Performer career / external activity is not core product-understanding body fuel.
-  if (isDemotedBodyMaterial(safe)) return false;
   return true;
 }
 

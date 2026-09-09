@@ -27,7 +27,8 @@ export function stripArticleLeadKey<T extends Record<string, unknown>>(
   if (!Object.prototype.hasOwnProperty.call(article, "lead")) {
     return article as Omit<T, "lead">;
   }
-  const { lead: _removed, ...rest } = article;
+  const rest = { ...article };
+  delete rest.lead;
   return rest as Omit<T, "lead">;
 }
 
