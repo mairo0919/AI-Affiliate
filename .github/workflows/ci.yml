@@ -13,19 +13,22 @@ jobs:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_DB: ai_affiliate
+          # Dedicated test DB name required by packages/database test safety gate
+          # (forbids bare "ai_affiliate" / requires "test" in the database name).
+          POSTGRES_DB: ai_affiliate_test
           POSTGRES_USER: ai_affiliate
           POSTGRES_PASSWORD: ai_affiliate_dev
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U ai_affiliate -d ai_affiliate"
+          --health-cmd "pg_isready -U ai_affiliate -d ai_affiliate_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
 
     env:
-      DATABASE_URL: postgresql://ai_affiliate:ai_affiliate_dev@localhost:5432/ai_affiliate?schema=public
+      DATABASE_URL: postgresql://ai_affiliate:ai_affiliate_dev@localhost:5432/ai_affiliate_test?schema=public
+      TEST_DATABASE_URL: postgresql://ai_affiliate:ai_affiliate_dev@localhost:5432/ai_affiliate_test?schema=public
       NODE_ENV: test
       LOG_LEVEL: error
       # DMM credentials intentionally unset — CI must not call real DMM API
