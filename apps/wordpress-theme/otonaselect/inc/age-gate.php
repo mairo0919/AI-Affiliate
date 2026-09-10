@@ -68,12 +68,16 @@ function otonaselect_age_gate_should_skip_request(): bool {
 	if (defined('XMLRPC_REQUEST') && XMLRPC_REQUEST) {
 		return true;
 	}
-	// Feeds / sitemaps must stay crawlable without a gate body.
-	if (is_feed()) {
+	$request = isset($_SERVER['REQUEST_URI']) ? (string) wp_unslash($_SERVER['REQUEST_URI']) : '';
+	if ($request !== '' && preg_match('#/(wp-json|wp-admin|wp-login\.php|xmlrpc\.php|wp-cron\.php)#i', $request)) {
 		return true;
 	}
-	$request = isset($_SERVER['REQUEST_URI']) ? (string) wp_unslash($_SERVER['REQUEST_URI']) : '';
-	if ($request !== '' && preg_match('#/(wp-json|wp-admin|wp-login\.php|xmlrpc\.php)#i', $request)) {
+	if ($request !== '' && preg_match('#/wp-sitemap([a-z0-9_-]*)\.xml#i', $request)) {
+		return true;
+	}
+	// Feeds only when WP_Query is ready (avoids fatals on older WP / early hooks).
+	global $wp_query;
+	if (isset($wp_query) && class_exists('WP_Query') && $wp_query instanceof WP_Query && is_feed()) {
 		return true;
 	}
 	if (is_user_logged_in() && current_user_can('edit_posts')) {
@@ -138,12 +142,14 @@ function otonaselect_age_gate_record(string $type): void {
 	if (!is_array($store)) {
 		$store = ['view' => 0, 'accepted' => 0, 'denied' => 0];
 	}
-	$key = match ($type) {
-		'age_gate_view' => 'view',
-		'age_gate_accepted' => 'accepted',
-		'age_gate_denied' => 'denied',
-		default => null,
-	};
+	$key = null;
+	if ($type === 'age_gate_view') {
+		$key = 'view';
+	} elseif ($type === 'age_gate_accepted') {
+		$key = 'accepted';
+	} elseif ($type === 'age_gate_denied') {
+		$key = 'denied';
+	}
 	if ($key === null) {
 		return;
 	}
@@ -325,34 +331,23 @@ CSS;
 }
 
 add_action('template_redirect', static function (): void {
-	otonaselect_age_gate_handle_post();
+	try {
+		otonaselect_age_gate_handle_post();
 
-	if (otonaselect_age_gate_should_skip_request()) {
+		if (otonaselect_age_gate_should_skip_request()) {
+			return;
+		}
+
+		$cookie = otonaselect_age_gate_cookie_value();
+		if ($cookie === OTONASELECT_AGE_COOKIE_OK) {
+			return;
+		}
+		if ($cookie === OTONASELECT_AGE_COOKIE_DENY) {
+			otonaselect_age_gate_render_and_exit('denied');
+		}
+		otonaselect_age_gate_render_and_exit('gate');
+	} catch (Throwable $e) {
+		// Theme fallback must never white-screen the site.
 		return;
 	}
-
-	$cookie = otonaselect_age_gate_cookie_value();
-	if ($cookie === OTONASELECT_AGE_COOKIE_OK) {
-		return;
-	}
-	if ($cookie === OTONASELECT_AGE_COOKIE_DENY) {
-		otonaselect_age_gate_render_and_exit('denied');
-	}
-	otonaselect_age_gate_render_and_exit('gate');
 }, 0);
-
-/**
- * Do not enqueue front analytics / enhance scripts on gated responses
- * (those templates exit before wp_enqueue runs for the main page — kept for safety).
- */
-add_action('wp_enqueue_scripts', static function (): void {
-	if (otonaselect_age_gate_should_skip_request()) {
-		return;
-	}
-	$cookie = otonaselect_age_gate_cookie_value();
-	if ($cookie === OTONASELECT_AGE_COOKIE_OK) {
-		return;
-	}
-	wp_dequeue_script('otonaselect-analytics');
-	wp_dequeue_script('otonaselect-front-enhance');
-}, 100);
