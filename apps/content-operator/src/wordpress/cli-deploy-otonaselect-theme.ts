@@ -46,7 +46,7 @@ function buildSyncPluginZip(): { zipPath: string; workDir: string } {
 /**
  * Plugin Name: OtonaSelect Theme Sync
  * Description: One-shot sync of otonaselect block theme files (v1.6). Safe to deactivate after sync.
- * Version: 1.6.1
+ * Version: 1.6.2
  */
 declare(strict_types=1);
 if (!defined('ABSPATH')) { exit; }
@@ -217,9 +217,9 @@ export async function runWpDeployOtonaselectThemeCli(argv: string[]): Promise<vo
   const { zipPath, workDir } = buildSyncPluginZip();
   const outDir = resolve(HERE, "../../tmp-artifacts");
   mkdirSync(outDir, { recursive: true });
-  const savedZip = join(outDir, "otonaselect-theme-sync-1.6.1.zip");
+  const savedZip = join(outDir, "otonaselect-theme-sync-1.6.2.zip");
   writeFileSync(savedZip, readFileSync(zipPath));
-  const themeZip = join(outDir, "otonaselect-theme-1.6.1.zip");
+  const themeZip = join(outDir, "otonaselect-theme-1.6.2.zip");
   execFileSync("zip", ["-r", "-q", themeZip, "otonaselect", "-x", "*.DS_Store"], {
     cwd: resolve(THEME_SRC, ".."),
   });

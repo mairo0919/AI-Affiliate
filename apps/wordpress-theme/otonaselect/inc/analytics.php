@@ -35,6 +35,11 @@ function otonaselect_analytics_store_default(): array {
 		'tags' => [],
 		'referrers' => [],
 		'cta' => [],
+		'ageGate' => [
+			'view' => 0,
+			'accepted' => 0,
+			'denied' => 0,
+		],
 		'updatedAt' => gmdate('c'),
 	];
 }
@@ -86,15 +91,18 @@ function otonaselect_ga4_measurement_id(): string {
  */
 function otonaselect_analytics_record_event(array $payload): array {
 	$type = isset($payload['type']) && is_string($payload['type']) ? $payload['type'] : '';
-	$allowed = ['page_view', 'cta_click'];
+	$allowed = ['page_view', 'cta_click', 'age_gate_view', 'age_gate_accepted', 'age_gate_denied'];
 	if (!in_array($type, $allowed, true)) {
 		return ['ok' => false, 'error' => 'invalid_type'];
 	}
 
 	$store = otonaselect_analytics_get_store();
+	if (!isset($store['ageGate']) || !is_array($store['ageGate'])) {
+		$store['ageGate'] = ['view' => 0, 'accepted' => 0, 'denied' => 0];
+	}
 	$day = otonaselect_analytics_day_key();
 	if (!isset($store['days'][$day]) || !is_array($store['days'][$day])) {
-		$store['days'][$day] = ['pv' => 0, 'visits' => 0, 'cta' => 0];
+		$store['days'][$day] = ['pv' => 0, 'visits' => 0, 'cta' => 0, 'ageGateView' => 0, 'ageGateAccepted' => 0, 'ageGateDenied' => 0];
 	}
 
 	$post_id = isset($payload['postId']) ? (int) $payload['postId'] : 0;
@@ -161,6 +169,20 @@ function otonaselect_analytics_record_event(array $payload): array {
 			: '';
 		$cta_key = $provider . ':' . $cta . ($product ? ':' . $product : '');
 		$store['cta'][$cta_key] = (int) ($store['cta'][$cta_key] ?? 0) + 1;
+	}
+
+	if ($type === 'age_gate_view') {
+		$store['days'][$day]['ageGateView'] = (int) ($store['days'][$day]['ageGateView'] ?? 0) + 1;
+		$store['ageGate']['view'] = (int) ($store['ageGate']['view'] ?? 0) + 1;
+	}
+	if ($type === 'age_gate_accepted') {
+		$store['days'][$day]['ageGateAccepted'] = (int) ($store['days'][$day]['ageGateAccepted'] ?? 0) + 1;
+		$store['ageGate']['accepted'] = (int) ($store['ageGate']['accepted'] ?? 0) + 1;
+	}
+	if ($type === 'age_gate_denied') {
+		// Aggregate counter only — no adult titles / personal identifiers.
+		$store['days'][$day]['ageGateDenied'] = (int) ($store['days'][$day]['ageGateDenied'] ?? 0) + 1;
+		$store['ageGate']['denied'] = (int) ($store['ageGate']['denied'] ?? 0) + 1;
 	}
 
 	otonaselect_analytics_save_store($store);
@@ -311,16 +333,24 @@ function otonaselect_analytics_summary(int $days, string $range_label = '7d'): a
 		'topCategories' => array_slice($categories, 0, 10, true),
 		'topTags' => array_slice($tags, 0, 10, true),
 		'topReferrers' => array_slice($referrers, 0, 10, true),
+		'ageGate' => [
+			'view' => (int) (($store['ageGate']['view'] ?? 0)),
+			'accepted' => (int) (($store['ageGate']['accepted'] ?? 0)),
+			'denied' => (int) (($store['ageGate']['denied'] ?? 0)),
+		],
 		'eventSchema' => [
 			'page_view' => ['postId', 'isUnique', 'referrerHost', 'path'],
 			'cta_click' => ['postId', 'productId', 'provider', 'cta', 'hrefHost'],
+			'age_gate_view' => ['path'],
+			'age_gate_accepted' => ['path'],
+			'age_gate_denied' => [],
 		],
 		'factoryNote' => 'Export via otonaselect/v1/performance-summary for Factory Performance SSOT.',
 	];
 }
 
 add_action('wp_enqueue_scripts', static function (): void {
-	$ver = wp_get_theme()->get('Version') ?: '1.6.0';
+	$ver = wp_get_theme()->get('Version') ?: '1.6.2';
 	wp_enqueue_script(
 		'otonaselect-analytics',
 		get_template_directory_uri() . '/assets/analytics.js',
@@ -388,6 +418,10 @@ function otonaselect_render_analytics_admin_page(): void {
 	echo '<tr><th>総PV</th><td>' . esc_html((string) $summary['pageViews']) . '</td></tr>';
 	echo '<tr><th>訪問数（概算）</th><td>' . esc_html((string) $summary['uniqueVisitsApprox']) . '</td></tr>';
 	echo '<tr><th>CTAクリック</th><td>' . esc_html((string) $summary['ctaClicks']) . '</td></tr>';
+	$age = is_array($summary['ageGate'] ?? null) ? $summary['ageGate'] : [];
+	echo '<tr><th>Age Gate表示</th><td>' . esc_html((string) ($age['view'] ?? 0)) . '</td></tr>';
+	echo '<tr><th>Age Gate同意（18歳以上）</th><td>' . esc_html((string) ($age['accepted'] ?? 0)) . '</td></tr>';
+	echo '<tr><th>Age Gate拒否（18歳未満）</th><td>' . esc_html((string) ($age['denied'] ?? 0)) . '</td></tr>';
 	echo '</tbody></table>';
 
 	echo '<h2>人気記事</h2><ol>';

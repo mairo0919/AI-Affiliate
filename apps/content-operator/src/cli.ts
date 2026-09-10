@@ -154,6 +154,7 @@ import { runWpRefreshAdultTagsCli } from "./wordpress/cli-refresh-adult-tags.js"
 import { runWpUpgradeImageResolutionCli } from "./wordpress/cli-upgrade-image-resolution.js";
 import { runWpRefreshCategoriesCli } from "./wordpress/cli-refresh-categories.js";
 import { runWpDeployOtonaselectThemeCli } from "./wordpress/cli-deploy-otonaselect-theme.js";
+import { runWpDeployOtonaselectAgeGateCli } from "./wordpress/cli-deploy-otonaselect-age-gate.js";
 import { runWpReflectMediaCli } from "./wordpress/cli-reflect-media.js";
 import { runFanzaRefreshOfficialTaxonomyCli } from "./ops/cli-refresh-official-taxonomy.js";
 import {
@@ -2510,6 +2511,9 @@ async function main(): Promise<void> {
     case "wp-deploy-otonaselect-theme":
       await runWpDeployOtonaselectThemeCli(rest);
       break;
+    case "wp-deploy-otonaselect-age-gate":
+      await runWpDeployOtonaselectAgeGateCli(rest);
+      break;
     case "wp-reflect-media":
       await runWpReflectMediaCli(rest);
       break;
@@ -2518,7 +2522,7 @@ async function main(): Promise<void> {
       break;
     default:
       console.error(
-        "Usage: node dist/cli.js <...|wp-reflect-media|wp-deploy-otonaselect-theme|wp-refresh-categories|...>",
+        "Usage: node dist/cli.js <...|wp-reflect-media|wp-deploy-otonaselect-theme|wp-deploy-otonaselect-age-gate|wp-refresh-categories|...>",
       );
       process.exitCode = 1;
   }
