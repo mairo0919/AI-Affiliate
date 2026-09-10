@@ -16,6 +16,7 @@ export default tseslint.config(
       "**/tmp-*.mjs",
       "**/tmp-*.txt",
       "**/tmp-artifacts/**",
+      "apps/wordpress-theme/**/*.js",
     ],
   },
   eslint.configs.recommended,
