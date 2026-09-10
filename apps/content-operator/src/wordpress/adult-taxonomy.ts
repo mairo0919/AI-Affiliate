@@ -85,7 +85,7 @@ function normalizeForCompare(s: string): string {
 function compileAliasNeedle(alias: string): RegExp {
   const a = alias.trim();
   // Latin / short codes: prefer word-ish boundaries to avoid random letter hits.
-  if (/^[a-z0-9][a-z0-9'’\-]*$/i.test(a) && a.length <= 6) {
+  if (/^[a-z0-9][a-z0-9'’-]*$/i.test(a) && a.length <= 6) {
     return new RegExp(`(?:^|[^a-z0-9])${escapeRegExp(a)}(?:$|[^a-z0-9])`, "i");
   }
   return new RegExp(escapeRegExp(a), "i");
