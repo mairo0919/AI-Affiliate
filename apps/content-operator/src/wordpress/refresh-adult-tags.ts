@@ -349,7 +349,6 @@ export async function refreshAdultAttributeTagsOnWordPress(deps: {
       officialDescription: pack.officialDescription,
     });
 
-    const beforeSet = new Set(before.tags.map((t) => t.replace(/\s+/g, "").toLowerCase()));
     const BANNED_NOISE = new Set([
       "プレイ",
       "時間",
@@ -363,7 +362,7 @@ export async function refreshAdultAttributeTagsOnWordPress(deps: {
       "おすすめ",
       "av",
     ]);
-    let mergedNames = before.tags.filter((t) => !BANNED_NOISE.has(t) && !BANNED_NOISE.has(t.toLowerCase()));
+    const mergedNames = before.tags.filter((t) => !BANNED_NOISE.has(t) && !BANNED_NOISE.has(t.toLowerCase()));
     const addedTags: string[] = [];
     const liveSet = new Set(mergedNames.map((t) => t.replace(/\s+/g, "").toLowerCase()));
     for (const t of derived.tags) {
