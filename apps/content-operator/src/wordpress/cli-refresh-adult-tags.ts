@@ -57,6 +57,7 @@ export async function runWpRefreshAdultTagsCli(argv: string[]): Promise<void> {
       failed: result.totals.failed,
       tagsAdded: result.totals.tagsAdded,
       fromGenre: result.totals.fromGenre,
+      fromRelatedTag: result.totals.fromRelatedTag,
       fromTitle: result.totals.fromTitle,
       fromDescription: result.totals.fromDescription,
       dateUnchanged: result.rows.filter((r) => r.dateUnchanged).length,

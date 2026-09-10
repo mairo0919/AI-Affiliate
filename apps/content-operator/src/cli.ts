@@ -151,6 +151,7 @@ import {
 } from "./stock/cli-handlers.js";
 import { runWpRefreshMetadataCli } from "./wordpress/cli-refresh-metadata.js";
 import { runWpRefreshAdultTagsCli } from "./wordpress/cli-refresh-adult-tags.js";
+import { runFanzaRefreshOfficialTaxonomyCli } from "./ops/cli-refresh-official-taxonomy.js";
 import {
   runP45ApproveContent,
   runP45CreateBloggerDraft,
@@ -2496,9 +2497,12 @@ async function main(): Promise<void> {
     case "wp-refresh-adult-tags":
       await runWpRefreshAdultTagsCli(rest);
       break;
+    case "fanza-refresh-official-taxonomy":
+      await runFanzaRefreshOfficialTaxonomyCli(rest);
+      break;
     default:
       console.error(
-        "Usage: node dist/cli.js <...|wp-refresh-metadata|wp-refresh-adult-tags|stock-pipeline|local-fanza-research-collect|stock-generate|wp-future-schedule|stock-status|...>",
+        "Usage: node dist/cli.js <...|wp-refresh-metadata|wp-refresh-adult-tags|fanza-refresh-official-taxonomy|stock-pipeline|local-fanza-research-collect|stock-generate|wp-future-schedule|stock-status|...>",
       );
       process.exitCode = 1;
   }

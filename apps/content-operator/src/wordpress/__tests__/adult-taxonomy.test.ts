@@ -117,4 +117,31 @@ describe("deriveWordPressTaxonomy adult tags", () => {
     expect(d.tags).not.toContain("デビュー作");
     expect(d.seriesNames).toContain("デビュー作");
   });
+
+  it("prefers genre over related_tag over title", () => {
+    const r = extractAdultAttributeTags({
+      genres: ["巨乳"],
+      relatedTags: ["人妻"],
+      officialTitle: "メンエス嬢",
+    });
+    expect(r.matches.find((m) => m.canonicalName === "巨乳")?.source).toBe("genre");
+    expect(r.matches.find((m) => m.canonicalName === "人妻")?.source).toBe("related_tag");
+    expect(r.matches.find((m) => m.canonicalName === "メンエス")?.source).toBe("title");
+  });
+
+  it("keeps distinct official related tags alongside dictionary matches", () => {
+    const d = deriveWordPressTaxonomyFromEvidence({
+      title: "巨乳人妻",
+      labels: [
+        { type: "genre", name: "痴女" },
+        { type: "related_tag", name: "騎乗位" },
+        { type: "related_tag", name: "フェラ" },
+        { type: "related_tag", name: "手コキ" },
+      ],
+      officialDescription: "NTR要素あり",
+    });
+    expect(d.tags).toEqual(
+      expect.arrayContaining(["痴女", "騎乗位", "フェラ", "手コキ", "巨乳", "人妻", "NTR"]),
+    );
+  });
 });

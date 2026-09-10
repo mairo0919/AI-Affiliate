@@ -31,6 +31,8 @@ export type IngestFanzaPageEvidenceResult = {
   videoMetaPresent: boolean;
   descriptionPresent: boolean;
   movieBinaryRequests: 0;
+  officialGenres?: string[];
+  officialRelatedTags?: string[];
 };
 
 const PAGE_IMAGE_USAGE_NOTE =
@@ -201,6 +203,38 @@ export async function ingestFanzaPageEvidence(input: {
 
   const itemList = await input.research.findItemByExternalId(input.contentId);
   researchItemId = researchItemId ?? itemList?.id ?? null;
+
+  // Persist official genres / related tags onto ResearchItem (SSOT for Analysis / WP).
+  const officialGenres = evidenceForPersist.catalog.genres
+    .map((g) => g.value.trim())
+    .filter(Boolean);
+  const officialRelatedTags = evidenceForPersist.catalog.relatedTags
+    .map((t) => t.value.trim())
+    .filter((t) => {
+      if (!t) return false;
+      // Do not mirror performer names into related_tag taxonomy.
+      const actors = new Set(
+        (evidenceForPersist.actors ?? []).map((a) => a.replace(/\s+/g, "").toLowerCase()),
+      );
+      return !actors.has(t.replace(/\s+/g, "").toLowerCase());
+    });
+  const taxonomyTags = [
+    ...officialGenres.map((name) => ({ type: "genre", name })),
+    ...officialRelatedTags.map((name) => ({ type: "related_tag", name })),
+  ];
+  if (taxonomyTags.length >= 0) {
+    await input.research.upsertTagsForExternalId({
+      externalId: input.contentId,
+      tags: taxonomyTags,
+      replaceTypes: ["genre", "related_tag"],
+    });
+  }
+  await input.research.patchRawDataOfficialAttributes({
+    externalId: input.contentId,
+    officialGenres,
+    officialRelatedTags,
+  });
+
   const merge = mergeItemListAndPageImages({
     itemListImages: (itemList?.images ?? []).map((i) => ({
       sourceUrl: i.sourceUrl,
@@ -223,5 +257,7 @@ export async function ingestFanzaPageEvidence(input: {
     videoMetaPresent: Boolean(evidenceForPersist.video),
     descriptionPresent: Boolean(evidenceForPersist.description),
     movieBinaryRequests: 0,
+    officialGenres,
+    officialRelatedTags,
   };
 }

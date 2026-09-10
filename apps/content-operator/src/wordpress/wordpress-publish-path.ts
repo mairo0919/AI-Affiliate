@@ -1308,21 +1308,29 @@ async function loadEvidencePackForProduct(
           pe.catalog && typeof pe.catalog === "object"
             ? (pe.catalog as Record<string, unknown>)
             : null;
-        const genres = catalog && Array.isArray(catalog.genres) ? catalog.genres : [];
-        for (const g of genres) {
-          let name = "";
-          if (typeof g === "string") name = g.trim();
-          else if (g && typeof g === "object" && typeof (g as { name?: unknown }).name === "string") {
-            name = String((g as { name: string }).name).trim();
+        const pushLabel = (type: string, raw: unknown) => {
+          if (!Array.isArray(raw)) return;
+          for (const g of raw) {
+            let name = "";
+            if (typeof g === "string") name = g.trim();
+            else if (g && typeof g === "object") {
+              const row = g as { value?: unknown; name?: unknown };
+              if (typeof row.value === "string") name = row.value.trim();
+              else if (typeof row.name === "string") name = row.name.trim();
+            }
+            if (!name) continue;
+            const exists = labels.some(
+              (l) =>
+                l.type.toLowerCase() === type.toLowerCase() &&
+                l.name.replace(/\s+/g, "").toLowerCase() === name.replace(/\s+/g, "").toLowerCase(),
+            );
+            if (!exists) labels.push({ type, name });
           }
-          if (!name) continue;
-          const exists = labels.some(
-            (l) =>
-              l.type.toLowerCase() === "genre" &&
-              l.name.replace(/\s+/g, "").toLowerCase() === name.replace(/\s+/g, "").toLowerCase(),
-          );
-          if (!exists) labels.push({ type: "genre", name });
-        }
+        };
+        pushLabel("genre", catalog?.genres);
+        pushLabel("related_tag", catalog?.relatedTags);
+        pushLabel("genre", pe.officialGenres);
+        pushLabel("related_tag", pe.officialRelatedTags);
       }
     }
   } catch {

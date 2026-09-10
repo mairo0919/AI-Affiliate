@@ -79,6 +79,12 @@ const BANNED_TAGS = new Set([
   "詳細",
   "公式",
   "作品紹介",
+  "プレイ",
+  "時間",
+  "配信",
+  "コキ",
+  "てこき",
+  "中だし",
 ]);
 
 const GENERIC_TITLE_SUFFIXES = ["を紹介", "を解説", "まとめ", "レビュー"];
@@ -95,7 +101,7 @@ export function isBannedTag(name: string): boolean {
 }
 
 export function filterMeaningfulTags(tags: string[], opts?: { max?: number }): string[] {
-  const max = opts?.max ?? 18;
+  const max = opts?.max ?? 40;
   const out: string[] = [];
   const seen = new Set<string>();
   for (const raw of tags) {

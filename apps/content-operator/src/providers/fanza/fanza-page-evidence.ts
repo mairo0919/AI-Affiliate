@@ -342,6 +342,9 @@ export function extractFanzaPageEvidenceFromHtml(input: {
   for (const g of catalog.genres) {
     originFields.push(g.originField);
   }
+  for (const t of catalog.relatedTags) {
+    originFields.push(t.originField);
+  }
   for (const key of [
     "maker",
     "label",
@@ -478,6 +481,8 @@ export function mergeItemListAndPageImages(input: {
 
 /** Serialize for SourceDocument.metadata.pageEvidence (no HTML body). */
 export function toSourceDocumentPageEvidenceMeta(evidence: FanzaPageEvidence): Record<string, unknown> {
+  const officialGenres = evidence.catalog.genres.map((g) => g.value).filter(Boolean);
+  const officialRelatedTags = evidence.catalog.relatedTags.map((t) => t.value).filter(Boolean);
   return {
     source: evidence.source,
     contentId: evidence.contentId,
@@ -485,6 +490,9 @@ export function toSourceDocumentPageEvidenceMeta(evidence: FanzaPageEvidence): R
     productNameProvenance: evidence.productNameProvenance,
     productNameOriginField: evidence.productNameOriginField,
     catalog: evidence.catalog,
+    /** Provider-agnostic SSOT aliases for Analysis / taxonomy consumers. */
+    officialGenres,
+    officialRelatedTags,
     extractMode: evidence.extractMode,
     originFields: evidence.originFields,
     uniquePackageCount: evidence.uniquePackageCount,
@@ -516,6 +524,7 @@ export function withMergedItemListCatalog(
   });
   const originFields = [...evidence.originFields];
   for (const g of catalog.genres) originFields.push(g.originField);
+  for (const t of catalog.relatedTags) originFields.push(t.originField);
   for (const key of ["maker", "label", "series", "releaseDate", "manufacturerSku"] as const) {
     const field = catalog[key];
     if (field) originFields.push(field.originField);

@@ -28,6 +28,8 @@ export type PageCatalogEvidence = {
   label: CatalogStringValue | null;
   series: CatalogStringValue | null;
   genres: CatalogStringValue[];
+  /** Official related tags (provider-normalized; not invented). */
+  relatedTags: CatalogStringValue[];
   durationMinutes: CatalogNumberValue | null;
   releaseDate: CatalogStringValue | null;
   manufacturerSku: CatalogStringValue | null;
@@ -45,6 +47,7 @@ const EMPTY_CATALOG: PageCatalogEvidence = {
   label: null,
   series: null,
   genres: [],
+  relatedTags: [],
   durationMinutes: null,
   releaseDate: null,
   manufacturerSku: null,
@@ -70,7 +73,7 @@ function cleanLabelValue(raw: string): string | null {
   if (/から探す|ブランドストア|新着順|すべてのセール/u.test(v)) return null;
   // Truncate at next known label when DOM glue happens
   v = v.split(
-    /(?=(?:メーカー|レーベル|シリーズ|ジャンル|収録時間|商品発売日|配信開始日|出演者|監督|品番|メーカー品番|平均評価)[:：])/u,
+    /(?=(?:メーカー|レーベル|シリーズ|ジャンル|関連タグ|収録時間|商品発売日|配信開始日|出演者|監督|品番|メーカー品番|平均評価)[:：])/u,
   )[0]!.trim();
   if (!v || /^(-{2,}|—+)$/u.test(v)) return null;
   return v.slice(0, 200);
@@ -125,7 +128,7 @@ function pickNumber(
     : current;
 }
 
-function mergeGenreLists(
+function mergeLabeledLists(
   existing: CatalogStringValue[],
   incoming: CatalogStringValue[],
 ): CatalogStringValue[] {
@@ -139,6 +142,14 @@ function mergeGenreLists(
     }
   }
   return [...byNorm.values()];
+}
+
+/** @deprecated use mergeLabeledLists — kept as alias for call-site clarity. */
+function mergeGenreLists(
+  existing: CatalogStringValue[],
+  incoming: CatalogStringValue[],
+): CatalogStringValue[] {
+  return mergeLabeledLists(existing, incoming);
 }
 
 function setIfEmpty(
@@ -159,6 +170,7 @@ export function extractPageCatalogEvidence(input: {
     label: null,
     series: null,
     genres: [],
+    relatedTags: [],
     durationMinutes: null,
     releaseDate: null,
     manufacturerSku: null,
@@ -363,21 +375,63 @@ function applyDomCatalog(html: string, cat: PageCatalogEvidence): void {
     }
   }
 
-  const genreLine = take("ジャンル");
-  if (genreLine) {
-    // Official genre tokens are whitespace-separated on the product detail row.
-    const tokens = genreLine
-      .split(/\s+/)
-      .map((t) => t.trim())
-      .filter((t) => t.length >= 2 && !/関連タグ|平均評価/u.test(t));
+  // Prefer official genre list links in the detail row when present.
+  const genreFromLinks = extractListLinkLabels(html, "genre", "ジャンル");
+  if (genreFromLinks.length > 0) {
     cat.genres = mergeGenreLists(
       cat.genres,
-      tokens.map((value) => ({
+      genreFromLinks.map((value) => ({
         value,
         provenance: "page_dom" as const,
-        originField: "dom.detail.ジャンル",
+        originField: "dom.detail.ジャンル.link",
       })),
     );
+  } else {
+    const genreLine = take("ジャンル");
+    if (genreLine) {
+      const tokens = genreLine
+        .split(/\s+/)
+        .map((t) => t.trim())
+        .filter((t) => t.length >= 2 && !/関連タグ|平均評価/u.test(t));
+      cat.genres = mergeGenreLists(
+        cat.genres,
+        tokens.map((value) => ({
+          value,
+          provenance: "page_dom" as const,
+          originField: "dom.detail.ジャンル",
+        })),
+      );
+    }
+  }
+
+  // Official related tags (hashtag chips / tag list links under 関連タグ).
+  const relatedFromLinks = extractListLinkLabels(html, "tag", "関連タグ");
+  if (relatedFromLinks.length > 0) {
+    cat.relatedTags = mergeLabeledLists(
+      cat.relatedTags,
+      relatedFromLinks.map((value) => ({
+        value,
+        provenance: "page_dom" as const,
+        originField: "dom.detail.関連タグ.link",
+      })),
+    );
+  } else {
+    const relatedLine = take("関連タグ");
+    if (relatedLine) {
+      const tokens = relatedLine
+        .replace(/#/g, " ")
+        .split(/\s+/)
+        .map((t) => t.trim())
+        .filter((t) => isUsableOfficialLabel(t, "tag"));
+      cat.relatedTags = mergeLabeledLists(
+        cat.relatedTags,
+        tokens.map((value) => ({
+          value,
+          provenance: "page_dom" as const,
+          originField: "dom.detail.関連タグ",
+        })),
+      );
+    }
   }
 
   // Fallback: duration may appear as "収録時間 477分" without a full-width colon capture.
@@ -394,6 +448,78 @@ function applyDomCatalog(html: string, cat: PageCatalogEvidence): void {
       }
     }
   }
+}
+
+/**
+ * Extract labels from FANZA list links near a detail-row label.
+ * - genre: /av/list/?genre=...
+ * - tag: /av/list/?tag=... (related tags; split multi-hashtag anchors)
+ * Scoped to the section after the label to avoid sidebar "ジャンルから探す".
+ */
+function extractListLinkLabels(
+  html: string,
+  kind: "genre" | "tag",
+  sectionLabel: string,
+): string[] {
+  const labelIdx = html.search(new RegExp(`${sectionLabel}[^<]{0,120}：`, "u"));
+  if (labelIdx < 0) return [];
+  // Keep a bounded window so we don't pick up unrelated nav blocks.
+  const windowHtml = html.slice(labelIdx, labelIdx + (kind === "tag" ? 6000 : 3500));
+  // Stop before the next detail-row label when possible.
+  const nextLabel = windowHtml.search(
+    /<(?:th|dt)[^>]*>[\s\S]{0,40}(?:メーカー|レーベル|シリーズ|ジャンル|関連タグ|収録時間|商品発売日|配信開始日|出演者|監督|品番|メーカー品番|平均評価)/u,
+  );
+  const scoped =
+    nextLabel > 80 ? windowHtml.slice(0, nextLabel) : windowHtml.slice(0, kind === "tag" ? 4500 : 2500);
+
+  const param = kind === "genre" ? "genre" : "tag";
+  const re = new RegExp(
+    `href=["']/av/list/\\?${param}=[^"']+["'][^>]*>([^<]+)<`,
+    "gi",
+  );
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const m of scoped.matchAll(re)) {
+    const raw = (m[1] ?? "").replace(/#/g, " ").trim();
+    if (!raw) continue;
+    for (const part of raw.split(/\s+/)) {
+      const token = part.trim();
+      if (!isUsableOfficialLabel(token, kind)) continue;
+      const key = token.replace(/\s+/g, "").toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(token);
+    }
+  }
+  return out;
+}
+
+function isUsableOfficialLabel(token: string, kind: "genre" | "tag" = "genre"): boolean {
+  const t = token.trim();
+  if (t.length < 2 || t.length > 32) return false;
+  if (/関連タグ|平均評価|から探す/u.test(t)) return false;
+  if (/^\d+$/.test(t)) return false;
+  if (/^https?:/i.test(t)) return false;
+  if (kind === "tag") {
+    // FANZA related-tag chips often append SEO fragments; drop non-classifying noise only.
+    const noise = new Set([
+      "プレイ",
+      "時間",
+      "配信",
+      "コキ",
+      "てこき",
+      "中だし",
+      "動画",
+      "作品",
+      "紹介",
+      "おすすめ",
+      "人気",
+      "av",
+      "ａｖ",
+    ]);
+    if (noise.has(t.toLowerCase()) || noise.has(t)) return false;
+  }
+  return true;
 }
 
 function itemInfoNames(raw: unknown): string[] {
@@ -421,6 +547,7 @@ export function mergeCanonicalCatalog(input: {
     label: input.pageCatalog?.label ?? null,
     series: input.pageCatalog?.series ?? null,
     genres: [...(input.pageCatalog?.genres ?? [])],
+    relatedTags: [...(input.pageCatalog?.relatedTags ?? [])],
     durationMinutes: input.pageCatalog?.durationMinutes ?? null,
     releaseDate: input.pageCatalog?.releaseDate ?? null,
     manufacturerSku: input.pageCatalog?.manufacturerSku ?? null,
@@ -496,5 +623,16 @@ export function mergeCanonicalCatalog(input: {
 }
 
 export function emptyPageCatalog(): PageCatalogEvidence {
-  return { ...EMPTY_CATALOG, genres: [] };
+  return { ...EMPTY_CATALOG, genres: [], relatedTags: [] };
+}
+
+/** Provider-agnostic flat lists for Research Evidence consumers. */
+export function officialGenreNames(catalog: PageCatalogEvidence | null | undefined): string[] {
+  return (catalog?.genres ?? []).map((g) => g.value.trim()).filter(Boolean);
+}
+
+export function officialRelatedTagNames(
+  catalog: PageCatalogEvidence | null | undefined,
+): string[] {
+  return (catalog?.relatedTags ?? []).map((g) => g.value.trim()).filter(Boolean);
 }

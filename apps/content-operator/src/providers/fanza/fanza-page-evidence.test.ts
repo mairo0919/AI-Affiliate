@@ -174,8 +174,13 @@ describe("fanza page evidence (LLM=0 fixtures)", () => {
     expect(page.catalog.genres.map((g) => g.value)).toEqual(
       expect.arrayContaining(["痴女", "美少女", "女優ベスト・総集編"]),
     );
+    expect(page.catalog.relatedTags.map((t) => t.value)).toEqual(
+      expect.arrayContaining(["騎乗位", "杭打ち", "フェラ", "手コキ", "乳首"]),
+    );
     const meta = toSourceDocumentPageEvidenceMeta(page);
     expect(meta.productName).toBe(page.productName);
+    expect(meta.officialGenres).toEqual(expect.arrayContaining(["痴女"]));
+    expect(meta.officialRelatedTags).toEqual(expect.arrayContaining(["フェラ", "手コキ"]));
     expect((meta.catalog as { maker: { value: string } }).maker.value).toBe("ムーディーズ");
   });
 
@@ -235,6 +240,7 @@ describe("fanza page evidence (LLM=0 fixtures)", () => {
           label: { value: "ROOKIE", provenance: "page_dom", originField: "label" },
           series: null,
           genres: [{ value: "そっくりさん", provenance: "page_dom", originField: "genre" }],
+          relatedTags: [],
           durationMinutes: { value: 118, provenance: "page_dom", originField: "duration" },
           releaseDate: { value: "2019-08-19", provenance: "page_dom", originField: "release" },
           manufacturerSku: { value: "RKI-500", provenance: "page_dom", originField: "sku" },

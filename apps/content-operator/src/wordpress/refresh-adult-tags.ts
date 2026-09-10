@@ -46,15 +46,23 @@ async function loadEvidencePack(
   officialTitle: string | null;
   officialDescription: string | null;
   pageGenres: string[];
+  pageRelatedTags: string[];
 }> {
   if (!productCanonicalId?.trim()) {
-    return { labels: [], officialTitle: null, officialDescription: null, pageGenres: [] };
+    return {
+      labels: [],
+      officialTitle: null,
+      officialDescription: null,
+      pageGenres: [],
+      pageRelatedTags: [],
+    };
   }
   const cid = productCanonicalId.trim().toLowerCase();
   let labels: EvidenceTaxonomyLabel[] = [];
   let officialTitle: string | null = null;
   let officialDescription: string | null = null;
   const pageGenres: string[] = [];
+  const pageRelatedTags: string[] = [];
   try {
     const item = await prisma.researchItem.findFirst({
       where: {
@@ -78,6 +86,18 @@ async function loadEvidencePack(
     if (typeof item?.description === "string" && item.description.trim()) {
       officialDescription = item.description.trim();
     }
+    const raw =
+      item?.rawData && typeof item.rawData === "object" && !Array.isArray(item.rawData)
+        ? (item.rawData as Record<string, unknown>)
+        : null;
+    if (raw) {
+      for (const g of Array.isArray(raw.officialGenres) ? raw.officialGenres : []) {
+        if (typeof g === "string" && g.trim()) pageGenres.push(g.trim());
+      }
+      for (const t of Array.isArray(raw.officialRelatedTags) ? raw.officialRelatedTags : []) {
+        if (typeof t === "string" && t.trim()) pageRelatedTags.push(t.trim());
+      }
+    }
   } catch {
     /* ignore */
   }
@@ -100,23 +120,60 @@ async function loadEvidencePack(
       if (desc && typeof desc === "object" && typeof (desc as { text?: unknown }).text === "string") {
         officialDescription = String((desc as { text: string }).text).trim() || null;
       }
+      const pushCatalogValues = (raw: unknown, into: string[]) => {
+        if (!Array.isArray(raw)) return;
+        for (const g of raw) {
+          let name = "";
+          if (typeof g === "string") name = g.trim();
+          else if (g && typeof g === "object") {
+            const row = g as { value?: unknown; name?: unknown };
+            if (typeof row.value === "string") name = row.value.trim();
+            else if (typeof row.name === "string") name = row.name.trim();
+          }
+          if (!name) continue;
+          const key = name.replace(/\s+/g, "").toLowerCase();
+          if (into.some((x) => x.replace(/\s+/g, "").toLowerCase() === key)) continue;
+          into.push(name);
+        }
+      };
       const catalog =
         pe.catalog && typeof pe.catalog === "object"
           ? (pe.catalog as Record<string, unknown>)
           : null;
-      const genres = catalog && Array.isArray(catalog.genres) ? catalog.genres : [];
-      for (const g of genres) {
-        if (typeof g === "string" && g.trim()) pageGenres.push(g.trim());
-        else if (g && typeof g === "object" && typeof (g as { name?: unknown }).name === "string") {
-          pageGenres.push(String((g as { name: string }).name).trim());
-        }
-      }
+      pushCatalogValues(catalog?.genres, pageGenres);
+      pushCatalogValues(catalog?.relatedTags, pageRelatedTags);
+      pushCatalogValues(pe.officialGenres, pageGenres);
+      pushCatalogValues(pe.officialRelatedTags, pageRelatedTags);
     }
   } catch {
     /* ignore */
   }
 
-  return { labels, officialTitle, officialDescription, pageGenres };
+  // Ensure Research labels include page catalog genres / related tags for derive.
+  for (const g of pageGenres) {
+    if (
+      !labels.some(
+        (l) =>
+          /^(genre|category)$/i.test(l.type) &&
+          l.name.replace(/\s+/g, "").toLowerCase() === g.replace(/\s+/g, "").toLowerCase(),
+      )
+    ) {
+      labels.push({ type: "genre", name: g });
+    }
+  }
+  for (const t of pageRelatedTags) {
+    if (
+      !labels.some(
+        (l) =>
+          /^related_tag$/i.test(l.type) &&
+          l.name.replace(/\s+/g, "").toLowerCase() === t.replace(/\s+/g, "").toLowerCase(),
+      )
+    ) {
+      labels.push({ type: "related_tag", name: t });
+    }
+  }
+
+  return { labels, officialTitle, officialDescription, pageGenres, pageRelatedTags };
 }
 
 async function fetchWpTaxonomySnapshot(
@@ -194,6 +251,7 @@ export async function refreshAdultAttributeTagsOnWordPress(deps: {
     failed: number;
     tagsAdded: number;
     fromGenre: number;
+    fromRelatedTag: number;
     fromTitle: number;
     fromDescription: number;
   };
@@ -202,6 +260,7 @@ export async function refreshAdultAttributeTagsOnWordPress(deps: {
   const rows: AdultTagRefreshRow[] = [];
   let tagsAdded = 0;
   let fromGenre = 0;
+  let fromRelatedTag = 0;
   let fromTitle = 0;
   let fromDescription = 0;
 
@@ -281,33 +340,54 @@ export async function refreshAdultAttributeTagsOnWordPress(deps: {
         ...pack.pageGenres,
         ...pack.labels.filter((l) => /^(genre|category)$/i.test(l.type)).map((l) => l.name),
       ],
+      relatedTags: [
+        ...pack.pageRelatedTags,
+        ...pack.labels.filter((l) => /^related_tag$/i.test(l.type)).map((l) => l.name),
+      ],
       attributes: pack.labels.filter((l) => /^(attribute|keyword)$/i.test(l.type)).map((l) => l.name),
       officialTitle: pack.officialTitle || version.title || before.title,
       officialDescription: pack.officialDescription,
     });
 
     const beforeSet = new Set(before.tags.map((t) => t.replace(/\s+/g, "").toLowerCase()));
-    const mergedNames = [...before.tags];
+    const BANNED_NOISE = new Set([
+      "プレイ",
+      "時間",
+      "配信",
+      "コキ",
+      "てこき",
+      "中だし",
+      "動画",
+      "作品",
+      "紹介",
+      "おすすめ",
+      "av",
+    ]);
+    let mergedNames = before.tags.filter((t) => !BANNED_NOISE.has(t) && !BANNED_NOISE.has(t.toLowerCase()));
     const addedTags: string[] = [];
+    const liveSet = new Set(mergedNames.map((t) => t.replace(/\s+/g, "").toLowerCase()));
     for (const t of derived.tags) {
       const key = t.replace(/\s+/g, "").toLowerCase();
-      if (beforeSet.has(key)) continue;
-      // Prefer adult attribute + format tags; skip performer-looking duplicates already in performer tax
+      if (liveSet.has(key)) continue;
+      if (BANNED_NOISE.has(t) || BANNED_NOISE.has(t.toLowerCase())) continue;
       if (before.performers.some((p) => p.replace(/\s+/g, "").toLowerCase() === key)) continue;
       mergedNames.push(t);
       addedTags.push(t);
-      beforeSet.add(key);
+      liveSet.add(key);
     }
 
     // Normalize legacy mis-tag デビュー作 → デビュー (series form should not sit on post_tag).
     let normalizedExisting = false;
+    if (before.tags.length !== mergedNames.length) {
+      normalizedExisting = true;
+    }
     const debutIdx = mergedNames.findIndex((t) => t === "デビュー作");
     if (debutIdx >= 0) {
       normalizedExisting = true;
-      if (!beforeSet.has("デビュー")) {
+      if (!liveSet.has("デビュー")) {
         mergedNames[debutIdx] = "デビュー";
         if (!addedTags.includes("デビュー")) addedTags.push("デビュー");
-        beforeSet.add("デビュー");
+        liveSet.add("デビュー");
       } else {
         mergedNames.splice(debutIdx, 1);
       }
@@ -365,6 +445,7 @@ export async function refreshAdultAttributeTagsOnWordPress(deps: {
         const m = extraction.matches.find((x) => x.canonicalName === added);
         if (!m) continue;
         if (m.source === "genre") fromGenre += 1;
+        else if (m.source === "related_tag") fromRelatedTag += 1;
         else if (m.source === "title") fromTitle += 1;
         else if (m.source === "description") fromDescription += 1;
       }
@@ -413,6 +494,7 @@ export async function refreshAdultAttributeTagsOnWordPress(deps: {
       failed: rows.filter((r) => !r.ok).length,
       tagsAdded,
       fromGenre,
+      fromRelatedTag,
       fromTitle,
       fromDescription,
     },

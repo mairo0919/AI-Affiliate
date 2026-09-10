@@ -203,6 +203,10 @@ export function deriveWordPressTaxonomyFromEvidence(input: {
     ...labelsOfType(labels, "genre"),
     ...labelsOfType(labels, "category"),
   ];
+  const relatedTags = [
+    ...labelsOfType(labels, "related_tag"),
+    ...labelsOfType(labels, "relatedtag"),
+  ];
   const blob = evidenceBlob(labels, title, subtitle);
 
   const categories: string[] = [];
@@ -227,13 +231,13 @@ export function deriveWordPressTaxonomyFromEvidence(input: {
     ...labelsOfType(labels, "label"),
   ];
 
-  // Adult attribute tags from genre / title / description (dictionary-backed).
   const attributeLabels = [
     ...labelsOfType(labels, "attribute"),
     ...labelsOfType(labels, "keyword"),
   ];
   const adult = extractAdultAttributeTags({
     genres,
+    relatedTags,
     attributes: attributeLabels,
     officialTitle: title || subtitle || "",
     officialDescription: input.officialDescription ?? "",
@@ -241,6 +245,9 @@ export function deriveWordPressTaxonomyFromEvidence(input: {
   });
   if (adult.tags.length > 0) {
     notes.push(`adult_attribute_tags:${adult.tags.length}`);
+  }
+  if (relatedTags.length > 0) {
+    notes.push(`official_related_tags:${relatedTags.length}`);
   }
 
   // Prefer more specific situation tags (メンエス) over generic エステ when both match.
@@ -262,7 +269,6 @@ export function deriveWordPressTaxonomyFromEvidence(input: {
     for (const p of performerTags) tags.push(p);
   }
   for (const s of seriesNames) {
-    // Avoid duplicating format series as both series tax + noisy tag when adult dict covers it
     if (s === "ベスト・総集編") {
       tags.push("ベスト");
       tags.push("総集編");
@@ -273,22 +279,24 @@ export function deriveWordPressTaxonomyFromEvidence(input: {
   for (const m of makers) {
     if (m.length > 0 && m.length <= 24) tags.push(m);
   }
-  // Official genre labels that are not already collapsed into adult canonical tags
+
+  // Official genres + related tags as WP tags (normalize synonyms via adult dict when matched).
   const adultSet = new Set(adultTagsFiltered.map((t) => t.replace(/\s+/g, "").toLowerCase()));
-  for (const g of genres) {
-    if (g.length > 0 && g.length <= 24) {
-      const n = normalizeTaxonomyDisplayName(g);
-      if (!adultSet.has(n.replace(/\s+/g, "").toLowerCase())) {
-        // Skip raw genre if adult dict already matched a synonym into canonical
-        const covered = adult.matches.some(
-          (m) =>
-            m.matchedAlias.replace(/\s+/g, "").toLowerCase() ===
-            g.replace(/\s+/g, "").toLowerCase(),
-        );
-        if (!covered) tags.push(n);
-      }
-    }
-  }
+  const pushOfficial = (raw: string) => {
+    if (raw.length <= 0 || raw.length > 32) return;
+    const n = normalizeTaxonomyDisplayName(raw);
+    const key = n.replace(/\s+/g, "").toLowerCase();
+    if (adultSet.has(key)) return;
+    const covered = adult.matches.some(
+      (m) =>
+        m.matchedAlias.replace(/\s+/g, "").toLowerCase() ===
+        raw.replace(/\s+/g, "").toLowerCase(),
+    );
+    if (covered) return;
+    tags.push(n);
+  };
+  for (const g of genres) pushOfficial(g);
+  for (const t of relatedTags) pushOfficial(t);
   for (const a of adultTagsFiltered) tags.push(a);
   for (const token of EVIDENCE_TAG_TOKENS) {
     if (blob.toLowerCase().includes(token.toLowerCase()) || blob.includes(token)) {
@@ -307,6 +315,13 @@ export function deriveWordPressTaxonomyFromEvidence(input: {
     "ページ",
     "AV",
     "av",
+    // FANZA related-tag SEO fragments (not classifying attributes)
+    "プレイ",
+    "時間",
+    "配信",
+    "コキ",
+    "てこき",
+    "中だし",
   ]);
   const adultCanonical = new Set(ADULT_TAXONOMY_DICTIONARY.map((t) => t.canonicalName));
   const normalizedTags = uniqPreserve(

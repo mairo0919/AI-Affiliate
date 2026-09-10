@@ -330,6 +330,90 @@ export class ResearchRepository {
     }
     return { researchItemId: item.id, upserted };
   }
+
+  /**
+   * Upsert official taxonomy labels onto an existing ResearchItem (genre / related_tag / …).
+   * Idempotent link upsert — does not remove prior tags of other types.
+   */
+  async upsertTagsForExternalId(input: {
+    externalId: string;
+    tags: Array<{ name: string; type: string }>;
+    /** When set, remove existing ResearchItemTag links of these types before upsert. */
+    replaceTypes?: string[];
+  }): Promise<{ researchItemId: string | null; upserted: number }> {
+    const item = await this.prisma.researchItem.findFirst({
+      where: { externalId: input.externalId },
+      select: { id: true, rawData: true },
+    });
+    if (!item) return { researchItemId: null, upserted: 0 };
+
+    if (input.replaceTypes && input.replaceTypes.length > 0) {
+      const types = input.replaceTypes.map((t) => t.trim()).filter(Boolean);
+      if (types.length > 0) {
+        await this.prisma.researchItemTag.deleteMany({
+          where: {
+            researchItemId: item.id,
+            researchTag: { type: { in: types } },
+          },
+        });
+      }
+    }
+
+    let upserted = 0;
+    for (const tag of input.tags) {
+      const name = tag.name?.replace(/\s+/g, " ").trim();
+      const type = tag.type?.trim();
+      if (!name || !type) continue;
+      const researchTag = await this.prisma.researchTag.upsert({
+        where: { name_type: { name, type } },
+        create: { name, type },
+        update: {},
+      });
+      await this.prisma.researchItemTag.upsert({
+        where: {
+          researchItemId_researchTagId: {
+            researchItemId: item.id,
+            researchTagId: researchTag.id,
+          },
+        },
+        create: {
+          researchItemId: item.id,
+          researchTagId: researchTag.id,
+        },
+        update: {},
+      });
+      upserted += 1;
+    }
+    return { researchItemId: item.id, upserted };
+  }
+
+  /** Patch ResearchItem.rawData with provider-agnostic official attribute lists. */
+  async patchRawDataOfficialAttributes(input: {
+    externalId: string;
+    officialGenres: string[];
+    officialRelatedTags: string[];
+  }): Promise<boolean> {
+    const item = await this.prisma.researchItem.findFirst({
+      where: { externalId: input.externalId },
+      select: { id: true, rawData: true },
+    });
+    if (!item) return false;
+    const prev =
+      item.rawData && typeof item.rawData === "object" && !Array.isArray(item.rawData)
+        ? (item.rawData as Record<string, unknown>)
+        : {};
+    await this.prisma.researchItem.update({
+      where: { id: item.id },
+      data: {
+        rawData: toInputJson({
+          ...prev,
+          officialGenres: input.officialGenres,
+          officialRelatedTags: input.officialRelatedTags,
+        }),
+      },
+    });
+    return true;
+  }
 }
 
 export type ResearchItemForAnalysis = Prisma.ResearchItemGetPayload<{
