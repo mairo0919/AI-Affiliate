@@ -393,8 +393,18 @@ export function evaluatePublicationMetadataQuality(
 
   if (!meta.categories?.length) failures.push("CATEGORY_MISSING");
   const meaningfulTags = filterMeaningfulTags(meta.tags ?? []);
-  if (meaningfulTags.length < 1) failures.push("TAGS_MISSING");
-  else if (meaningfulTags.length < 2) warnings.push("TAGS_SPARSE");
+  const evidenceTaggable =
+    (evidence.performers?.length ?? 0) +
+    (evidence.genres?.length ?? 0) +
+    (evidence.makers?.length ?? 0) +
+    (evidence.labels?.length ?? 0) +
+    (evidence.seriesNames?.length ?? 0);
+  if (meaningfulTags.length < 1) {
+    if (evidenceTaggable > 0) failures.push("TAGS_MISSING");
+    else warnings.push("TAGS_MISSING_NO_EVIDENCE");
+  } else if (meaningfulTags.length < 2) {
+    warnings.push("TAGS_SPARSE");
+  }
 
   const evidencePerformers = evidence.performers ?? [];
   if (evidencePerformers.length > 0 && meta.performers.length === 0) {
@@ -402,7 +412,6 @@ export function evaluatePublicationMetadataQuality(
   }
   const evidenceSeries = evidence.seriesNames ?? [];
   if (evidenceSeries.length > 0 && meta.seriesNames.length === 0) {
-    // soft: semantic series may be optional if official empty — warn only when explicit series labels exist
     warnings.push("SERIES_TAX_MISSING");
   }
 

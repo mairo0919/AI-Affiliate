@@ -652,7 +652,9 @@ export async function publishContentVersionToWordPress(
     : null;
   if (!publicationMetadata || !existingQuality?.pass) {
     try {
-      const llm = requireApiLLMProvider(deps.config);
+      // Prefer non-throwing provider creation for draft/test paths.
+      const { createLLMProvider } = await import("../adapters/llm/create-llm-provider.js");
+      const llm = createLLMProvider(deps.config);
       publicationMetadata = await generatePublicationMetadata({ evidence, llm });
     } catch {
       publicationMetadata = await generatePublicationMetadata({ evidence, llm: null });
