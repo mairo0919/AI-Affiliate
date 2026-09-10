@@ -33,7 +33,7 @@ import {
   generatePublicationMetadata,
   type PublicationMetadata,
 } from "./publication-metadata.js";
-import { requireApiLLMProvider } from "../adapters/llm/create-llm-provider.js";
+import { createLLMProvider } from "../adapters/llm/create-llm-provider.js";
 import { resolveWordPressPostDates } from "./wordpress-datetime.js";
 import type { ArticleImage } from "../generation/article-images.js";
 import { parseArticleImages } from "../generation/article-images.js";
@@ -652,8 +652,6 @@ export async function publishContentVersionToWordPress(
     : null;
   if (!publicationMetadata || !existingQuality?.pass) {
     try {
-      // Prefer non-throwing provider creation for draft/test paths.
-      const { createLLMProvider } = await import("../adapters/llm/create-llm-provider.js");
       const llm = createLLMProvider(deps.config);
       publicationMetadata = await generatePublicationMetadata({ evidence, llm });
     } catch {
