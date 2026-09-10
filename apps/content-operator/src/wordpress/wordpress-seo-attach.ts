@@ -12,6 +12,8 @@ export const WP_SEO_META_KEYS = {
   seoDescription: "otonaselect_seo_description",
   productCid: "otonaselect_product_cid",
   safeOgImage: "otonaselect_safe_og_image",
+  /** PUBLIC URL-reference card image (may be trusted DMM CDN; not used for OG). */
+  cardImage: "otonaselect_card_image",
   seriesName: "otonaselect_series_name",
 } as const;
 
@@ -42,6 +44,11 @@ export type WordPressSeoAttachInput = {
   productCanonicalId?: string | null;
   /** Only pass when confirmed X_SOCIAL_SAFE / site-owned. Never FANZA sample CDN. */
   safeOgImageUrl?: string | null;
+  /**
+   * Card/list thumbnail URL — trusted DMM CDN allowed (URL reference only).
+   * Not used for Open Graph.
+   */
+  cardImageUrl?: string | null;
   siteOrigin?: string | null;
 };
 
@@ -224,6 +231,26 @@ export function buildWordPressSeoAttach(input: WordPressSeoAttachInput): WordPre
     meta[WP_SEO_META_KEYS.safeOgImage] = og;
   } else if (og) {
     notes.push("safeOgImageUrl_rejected_adult_or_invalid_host");
+  }
+
+  const card = input.cardImageUrl?.trim() ?? "";
+  if (card) {
+    try {
+      const host = new URL(card).hostname.toLowerCase();
+      const trusted =
+        host === "pics.dmm.co.jp" ||
+        host === "awsimgsrc.dmm.co.jp" ||
+        host.endsWith(".dmm.co.jp") ||
+        host === "otonaselect.net" ||
+        host.endsWith(".otonaselect.net");
+      if (trusted) {
+        meta[WP_SEO_META_KEYS.cardImage] = card;
+      } else {
+        notes.push("cardImageUrl_rejected_untrusted_host");
+      }
+    } catch {
+      notes.push("cardImageUrl_rejected_invalid");
+    }
   }
 
   return {

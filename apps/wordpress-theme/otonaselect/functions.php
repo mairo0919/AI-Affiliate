@@ -21,6 +21,9 @@ require_once $otonaselect_inc . '/seo-head.php';
 require_once $otonaselect_inc . '/json-ld.php';
 require_once $otonaselect_inc . '/breadcrumbs.php';
 require_once $otonaselect_inc . '/related.php';
+require_once $otonaselect_inc . '/presentation.php';
+require_once $otonaselect_inc . '/analytics.php';
+require_once $otonaselect_inc . '/contact.php';
 require_once $otonaselect_inc . '/site-pages.php';
 
 /**
@@ -33,6 +36,30 @@ add_action('wp_enqueue_scripts', static function (): void {
 		[],
 		wp_get_theme()->get('Version')
 	);
+});
+
+/**
+ * Register post meta used by Factory SEO attach / card images.
+ */
+add_action('init', static function (): void {
+	$meta_keys = [
+		OTONASELECT_META_SEO_TITLE,
+		OTONASELECT_META_SEO_DESCRIPTION,
+		OTONASELECT_META_PRODUCT_CID,
+		OTONASELECT_META_SAFE_OG_IMAGE,
+		OTONASELECT_META_CARD_IMAGE,
+		OTONASELECT_META_SERIES_NAME,
+	];
+	foreach ($meta_keys as $key) {
+		register_post_meta('post', $key, [
+			'type' => 'string',
+			'single' => true,
+			'show_in_rest' => true,
+			'auth_callback' => static function (): bool {
+				return current_user_can('edit_posts');
+			},
+		]);
+	}
 });
 
 /**

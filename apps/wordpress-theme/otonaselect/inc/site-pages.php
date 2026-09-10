@@ -32,7 +32,7 @@ HTML,
 			'title' => 'お問い合わせ',
 			'content' => <<<'HTML'
 <!-- wp:heading {"level":1} --><h1 class="wp-block-heading">お問い合わせ</h1><!-- /wp:heading -->
-<!-- wp:paragraph --><p>掲載内容に関するご連絡、削除・訂正のご依頼は、サイト運営までご連絡ください。</p><!-- /wp:paragraph -->
+<!-- wp:paragraph --><p>掲載内容に関するご連絡、削除・訂正のご依頼、広告・提携のご相談は以下のフォームよりご連絡ください。</p><!-- /wp:paragraph -->
 <!-- wp:paragraph --><p>※返信には数営業日いただく場合があります。アフィリエイト成果や個人の購入サポートには回答できないことがあります。</p><!-- /wp:paragraph -->
 HTML,
 		],

@@ -64,13 +64,19 @@ describe("evidence-taxonomy", () => {
     ).toContain("完全版");
   });
 
-  it("allows empty series when no official or semantic evidence", () => {
+  it("prefers official genre labels for categories over title-only fallback", () => {
     const d = deriveWordPressTaxonomyFromEvidence({
       title: "ある作品の紹介",
-      labels: [{ type: "actress", name: "奥田咲" }],
+      labels: [
+        { type: "actress", name: "奥田咲" },
+        { type: "genre", name: "単体作品" },
+        { type: "genre", name: "巨乳" },
+      ],
     });
-    expect(d.seriesNames).toEqual([]);
-    expect(d.categories).toEqual([PRODUCT_ARTICLE_CATEGORY_FALLBACK]);
+    expect(d.categories).toEqual(["単体作品"]);
+    expect(d.categories).not.toContain(PRODUCT_ARTICLE_CATEGORY_FALLBACK);
+    expect(d.tags).toEqual(expect.arrayContaining(["巨乳"]));
+    expect(d.notes.some((n) => n.includes("category_from_official_genre"))).toBe(true);
   });
 
   it("supports multiple categories", () => {

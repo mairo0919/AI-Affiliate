@@ -13,19 +13,51 @@
 		<!-- wp:group {"className":"otonaselect-post-meta","style":{"spacing":{"blockGap":"var:preset|spacing|30"}},"layout":{"type":"flex","flexWrap":"wrap","verticalAlignment":"center"}} -->
 		<div class="wp-block-group otonaselect-post-meta">
 			<!-- wp:post-date {"format":"Y年n月j日","fontSize":"small","className":"otonaselect-published-date"} /-->
+		</div>
+		<!-- /wp:group -->
 
-			<!-- wp:post-terms {"term":"category","fontSize":"small"} /-->
+		<!-- wp:group {"className":"otonaselect-article-taxonomy","style":{"spacing":{"blockGap":"0.35rem"}},"layout":{"type":"constrained"}} -->
+		<div class="wp-block-group otonaselect-article-taxonomy">
+			<!-- wp:group {"className":"otonaselect-entity-row otonaselect-row-performer","layout":{"type":"flex","flexWrap":"wrap"}} -->
+			<div class="wp-block-group otonaselect-entity-row otonaselect-row-performer">
+				<!-- wp:paragraph {"fontSize":"small","className":"otonaselect-entity-label"} -->
+				<p class="has-small-font-size otonaselect-entity-label">出演者</p>
+				<!-- /wp:paragraph -->
+				<!-- wp:post-terms {"term":"performer","fontSize":"small"} /-->
+			</div>
+			<!-- /wp:group -->
 
-			<!-- wp:post-terms {"term":"performer","fontSize":"small"} /-->
+			<!-- wp:group {"className":"otonaselect-entity-row otonaselect-row-category","layout":{"type":"flex","flexWrap":"wrap"}} -->
+			<div class="wp-block-group otonaselect-entity-row otonaselect-row-category">
+				<!-- wp:paragraph {"fontSize":"small","className":"otonaselect-entity-label"} -->
+				<p class="has-small-font-size otonaselect-entity-label">カテゴリ</p>
+				<!-- /wp:paragraph -->
+				<!-- wp:post-terms {"term":"category","fontSize":"small"} /-->
+			</div>
+			<!-- /wp:group -->
 
-			<!-- wp:post-terms {"term":"series","fontSize":"small"} /-->
+			<!-- wp:group {"className":"otonaselect-entity-row otonaselect-row-series","layout":{"type":"flex","flexWrap":"wrap"}} -->
+			<div class="wp-block-group otonaselect-entity-row otonaselect-row-series">
+				<!-- wp:paragraph {"fontSize":"small","className":"otonaselect-entity-label"} -->
+				<p class="has-small-font-size otonaselect-entity-label">シリーズ</p>
+				<!-- /wp:paragraph -->
+				<!-- wp:post-terms {"term":"series","fontSize":"small"} /-->
+			</div>
+			<!-- /wp:group -->
 
-			<!-- wp:post-terms {"term":"post_tag","fontSize":"small"} /-->
+			<!-- wp:group {"className":"otonaselect-entity-row otonaselect-row-tags","layout":{"type":"flex","flexWrap":"wrap"}} -->
+			<div class="wp-block-group otonaselect-entity-row otonaselect-row-tags">
+				<!-- wp:paragraph {"fontSize":"small","className":"otonaselect-entity-label"} -->
+				<p class="has-small-font-size otonaselect-entity-label">タグ</p>
+				<!-- /wp:paragraph -->
+				<!-- wp:post-terms {"term":"post_tag","fontSize":"small"} /-->
+			</div>
+			<!-- /wp:group -->
 		</div>
 		<!-- /wp:group -->
 
 		<!-- wp:html -->
-		<div class="otonaselect-entity-links-slot"></div>
+		<div class="otonaselect-entity-links-slot" hidden></div>
 		<!-- /wp:html -->
 
 		<!-- wp:separator {"textColor":"line","backgroundColor":"line","className":"is-style-wide otonaselect-article-rule"} -->
@@ -52,12 +84,10 @@
 					<!-- wp:group {"style":{"spacing":{"padding":{"top":"var:preset|spacing|40","bottom":"var:preset|spacing|40"},"blockGap":"var:preset|spacing|20"},"border":{"bottom":{"color":"var:preset|color|line","width":"1px"}}},"layout":{"type":"constrained"}} -->
 					<div class="wp-block-group" style="border-bottom-color:var(--wp--preset--color--line);border-bottom-width:1px;padding-top:var(--wp--preset--spacing--40);padding-bottom:var(--wp--preset--spacing--40)">
 						<!-- wp:post-title {"isLink":true,"fontSize":"large"} /-->
-
 						<!-- wp:post-date {"format":"Y年n月j日","fontSize":"small"} /-->
 					</div>
 					<!-- /wp:group -->
 				<!-- /wp:post-template -->
-
 				<!-- wp:query-no-results -->
 					<!-- wp:paragraph {"textColor":"muted","fontSize":"small","className":"otonaselect-related-empty"} -->
 					<p class="has-muted-color has-text-color has-small-font-size otonaselect-related-empty">いま表示できる関連記事はありません。</p>
@@ -71,11 +101,9 @@
 		<!-- wp:group {"className":"otonaselect-single-nav","style":{"spacing":{"margin":{"top":"var:preset|spacing|50"},"blockGap":"var:preset|spacing|30"}},"layout":{"type":"flex","flexWrap":"wrap","justifyContent":"space-between"}} -->
 		<div class="wp-block-group otonaselect-single-nav" style="margin-top:var(--wp--preset--spacing--50)">
 			<!-- wp:post-navigation-link {"type":"previous","label":"前の記事","arrow":"arrow"} /-->
-
 			<!-- wp:paragraph {"fontSize":"small","className":"otonaselect-back-top"} -->
 			<p class="has-small-font-size otonaselect-back-top"><a href="/">トップへ戻る</a></p>
 			<!-- /wp:paragraph -->
-
 			<!-- wp:post-navigation-link {"label":"次の記事","arrow":"arrow"} /-->
 		</div>
 		<!-- /wp:group -->

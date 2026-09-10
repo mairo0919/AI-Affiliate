@@ -1209,9 +1209,21 @@ function buildSeoAttachFromStructured(input: {
     excludePerformersFromTags: true,
   });
 
-  // Merge structured categories/tags (only when already present — never invent).
-  const categories = [...new Set([...(pub?.categories ?? derived.categories), ...structuredCategories])];
+  // Evidence-derived categories are SSOT for format buckets; drop catch-all when real ones exist.
+  let categories = [...new Set([...(derived.categories), ...structuredCategories, ...(pub?.categories ?? [])])];
+  if (categories.some((c) => c !== "作品紹介")) {
+    categories = categories.filter((c) => c !== "作品紹介");
+  }
+  if (!derived.categoryFallbackUsed && derived.categories.length > 0) {
+    categories = derived.categories;
+  }
   const tags = [...new Set([...(pub?.tags ?? derived.tags), ...structuredTags])];
+
+  const structuredImages = parseArticleImages(input.structured.images);
+  const cardImage =
+    structuredImages.find((img) => img.role === "hero")?.sourceUrl ??
+    structuredImages[0]?.sourceUrl ??
+    null;
 
   const attach = buildWordPressSeoAttach({
     title: input.title,
@@ -1236,6 +1248,7 @@ function buildSeoAttachFromStructured(input: {
     tags,
     productCanonicalId: input.productCanonicalId,
     safeOgImageUrl: null,
+    cardImageUrl: cardImage,
     siteOrigin: input.siteOrigin,
   });
   return {

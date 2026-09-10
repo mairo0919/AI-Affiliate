@@ -24,6 +24,7 @@ const OTONASELECT_META_SEO_TITLE = 'otonaselect_seo_title';
 const OTONASELECT_META_SEO_DESCRIPTION = 'otonaselect_seo_description';
 const OTONASELECT_META_PRODUCT_CID = 'otonaselect_product_cid';
 const OTONASELECT_META_SAFE_OG_IMAGE = 'otonaselect_safe_og_image';
+const OTONASELECT_META_CARD_IMAGE = 'otonaselect_card_image';
 const OTONASELECT_META_SERIES_NAME = 'otonaselect_series_name';
 
 const OTONASELECT_TAX_PERFORMER = 'performer';

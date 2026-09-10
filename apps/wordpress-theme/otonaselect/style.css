@@ -6,7 +6,7 @@ Description: オトナセレクト専用の軽量ブロックテーマ。note風
 Requires at least: 6.7
 Tested up to: 6.8
 Requires PHP: 8.0
-Version: 1.5.0
+Version: 1.6.0
 License: GNU General Public License v2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 Text Domain: otonaselect
@@ -104,6 +104,131 @@ body {
 
 .otonaselect-card .wp-block-post-featured-image:not(:has(img)) {
 	display: none !important;
+}
+
+.otonaselect-card-grid {
+	gap: var(--wp--preset--spacing--50) !important;
+}
+
+.otonaselect-card {
+	height: 100%;
+}
+
+.otonaselect-card-taxonomy {
+	display: flex;
+	flex-direction: column;
+	gap: 0.25rem;
+	font-size: 0.8125rem;
+	line-height: 1.45;
+	color: var(--wp--preset--color--muted, #5c5c5c);
+}
+
+.otonaselect-card-tax-label {
+	color: var(--wp--preset--color--muted, #666);
+	margin-right: 0.25rem;
+}
+
+.otonaselect-section-heading {
+	margin-bottom: 0;
+}
+
+.otonaselect-popular-section {
+	margin-bottom: var(--wp--preset--spacing--60);
+}
+
+.otonaselect-popular-list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: var(--wp--preset--spacing--40);
+}
+
+.otonaselect-popular-link {
+	display: grid;
+	gap: 0.5rem;
+	text-decoration: none;
+	color: inherit;
+}
+
+.otonaselect-popular-thumb img {
+	width: 100%;
+	aspect-ratio: 16 / 9;
+	object-fit: cover;
+	display: block;
+}
+
+.otonaselect-popular-title {
+	font-size: 0.95rem;
+	line-height: 1.4;
+}
+
+.otonaselect-article-taxonomy .otonaselect-entity-row {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.25rem 0.5rem;
+	align-items: baseline;
+}
+
+.otonaselect-contact-form {
+	display: grid;
+	gap: 0.85rem;
+	max-width: 36rem;
+	margin-top: 1.25rem;
+}
+
+.otonaselect-contact-form label {
+	display: block;
+	font-size: 0.9rem;
+	margin-bottom: 0.3rem;
+}
+
+.otonaselect-contact-form input,
+.otonaselect-contact-form select,
+.otonaselect-contact-form textarea {
+	width: 100%;
+	max-width: 100%;
+	box-sizing: border-box;
+	padding: 0.55rem 0.7rem;
+	border: 1px solid #cfcfcf;
+	border-radius: 4px;
+	font: inherit;
+}
+
+.otonaselect-contact-form .required {
+	color: #a33;
+	font-size: 0.75rem;
+}
+
+.otonaselect-contact-submit {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-height: 2.75rem;
+	padding: 0.6rem 1.25rem;
+	border: 0;
+	border-radius: 4px;
+	background: #222;
+	color: #fff;
+	font: inherit;
+	cursor: pointer;
+}
+
+.otonaselect-contact-message {
+	padding: 0.75rem 1rem;
+	border-radius: 4px;
+	margin: 1rem 0;
+}
+
+.otonaselect-contact-message.is-success {
+	background: #eef8ee;
+	border: 1px solid #b7dfb7;
+}
+
+.otonaselect-contact-message.is-error {
+	background: #fbf0f0;
+	border: 1px solid #e0b4b4;
 }
 
 /* ----- Sponsor ----- */
@@ -411,5 +536,13 @@ body.single-post .otonaselect-single-title {
 
 	.otonaselect-breadcrumbs {
 		font-size: 0.75rem;
+	}
+
+	.otonaselect-popular-list {
+		grid-template-columns: 1fr;
+	}
+
+	.otonaselect-card-grid {
+		grid-template-columns: 1fr !important;
 	}
 }

@@ -42,13 +42,17 @@ const EVIDENCE_TAG_TOKENS = [
 /**
  * Map evidence genre/title tokens → WP category display names.
  * Only applied when the match string appears in evidence (genre name or title).
+ * Adult attributes (巨乳/人妻/…) are tags, never categories.
  */
-const CATEGORY_EVIDENCE_RULES: Array<{ needle: RegExp; category: string }> = [
-  { needle: /ベスト|総集編|\bBEST\b/i, category: "ベスト・総集編" },
-  { needle: /(?:^|[\s\u3000/／])VR(?:$|[\s\u3000/／])|ＶＲ|\bVR\b/, category: "VR" },
-  { needle: /単体作品/, category: "単体作品" },
-  { needle: /企画/, category: "企画" },
+const CATEGORY_EVIDENCE_RULES: Array<{ needle: RegExp; category: string; priority: number }> = [
+  { needle: /ベスト|総集編|\bBEST\b/i, category: "ベスト・総集編", priority: 40 },
+  { needle: /(?:^|[\s\u3000/／])VR(?:$|[\s\u3000/／])|ＶＲ|\bVR\b/, category: "VR", priority: 30 },
+  { needle: /単体作品/, category: "単体作品", priority: 20 },
+  { needle: /企画/, category: "企画", priority: 10 },
 ];
+
+/** Preferred primary category order when multiple rules match. */
+const CATEGORY_DISPLAY_ORDER = ["単体作品", "企画", "VR", "ベスト・総集編"] as const;
 
 /**
  * Semantic series groupings — only when evidence strongly indicates a work-group axis.
@@ -209,21 +213,44 @@ export function deriveWordPressTaxonomyFromEvidence(input: {
   ];
   const blob = evidenceBlob(labels, title, subtitle);
 
-  const categories: string[] = [];
-  for (const rule of CATEGORY_EVIDENCE_RULES) {
-    if (rule.needle.test(blob) || genres.some((g) => rule.needle.test(g))) {
-      categories.push(rule.category);
+  // Prefer official genre labels; fall back to title/evidence blob.
+  const matched = new Map<string, number>();
+  const consider = (text: string) => {
+    for (const rule of CATEGORY_EVIDENCE_RULES) {
+      if (rule.needle.test(text)) {
+        const prev = matched.get(rule.category) ?? -1;
+        if (rule.priority > prev) matched.set(rule.category, rule.priority);
+      }
     }
+  };
+  for (const g of genres) consider(g);
+  if (matched.size === 0) {
+    consider(blob);
   }
 
+  const categories = [...matched.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([name]) => name);
+
   let categoryFallbackUsed = false;
-  const uniqueCategories = uniqPreserve(categories);
-  if (uniqueCategories.length === 0 && input.allowCategoryFallback !== false) {
+  const orderedPreferred = CATEGORY_DISPLAY_ORDER.filter((c) => categories.includes(c));
+  const orderedRest = categories.filter(
+    (c) => !(CATEGORY_DISPLAY_ORDER as readonly string[]).includes(c),
+  );
+  const uniqueCategories = uniqPreserve([...orderedPreferred, ...orderedRest]);
+  // Drop legacy catch-all when a real format category exists.
+  const withoutIntro = uniqueCategories.filter((c) => c !== PRODUCT_ARTICLE_CATEGORY_FALLBACK);
+  const finalCategories =
+    withoutIntro.length > 0 ? withoutIntro : [...uniqueCategories];
+
+  if (finalCategories.length === 0 && input.allowCategoryFallback !== false) {
     if (performers.length > 0 || genres.length > 0 || title.length > 0) {
-      uniqueCategories.push(PRODUCT_ARTICLE_CATEGORY_FALLBACK);
+      finalCategories.push(PRODUCT_ARTICLE_CATEGORY_FALLBACK);
       categoryFallbackUsed = true;
       notes.push("category_fallback_作品紹介");
     }
+  } else if (genres.some((g) => CATEGORY_EVIDENCE_RULES.some((r) => r.needle.test(g)))) {
+    notes.push("category_from_official_genre");
   }
 
   const makers = [
@@ -355,7 +382,7 @@ export function deriveWordPressTaxonomyFromEvidence(input: {
     performers: cappedPerformers,
     seriesNames,
     seriesName: seriesNames[0] ?? null,
-    categories: uniqueCategories,
+    categories: finalCategories,
     tags: normalizedTags,
     categoryFallbackUsed,
     notes,

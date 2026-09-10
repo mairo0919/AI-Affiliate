@@ -124,7 +124,7 @@ function renderMetaNote(text: string): string {
 
 function renderCtaBlock(cta: { label: string; url: string | null }): string {
   if (cta.url) {
-    return `<p class="${BLOG_CTA_CLASS}"><a href="${escapeAttr(cta.url)}">${escapeHtml(cta.label)}</a></p>`;
+    return `<p class="${BLOG_CTA_CLASS}"><a href="${escapeAttr(cta.url)}" data-otonaselect-cta="1" data-cta="detail_confirm" data-provider="fanza" rel="noopener noreferrer">${escapeHtml(cta.label)}</a></p>`;
   }
   return `<p class="${BLOG_CTA_CLASS}">${escapeHtml(cta.label)}（リンク準備中）</p>`;
 }
