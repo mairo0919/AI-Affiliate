@@ -98,8 +98,8 @@ async function fetchWpSnapshot(
   const ns = config.wordpressApiNamespace || "wp/v2";
   const res = await fetch(`${base}/wp-json/${ns}/posts/${externalId}?context=edit`, {
     headers: { Authorization: `Basic ${auth}` },
-  });
-  if (!res.ok) return null;
+  }).catch(() => null);
+  if (!res || !res.ok) return null;
   const j = (await res.json()) as {
     title?: { raw?: string; rendered?: string };
     date?: string;
@@ -239,37 +239,37 @@ export async function refreshWordPressPublicationMetadata(deps: {
       siteOrigin: deps.config.wordpressBaseUrl ?? OTONASELECT_PRODUCTION_ORIGIN,
     });
 
-    const ensure = publisher.ensureTerm.bind(publisher);
-    const tagIds: number[] = [];
-    for (const name of attach.tags) {
-      const id = await ensure({ taxonomyRestBase: "tags", name });
-      if (id) tagIds.push(id);
-    }
-    const categoryIds: number[] = [];
-    for (const name of attach.categories) {
-      const id = await ensure({ taxonomyRestBase: "categories", name });
-      if (id) categoryIds.push(id);
-    }
-    const performerIds: number[] = [];
-    for (const p of attach.performers) {
-      const id = await ensure({
-        taxonomyRestBase: "performer",
-        name: p.name,
-        slug: p.stableSlug,
-      });
-      if (id) performerIds.push(id);
-    }
-    const seriesIds: number[] = [];
-    for (const s of attach.seriesList) {
-      const id = await ensure({
-        taxonomyRestBase: "series",
-        name: s.name,
-        slug: s.stableSlug,
-      });
-      if (id) seriesIds.push(id);
-    }
-
     try {
+      const ensure = publisher.ensureTerm.bind(publisher);
+      const tagIds: number[] = [];
+      for (const name of attach.tags) {
+        const id = await ensure({ taxonomyRestBase: "tags", name });
+        if (id) tagIds.push(id);
+      }
+      const categoryIds: number[] = [];
+      for (const name of attach.categories) {
+        const id = await ensure({ taxonomyRestBase: "categories", name });
+        if (id) categoryIds.push(id);
+      }
+      const performerIds: number[] = [];
+      for (const p of attach.performers) {
+        const id = await ensure({
+          taxonomyRestBase: "performer",
+          name: p.name,
+          slug: p.stableSlug,
+        });
+        if (id) performerIds.push(id);
+      }
+      const seriesIds: number[] = [];
+      for (const s of attach.seriesList) {
+        const id = await ensure({
+          taxonomyRestBase: "series",
+          name: s.name,
+          slug: s.stableSlug,
+        });
+        if (id) seriesIds.push(id);
+      }
+
       await publisher.updateMetadataOnly({
         externalId,
         title: metadata.title,
@@ -287,6 +287,16 @@ export async function refreshWordPressPublicationMetadata(deps: {
         ok: false,
         reason: error instanceof Error ? error.message : String(error),
         metadata,
+        before: before
+          ? {
+              title: before.title,
+              seoTitle: before.seoTitle,
+              seoDesc: before.seoDesc,
+              categories: before.categories,
+              tags: before.tags,
+              date: before.date,
+            }
+          : undefined,
       });
       continue;
     }

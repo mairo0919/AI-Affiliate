@@ -76,6 +76,7 @@ const BANNED_TAGS = new Set([
   "ページ",
   "詳細",
   "公式",
+  "作品紹介",
 ]);
 
 const GENERIC_TITLE_SUFFIXES = ["を紹介", "を解説", "まとめ", "レビュー"];
@@ -418,7 +419,7 @@ export function buildDeterministicPublicationMetadata(
   const metaDescription = buildDeterministicMetaDescription(title, evidence);
   const tags = filterMeaningfulTags([
     ...tax.tags.filter((t) => !(evidence.performers ?? []).includes(t) || tax.performers.length <= 3),
-    ...tax.categories,
+    ...tax.categories.filter((c) => c !== "作品紹介"),
     ...(evidence.makers ?? []),
     ...(evidence.labels ?? []),
     ...(evidence.genres ?? []),
@@ -515,7 +516,7 @@ export async function generatePublicationMetadata(input: {
       tax.performers.length > 5 ? tax.performers.slice(0, 3) : tax.performers;
     const tags = filterMeaningfulTags([
       ...tax.tags.filter((t) => !performers.includes(t) || performers.length <= 3),
-      ...tax.categories,
+      ...tax.categories.filter((c) => c !== "作品紹介"),
       ...(input.evidence.makers ?? []),
       ...(input.evidence.genres ?? []),
     ]);
