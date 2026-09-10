@@ -242,7 +242,7 @@ export async function runWpReflectMediaCli(argv: string[]): Promise<void> {
             }
           : null,
         themeVersion: theme?.version ?? null,
-        note: "Age Gate boot in header template-part; PHP plugin/theme is SSOT when deployed.",
+        note: "Age Gate SSOT is the PHP plugin; header template-part must not contain JS/CSS age gate.",
       },
       null,
       2,

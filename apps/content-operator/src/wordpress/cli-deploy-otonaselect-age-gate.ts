@@ -95,7 +95,7 @@ export async function runWpDeployOtonaselectAgeGateCli(argv: string[]): Promise<
   const { zipPath, workDir } = buildPluginZip();
   const outDir = resolve(HERE, "../../tmp-artifacts");
   mkdirSync(outDir, { recursive: true });
-  const savedZip = join(outDir, "otonaselect-age-gate-1.0.0.zip");
+  const savedZip = join(outDir, "otonaselect-age-gate-1.0.1.zip");
   writeFileSync(savedZip, readFileSync(zipPath));
 
   if (!apply) {

@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 /** Mirrors theme/plugin crawler allowlist used to skip Age Gate for SEO bots. */
@@ -22,5 +25,17 @@ describe("Age Gate crawler detection", () => {
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
       ),
     ).toBe(false);
+  });
+});
+
+describe("Age Gate SSOT: theme header must not ship JS/CSS gate", () => {
+  it("header.html has no visibility-hidden age boot", () => {
+    const header = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), "../../../../wordpress-theme/otonaselect/parts/header.html"),
+      "utf8",
+    );
+    expect(header).not.toMatch(/otonaselect-age-boot/);
+    expect(header).not.toMatch(/otonaselect-age-gate-root/);
+    expect(header).not.toMatch(/html:not\(\.otonaselect-age-ok\)/);
   });
 });
