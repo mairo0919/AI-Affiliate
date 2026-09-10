@@ -201,7 +201,8 @@ export class WordPressApiPublisher implements PublisherAdapter {
    */
   async updateMetadataOnly(input: {
     externalId: string;
-    title: string;
+    /** When omitted, WordPress post title is left unchanged. */
+    title?: string | null;
     excerpt?: string | null;
     wpSeoMeta?: Record<string, string> | null;
     tagIds?: number[];
@@ -219,16 +220,14 @@ export class WordPressApiPublisher implements PublisherAdapter {
       };
     }
     this.assertCanCallApi("update");
-    const body: Record<string, unknown> = {
-      title: input.title,
-    };
+    const body: Record<string, unknown> = {};
+    if (input.title?.trim()) body.title = input.title.trim();
     if (input.excerpt?.trim()) body.excerpt = input.excerpt.trim();
     if (input.wpSeoMeta && Object.keys(input.wpSeoMeta).length > 0) {
       body.meta = input.wpSeoMeta;
     }
     if (input.tagIds && input.tagIds.length > 0) body.tags = input.tagIds;
     if (input.categoryIds && input.categoryIds.length > 0) body.categories = input.categoryIds;
-    // Allow clearing empty taxonomies when explicitly provided as empty arrays? Prefer set when non-empty.
     if (input.performerIds) body.performer = input.performerIds;
     if (input.seriesIds) body.series = input.seriesIds;
 

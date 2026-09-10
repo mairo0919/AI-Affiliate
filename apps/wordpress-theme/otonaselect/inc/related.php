@@ -1,6 +1,6 @@
 <?php
 /**
- * Related posts: performer → series → category (no padding with random filler).
+ * Related posts: performer → series → category → tag (adult attribute tags included).
  *
  * @package OtonaSelect
  */

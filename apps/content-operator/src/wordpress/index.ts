@@ -53,6 +53,18 @@ export {
   DEFAULT_FUTURE_METADATA_REFRESH_IDS,
 } from "./refresh-wp-metadata.js";
 export {
+  refreshAdultAttributeTagsOnWordPress,
+} from "./refresh-adult-tags.js";
+export {
+  extractAdultAttributeTags,
+  adultTagStableSlug,
+} from "./adult-taxonomy.js";
+export {
+  ADULT_TAXONOMY_DICTIONARY,
+  adultTaxonomyCanonicalCount,
+  adultTaxonomyAliasCount,
+} from "./adult-taxonomy-dictionary.js";
+export {
   resolveWordPressPostDates,
   isWordPressTimezoneTokyo,
 } from "./wordpress-datetime.js";

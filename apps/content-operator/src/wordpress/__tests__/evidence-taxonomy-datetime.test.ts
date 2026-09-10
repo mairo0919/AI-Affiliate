@@ -37,7 +37,9 @@ describe("evidence-taxonomy", () => {
     });
     expect(d.seriesNames).toEqual(expect.arrayContaining(["エスワン", "ベスト・総集編"]));
     expect(d.categories).toContain("ベスト・総集編");
-    expect(d.tags).toEqual(expect.arrayContaining(["奥田咲", "ベスト", "総集編"]));
+    expect(d.tags).toEqual(expect.arrayContaining(["ベスト", "総集編"]));
+    expect(d.tags).not.toContain("奥田咲");
+    expect(d.performers).toContain("奥田咲");
   });
 
   it("normalizes BEST/ベスト/総集編 synonyms for series display", () => {

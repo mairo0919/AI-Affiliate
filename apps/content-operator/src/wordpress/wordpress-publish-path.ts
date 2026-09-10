@@ -28,6 +28,10 @@ import {
   type EvidenceTaxonomyLabel,
 } from "./evidence-taxonomy.js";
 import {
+  ADULT_TAXONOMY_DICTIONARY,
+} from "./adult-taxonomy-dictionary.js";
+import { adultTagStableSlug } from "./adult-taxonomy.js";
+import {
   evidenceFromStructuredContent,
   evaluatePublicationMetadataQuality,
   generatePublicationMetadata,
@@ -635,12 +639,14 @@ export async function publishContentVersionToWordPress(
   };
 
   // Publication metadata layer (title/SEO/tax) — never rewrites article body sections.
-  const evidenceLabels = await loadEvidenceLabelsForProduct(deps.prisma, productCanonicalId);
+  const evidencePack = await loadEvidencePackForProduct(deps, productCanonicalId);
   const evidence = evidenceFromStructuredContent({
     structured: structuredForHtml,
     versionTitle: version.title,
-    evidenceLabels,
+    evidenceLabels: evidencePack.labels,
     productCanonicalId,
+    officialTitle: evidencePack.officialTitle,
+    officialDescription: evidencePack.officialDescription,
   });
   let publicationMetadata =
     structuredForHtml.publicationMetadata &&
@@ -784,7 +790,9 @@ export async function publishContentVersionToWordPress(
     excerptFallback: publicationMetadata?.metaDescription || built.excerpt,
     productCanonicalId,
     siteOrigin: deps.config.wordpressBaseUrl ?? OTONASELECT_PRODUCTION_ORIGIN,
-    evidenceLabels,
+    evidenceLabels: evidencePack.labels,
+    officialTitle: evidencePack.officialTitle,
+    officialDescription: evidencePack.officialDescription,
     publicationMetadata,
   });
   const seoTermIds = await resolveSeoTermIds(publisher, seoAttach);
@@ -1108,6 +1116,8 @@ function buildSeoAttachFromStructured(input: {
   productCanonicalId: string | null;
   siteOrigin: string;
   evidenceLabels?: EvidenceTaxonomyLabel[];
+  officialTitle?: string | null;
+  officialDescription?: string | null;
   publicationMetadata?: PublicationMetadata | null;
 }): WordPressSeoAttach {
   const article =
@@ -1166,11 +1176,13 @@ function buildSeoAttachFromStructured(input: {
 
   const derived = deriveWordPressTaxonomyFromEvidence({
     labels: input.evidenceLabels ?? [],
-    title: input.title,
+    title: input.officialTitle?.trim() || input.title,
+    officialDescription: input.officialDescription ?? null,
     extraPerformers: performers.map((p) => p.name),
     extraSeriesName: seriesNameFromStructured,
     extraSeriesNames: pub?.seriesNames,
     allowCategoryFallback: true,
+    excludePerformersFromTags: true,
   });
 
   // Merge structured categories/tags (only when already present — never invent).
@@ -1208,43 +1220,116 @@ function buildSeoAttachFromStructured(input: {
   };
 }
 
-async function loadEvidenceLabelsForProduct(
-  prisma: WordPressPublishPathDeps["prisma"],
+async function loadEvidencePackForProduct(
+  deps: WordPressPublishPathDeps,
   productCanonicalId: string | null,
-): Promise<EvidenceTaxonomyLabel[]> {
-  if (!productCanonicalId?.trim()) return [];
+): Promise<{
+  labels: EvidenceTaxonomyLabel[];
+  officialTitle: string | null;
+  officialDescription: string | null;
+}> {
+  if (!productCanonicalId?.trim()) {
+    return { labels: [], officialTitle: null, officialDescription: null };
+  }
   const cid = productCanonicalId.trim().toLowerCase();
+  let labels: EvidenceTaxonomyLabel[] = [];
   const researchItem = (
-    prisma as {
+    deps.prisma as {
       researchItem?: {
         findFirst: (args: Record<string, unknown>) => Promise<{
+          title?: string | null;
+          description?: string | null;
           tags?: Array<{ researchTag: { type: string; name: string } }>;
         } | null>;
       };
     }
   ).researchItem;
-  if (!researchItem?.findFirst) return [];
-  try {
-    const item = await researchItem.findFirst({
-      where: {
-        OR: [
-          { externalId: { equals: cid, mode: "insensitive" } },
-          { externalId: { startsWith: cid, mode: "insensitive" } },
-        ],
-      },
-      orderBy: { collectedAt: "desc" },
-      include: {
-        tags: { include: { researchTag: true } },
-      },
-    });
-    if (!item?.tags?.length) return [];
-    return item.tags.map((t) => ({
-      type: t.researchTag.type,
-      name: t.researchTag.name,
-    }));
-  } catch {
-    return [];
+  let officialTitle: string | null = null;
+  let officialDescription: string | null = null;
+  if (researchItem?.findFirst) {
+    try {
+      const item = await researchItem.findFirst({
+        where: {
+          OR: [
+            { externalId: { equals: cid, mode: "insensitive" } },
+            { externalId: { startsWith: cid, mode: "insensitive" } },
+          ],
+        },
+        orderBy: { collectedAt: "desc" },
+        include: {
+          tags: { include: { researchTag: true } },
+        },
+      });
+      if (item?.tags?.length) {
+        labels = item.tags.map((t) => ({
+          type: t.researchTag.type,
+          name: t.researchTag.name,
+        }));
+      }
+      if (typeof item?.title === "string" && item.title.trim()) {
+        officialTitle = item.title.trim();
+      }
+      if (typeof item?.description === "string" && item.description.trim()) {
+        officialDescription = item.description.trim();
+      }
+    } catch {
+      /* ignore */
+    }
   }
+
+  try {
+    const findDoc = (
+      deps.lifecycle as {
+        findLatestSourceDocumentByUrlContains?: (
+          needle: string,
+        ) => Promise<{ metadata?: unknown } | null>;
+      }
+    ).findLatestSourceDocumentByUrlContains;
+    if (findDoc) {
+      const doc = await findDoc(cid);
+      const meta =
+        doc?.metadata && typeof doc.metadata === "object" && !Array.isArray(doc.metadata)
+          ? (doc.metadata as Record<string, unknown>)
+          : {};
+      const pe =
+        meta.pageEvidence && typeof meta.pageEvidence === "object"
+          ? (meta.pageEvidence as Record<string, unknown>)
+          : null;
+      if (pe) {
+        if (typeof pe.productName === "string" && pe.productName.trim()) {
+          officialTitle = pe.productName.trim();
+        }
+        const desc = pe.description;
+        if (desc && typeof desc === "object" && typeof (desc as { text?: unknown }).text === "string") {
+          const text = String((desc as { text: string }).text).trim();
+          if (text) officialDescription = text;
+        }
+        const catalog =
+          pe.catalog && typeof pe.catalog === "object"
+            ? (pe.catalog as Record<string, unknown>)
+            : null;
+        const genres = catalog && Array.isArray(catalog.genres) ? catalog.genres : [];
+        for (const g of genres) {
+          let name = "";
+          if (typeof g === "string") name = g.trim();
+          else if (g && typeof g === "object" && typeof (g as { name?: unknown }).name === "string") {
+            name = String((g as { name: string }).name).trim();
+          }
+          if (!name) continue;
+          const exists = labels.some(
+            (l) =>
+              l.type.toLowerCase() === "genre" &&
+              l.name.replace(/\s+/g, "").toLowerCase() === name.replace(/\s+/g, "").toLowerCase(),
+          );
+          if (!exists) labels.push({ type: "genre", name });
+        }
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+
+  return { labels, officialTitle, officialDescription };
 }
 
 async function resolveSeoTermIds(
@@ -1264,10 +1349,15 @@ async function resolveSeoTermIds(
     return { tagIds: [], categoryIds: [], performerIds: [], seriesIds: [] };
   }
 
+  const dictNames = new Set(ADULT_TAXONOMY_DICTIONARY.map((t) => t.canonicalName));
   const tagIds: number[] = [];
   for (const name of attach.tags) {
     try {
-      const id = await ensure({ taxonomyRestBase: "tags", name });
+      const id = await ensure({
+        taxonomyRestBase: "tags",
+        name,
+        slug: dictNames.has(name) ? adultTagStableSlug(name) : null,
+      });
       if (id) tagIds.push(id);
     } catch {
       /* ignore */

@@ -45,6 +45,8 @@ export type PublicationMetadataQuality = {
 export type PublicationMetadataEvidence = {
   productCanonicalId?: string | null;
   officialTitle?: string | null;
+  /** Official product description from Evidence / pageEvidence. */
+  officialDescription?: string | null;
   performers?: string[];
   seriesNames?: string[];
   makers?: string[];
@@ -93,7 +95,7 @@ export function isBannedTag(name: string): boolean {
 }
 
 export function filterMeaningfulTags(tags: string[], opts?: { max?: number }): string[] {
-  const max = opts?.max ?? 12;
+  const max = opts?.max ?? 18;
   const out: string[] = [];
   const seen = new Set<string>();
   for (const raw of tags) {
@@ -361,9 +363,11 @@ export function buildTaxonomyFromEvidencePack(
   return deriveWordPressTaxonomyFromEvidence({
     labels,
     title: evidence.officialTitle || evidence.writerTitle || "",
+    officialDescription: evidence.officialDescription ?? null,
     extraPerformers: evidence.performers,
     extraSeriesNames: evidence.seriesNames,
     allowCategoryFallback: true,
+    excludePerformersFromTags: true,
   });
 }
 
@@ -595,6 +599,9 @@ export function evidenceFromStructuredContent(input: {
   versionTitle?: string | null;
   evidenceLabels?: EvidenceTaxonomyLabel[];
   productCanonicalId?: string | null;
+  officialTitle?: string | null;
+  officialDescription?: string | null;
+  pageGenres?: string[] | null;
 }): PublicationMetadataEvidence {
   const structured = input.structured;
   const article =
@@ -628,6 +635,7 @@ export function evidenceFromStructuredContent(input: {
       .map((l) => l.name),
   ]);
   const genres = uniqPreserve([
+    ...(input.pageGenres ?? []),
     ...stringList(article.labels),
     ...stringList(seo.labels),
     ...(input.evidenceLabels ?? [])
@@ -660,8 +668,13 @@ export function evidenceFromStructuredContent(input: {
   return {
     productCanonicalId,
     officialTitle:
+      input.officialTitle ||
       (typeof structured.officialTitle === "string" && structured.officialTitle) ||
       (typeof structured.productTitle === "string" && structured.productTitle) ||
+      null,
+    officialDescription:
+      input.officialDescription ||
+      (typeof structured.officialDescription === "string" && structured.officialDescription) ||
       null,
     performers,
     seriesNames,

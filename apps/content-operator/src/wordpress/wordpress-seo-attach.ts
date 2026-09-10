@@ -67,7 +67,7 @@ const BLOCKED_OG_HOSTS = new Set([
 
 export function stableTermSlug(
   displayName: string,
-  prefix: "p" | "s",
+  prefix: "p" | "s" | "t",
   preferredAscii?: string | null,
 ): string {
   const ascii = (preferredAscii ?? "")

@@ -4,6 +4,9 @@
  * Never invents performers, official series, or categories without matching evidence.
  */
 
+import { extractAdultAttributeTags } from "./adult-taxonomy.js";
+import { ADULT_TAXONOMY_DICTIONARY } from "./adult-taxonomy-dictionary.js";
+
 export type EvidenceTaxonomyLabel = {
   type: string;
   name: string;
@@ -161,12 +164,19 @@ export function deriveWordPressTaxonomyFromEvidence(input: {
   labels: EvidenceTaxonomyLabel[];
   title?: string | null;
   subtitle?: string | null;
+  /** Official product description (Evidence SSOT). */
+  officialDescription?: string | null;
   /** Extra performer names already attested (e.g. structuredContent). */
   extraPerformers?: string[] | null;
   /** Extra official series name(s) already attested. */
   extraSeriesName?: string | null;
   extraSeriesNames?: string[] | null;
   allowCategoryFallback?: boolean;
+  /**
+   * When true (default), do not mirror performer names into tags —
+   * performer taxonomy is SSOT for "who"; tags are for "what kind of work".
+   */
+  excludePerformersFromTags?: boolean;
 }): DerivedWordPressTaxonomy {
   const notes: string[] = [];
   const title = input.title?.trim() ?? "";
@@ -217,18 +227,69 @@ export function deriveWordPressTaxonomyFromEvidence(input: {
     ...labelsOfType(labels, "label"),
   ];
 
-  // Tags = cross-cutting attributes. Do not dump every compilation performer.
+  // Adult attribute tags from genre / title / description (dictionary-backed).
+  const attributeLabels = [
+    ...labelsOfType(labels, "attribute"),
+    ...labelsOfType(labels, "keyword"),
+  ];
+  const adult = extractAdultAttributeTags({
+    genres,
+    attributes: attributeLabels,
+    officialTitle: title || subtitle || "",
+    officialDescription: input.officialDescription ?? "",
+    extraText: [],
+  });
+  if (adult.tags.length > 0) {
+    notes.push(`adult_attribute_tags:${adult.tags.length}`);
+  }
+
+  // Prefer more specific situation tags (メンエス) over generic エステ when both match.
+  const adultTagsFiltered = adult.tags.filter((t) => {
+    if (t === "エステ" && adult.tags.includes("メンエス")) return false;
+    return true;
+  });
+
+  // Tags = work attributes. Performer taxonomy is SSOT for cast.
   const tags: string[] = [];
-  const performerTags =
-    performers.length > 5 ? performers.slice(0, 2) : performers.length > 3 ? performers.slice(0, 3) : performers;
-  for (const p of performerTags) tags.push(p);
-  for (const s of seriesNames) tags.push(s);
+  const excludePerformers = input.excludePerformersFromTags !== false;
+  if (!excludePerformers) {
+    const performerTags =
+      performers.length > 5
+        ? performers.slice(0, 2)
+        : performers.length > 3
+          ? performers.slice(0, 3)
+          : performers;
+    for (const p of performerTags) tags.push(p);
+  }
+  for (const s of seriesNames) {
+    // Avoid duplicating format series as both series tax + noisy tag when adult dict covers it
+    if (s === "ベスト・総集編") {
+      tags.push("ベスト");
+      tags.push("総集編");
+    } else if (s !== "デビュー作" && s !== "完全版" && s !== "周年記念") {
+      tags.push(s);
+    }
+  }
   for (const m of makers) {
     if (m.length > 0 && m.length <= 24) tags.push(m);
   }
+  // Official genre labels that are not already collapsed into adult canonical tags
+  const adultSet = new Set(adultTagsFiltered.map((t) => t.replace(/\s+/g, "").toLowerCase()));
   for (const g of genres) {
-    if (g.length > 0 && g.length <= 24) tags.push(normalizeTaxonomyDisplayName(g));
+    if (g.length > 0 && g.length <= 24) {
+      const n = normalizeTaxonomyDisplayName(g);
+      if (!adultSet.has(n.replace(/\s+/g, "").toLowerCase())) {
+        // Skip raw genre if adult dict already matched a synonym into canonical
+        const covered = adult.matches.some(
+          (m) =>
+            m.matchedAlias.replace(/\s+/g, "").toLowerCase() ===
+            g.replace(/\s+/g, "").toLowerCase(),
+        );
+        if (!covered) tags.push(n);
+      }
+    }
   }
+  for (const a of adultTagsFiltered) tags.push(a);
   for (const token of EVIDENCE_TAG_TOKENS) {
     if (blob.toLowerCase().includes(token.toLowerCase()) || blob.includes(token)) {
       tags.push(token);
@@ -244,10 +305,16 @@ export function deriveWordPressTaxonomyFromEvidence(input: {
     "人気",
     "商品",
     "ページ",
+    "AV",
+    "av",
   ]);
+  const adultCanonical = new Set(ADULT_TAXONOMY_DICTIONARY.map((t) => t.canonicalName));
   const normalizedTags = uniqPreserve(
     tags
       .map((t) => {
+        // Adult dictionary canonicals must stay as searchable tags (デビュー ≠ series デビュー作).
+        if (adultCanonical.has(t)) return t;
+        if (t === "デビュー作") return "デビュー";
         const n = normalizeTaxonomyDisplayName(t);
         // Keep short form tags ベスト/総集編 as searchable tags even when series is ベスト・総集編
         if (t === "ベスト" || t === "総集編" || t === "BEST" || t === "Best")
