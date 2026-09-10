@@ -243,17 +243,83 @@ function otonaselect_is_trusted_product_image_url(string $url): bool {
 }
 
 /**
- * Prefer package/pl hero, then sample jp, from post content or card meta.
+ * Prefer max official FANZA size variant (no network). Same rules as Factory resolver.
+ */
+function otonaselect_prefer_max_official_variant(string $url): string {
+	if (!otonaselect_is_trusted_product_image_url($url)) {
+		return $url;
+	}
+	$parts = wp_parse_url($url);
+	if (!is_array($parts) || empty($parts['path'])) {
+		return $url;
+	}
+	$file = basename((string) $parts['path']);
+	$next = $file;
+	if (preg_match('/^([a-z0-9_]+)(ps|pt)\.(jpe?g|webp|png)$/i', $file)) {
+		$next = preg_replace('/(ps|pt)\./i', 'pl.', $file, 1) ?? $file;
+	} elseif (preg_match('/^([a-z0-9_]+)js-(\d+)\.(jpe?g|webp|png)$/i', $file)) {
+		$next = preg_replace('/js-/i', 'jp-', $file, 1) ?? $file;
+	} elseif (preg_match('/^([a-z0-9_]+)-(\d+)\.(jpe?g|webp|png)$/i', $file) && !preg_match('/j[ps]-\d+\./i', $file)) {
+		$next = preg_replace('/^([a-z0-9_]+)-(\d+)\./i', '$1jp-$2.', $file, 1) ?? $file;
+	}
+	if ($next === $file) {
+		return $url;
+	}
+	$path = (string) $parts['path'];
+	$new_path = preg_replace('/' . preg_quote($file, '/') . '$/', $next, $path) ?? $path;
+	$scheme = $parts['scheme'] ?? 'https';
+	$host = $parts['host'] ?? '';
+	$query = isset($parts['query']) ? '?' . $parts['query'] : '';
+	return $scheme . '://' . $host . $new_path . $query;
+}
+
+/**
+ * Score a trusted product image URL for card selection.
+ */
+function otonaselect_card_image_score(string $url): int {
+	$file = strtolower(basename((string) (wp_parse_url($url, PHP_URL_PATH) ?? '')));
+	if (str_contains($file, 'pl.')) {
+		return 100;
+	}
+	if (preg_match('/jp-\d+\./', $file)) {
+		return 80;
+	}
+	if (preg_match('/ps\.|pt\./', $file)) {
+		return 50;
+	}
+	if (preg_match('/js-\d+\./', $file)) {
+		return 40;
+	}
+	if (preg_match('/-\d+\./', $file)) {
+		return 30;
+	}
+	return 10;
+}
+
+/**
+ * Resolve TOP/list card image URL.
+ * Priority: featured attachment URL (trusted) → card meta → body PUBLIC images → null.
  */
 function otonaselect_card_image_url(int $post_id): ?string {
+	if ($post_id <= 0) {
+		return null;
+	}
+
+	if (has_post_thumbnail($post_id)) {
+		$thumb = wp_get_attachment_image_url((int) get_post_thumbnail_id($post_id), 'full');
+		if (is_string($thumb) && $thumb !== '' && otonaselect_is_trusted_product_image_url($thumb)) {
+			return otonaselect_prefer_max_official_variant($thumb);
+		}
+	}
+
 	$meta = get_post_meta($post_id, OTONASELECT_META_CARD_IMAGE, true);
 	if (is_string($meta) && $meta !== '' && otonaselect_is_trusted_product_image_url($meta)) {
-		return $meta;
+		return otonaselect_prefer_max_official_variant($meta);
 	}
 
 	$safe_og = get_post_meta($post_id, OTONASELECT_META_SAFE_OG_IMAGE, true);
 	if (is_string($safe_og) && $safe_og !== '' && otonaselect_is_trusted_product_image_url($safe_og)) {
-		return $safe_og;
+		return otonaselect_prefer_max_official_variant($safe_og);
 	}
 
 	$post = get_post($post_id);
@@ -269,20 +335,8 @@ function otonaselect_card_image_url(int $post_id): ?string {
 			if (!otonaselect_is_trusted_product_image_url($src)) {
 				continue;
 			}
-			$file = strtolower(basename((string) (wp_parse_url($src, PHP_URL_PATH) ?? '')));
-			$score = 10;
-			if (str_contains($file, 'pl.')) {
-				$score = 100;
-			} elseif (preg_match('/jp-\d+\./', $file)) {
-				$score = 80;
-			} elseif (preg_match('/js-\d+\./', $file)) {
-				$score = 40;
-			} elseif (preg_match('/ps\.|pt\./', $file)) {
-				$score = 50;
-			} elseif (preg_match('/-\d+\./', $file)) {
-				$score = 30;
-			}
-			$candidates[] = ['url' => $src, 'score' => $score];
+			$src = otonaselect_prefer_max_official_variant($src);
+			$candidates[] = ['url' => $src, 'score' => otonaselect_card_image_score($src)];
 		}
 	}
 
@@ -290,37 +344,85 @@ function otonaselect_card_image_url(int $post_id): ?string {
 		return null;
 	}
 	usort($candidates, static fn ($a, $b) => $b['score'] <=> $a['score']);
-	return $candidates[0]['url'];
+	$best = $candidates[0]['url'];
+
+	// Persist for stable SSR without re-parsing body every time.
+	if (!is_string($meta) || $meta === '') {
+		update_post_meta($post_id, OTONASELECT_META_CARD_IMAGE, $best);
+	}
+
+	return $best;
 }
 
 /**
- * Fallback featured image block when WP thumbnail is empty.
+ * Resolve post id for featured-image block inside Query Loop.
+ *
+ * @param array<string, mixed> $parsed_block
  */
-add_filter('render_block_core/post-featured-image', static function (string $content, array $block): string {
-	if (str_contains($content, '<img')) {
+function otonaselect_block_post_id(array $parsed_block, $block = null): int {
+	if ($block instanceof WP_Block && isset($block->context['postId'])) {
+		return (int) $block->context['postId'];
+	}
+	if (isset($parsed_block['attrs']['postId'])) {
+		return (int) $parsed_block['attrs']['postId'];
+	}
+	$id = (int) get_the_ID();
+	if ($id > 0) {
+		return $id;
+	}
+	return (int) get_queried_object_id();
+}
+
+/**
+ * Server-side card image for post-featured-image blocks.
+ * Does not rely on front-enhance.js / REST.
+ *
+ * @param array<string, mixed> $parsed_block
+ */
+add_filter('render_block_core/post-featured-image', static function (string $content, array $parsed_block, $block = null): string {
+	$post_id = otonaselect_block_post_id($parsed_block, $block);
+	$resolved = otonaselect_card_image_url($post_id);
+
+	// Keep native featured media only when we have no PUBLIC product image.
+	if ($resolved === null && str_contains($content, '<img') && has_post_thumbnail($post_id)) {
 		return $content;
 	}
-	$post_id = isset($block['attrs']['postId']) ? (int) $block['attrs']['postId'] : (int) get_the_ID();
-	if ($post_id <= 0) {
-		$post_id = (int) get_queried_object_id();
-	}
-	$url = otonaselect_card_image_url($post_id);
-	if ($url === null) {
+
+	if ($resolved === null) {
+		// Last-resort safe default (cream SVG). Avoid when a body image exists but failed trust checks.
 		$default = get_template_directory_uri() . '/assets/og-default.svg';
 		$url = $default;
 		$is_default = true;
 	} else {
+		$url = $resolved;
 		$is_default = false;
 	}
+
 	$permalink = get_permalink($post_id);
 	$alt = get_the_title($post_id);
 	$class = 'wp-block-post-featured-image otonaselect-card-image' . ($is_default ? ' is-default' : '');
-	$img = '<img src="' . esc_url($url) . '" alt="' . esc_attr($alt) . '" loading="lazy" decoding="async" />';
+	$img = '<img src="' . esc_url($url) . '" alt="' . esc_attr(is_string($alt) ? $alt : '') . '" width="640" height="360" loading="lazy" decoding="async" />';
 	if (is_string($permalink) && $permalink !== '') {
 		$img = '<a href="' . esc_url(otonaselect_replace_legacy_host($permalink)) . '">' . $img . '</a>';
 	}
-	return '<figure class="' . esc_attr($class) . '">' . $img . '</figure>';
-}, 10, 2);
+	return '<figure class="' . esc_attr($class) . '" style="aspect-ratio:16/9">' . $img . '</figure>';
+}, 10, 3);
+
+/**
+ * Never show "no posts" empty state on front when published posts exist.
+ *
+ * @param array<string, mixed> $parsed_block
+ */
+add_filter('render_block_core/query-no-results', static function (string $content, array $parsed_block, $block = null): string {
+	if (!(is_front_page() || is_home())) {
+		return $content;
+	}
+	$has_publish = (int) wp_count_posts('post')->publish;
+	if ($has_publish > 0) {
+		return '';
+	}
+	return $content;
+}, 10, 3);
 
 /**
  * Compact card taxonomy under title (performer / category / few tags).

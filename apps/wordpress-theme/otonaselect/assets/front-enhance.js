@@ -1,8 +1,6 @@
 /**
- * Front presentation helpers injected via FSE footer until theme PHP sync is active.
- * - Card images from public post content (trusted DMM hosts / default)
- * - Taxonomy display cleanup (system series hide, tag dedupe)
- * - CTA click + page_view beacons to WP REST when available
+ * Front helpers: taxonomy cleanup + analytics only.
+ * Card images are resolved server-side in presentation.php (no REST N+1).
  */
 (function () {
   "use strict";
@@ -20,83 +18,6 @@
     return String(s || "")
       .replace(/\s+/g, "")
       .toLowerCase();
-  }
-
-  function trustedImage(url) {
-    try {
-      var u = new URL(url, location.href);
-      return /(^|\.)dmm\.co\.jp$|(^|\.)dmm\.com$/i.test(u.hostname);
-    } catch (e) {
-      return false;
-    }
-  }
-
-  function pickBestImage(html) {
-    var urls = [];
-    String(html || "").replace(/<img[^>]+src=["']([^"']+)["']/gi, function (_, src) {
-      urls.push(src);
-      return _;
-    });
-    var best = null;
-    var bestScore = -1;
-    urls.forEach(function (src) {
-      if (!trustedImage(src)) return;
-      var file = (src.split("?")[0] || "").split("/").pop() || "";
-      var score = 10;
-      if (/pl\./i.test(file)) score = 100;
-      else if (/jp-\d+\./i.test(file)) score = 80;
-      else if (/ps\.|pt\./i.test(file)) score = 50;
-      else if (/-\d+\./i.test(file)) score = 30;
-      if (score > bestScore) {
-        bestScore = score;
-        best = src;
-      }
-    });
-    return best;
-  }
-
-  function enhanceCards() {
-    var cards = document.querySelectorAll(".otonaselect-card, .otonaselect-home-query .wp-block-post");
-    if (!cards.length) return;
-    fetch("/wp-json/wp/v2/posts?per_page=12&status=publish&_fields=id,link,content,date")
-      .then(function (r) {
-        return r.json();
-      })
-      .then(function (posts) {
-        if (!Array.isArray(posts)) return;
-        var byLink = {};
-        posts.forEach(function (p) {
-          if (p && p.link) byLink[p.link.replace(/\/$/, "")] = p;
-        });
-        cards.forEach(function (card) {
-          var a = card.querySelector("h2 a, h3 a, .wp-block-post-title a");
-          if (!a) return;
-          var key = a.href.replace(/\/$/, "");
-          var post = byLink[key];
-          if (!post) return;
-          var imgUrl = pickBestImage(post.content && post.content.rendered);
-          var figure = card.querySelector(".wp-block-post-featured-image");
-          if (imgUrl && figure && !figure.querySelector("img")) {
-            figure.innerHTML =
-              '<a href="' +
-              a.href +
-              '"><img src="' +
-              imgUrl +
-              '" alt="" loading="lazy" decoding="async" /></a>';
-          } else if (imgUrl && !figure) {
-            var wrap = document.createElement("figure");
-            wrap.className = "wp-block-post-featured-image otonaselect-card-image";
-            wrap.innerHTML =
-              '<a href="' +
-              a.href +
-              '"><img src="' +
-              imgUrl +
-              '" alt="" loading="lazy" decoding="async" /></a>';
-            card.insertBefore(wrap, card.firstChild);
-          }
-        });
-      })
-      .catch(function () {});
   }
 
   function cleanupTaxonomy() {
@@ -228,6 +149,17 @@
     );
   }
 
+  function hideFalseEmptyState() {
+    var query = document.querySelector(".otonaselect-home-query");
+    if (!query) return;
+    if (query.querySelector(".wp-block-post, .otonaselect-card")) {
+      query.querySelectorAll(".wp-block-query-no-results, .otonaselect-home-no-results").forEach(function (el) {
+        el.hidden = true;
+        el.style.display = "none";
+      });
+    }
+  }
+
   function ready(fn) {
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", fn);
     else fn();
@@ -235,7 +167,7 @@
 
   ready(function () {
     cleanupTaxonomy();
-    enhanceCards();
+    hideFalseEmptyState();
     wireAnalytics();
   });
 })();
