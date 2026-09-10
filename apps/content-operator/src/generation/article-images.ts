@@ -14,6 +14,8 @@
  * - Substantial duplicates and lower-quality size variants are excluded.
  */
 
+import { proposeMaxOfficialImageUrl } from "./fanza-image-variants.js";
+
 export type ArticleImageRole = "hero" | "auxiliary";
 
 export type ArticleImageUsageStatus =
@@ -104,6 +106,8 @@ export type ArticleImageCandidate = {
   family: "package" | "sample" | "other";
 };
 
+import { proposeMaxOfficialImageUrl } from "./fanza-image-variants.js";
+
 const HERO_TYPE_RANK: Record<string, number> = {
   main_large: 100,
   main_list: 80,
@@ -193,31 +197,34 @@ export function imageContentKey(sourceUrl: string): {
   const file = pathname.split("/").pop()?.toLowerCase() ?? "";
   if (!file) return null;
 
+  // FANZA contentIds may include underscores (e.g. h_1711mgtd00084).
+  const cid = "([a-z0-9_]+)";
+
   // package: {cid}pl|ps|pt.(jpg|webp)
-  const pkg = file.match(/^([a-z0-9]+)(pl|ps|pt)\.(jpe?g|webp|png)$/i);
+  const pkg = file.match(new RegExp(`^${cid}(pl|ps|pt)\\.(jpe?g|webp|png)$`, "i"));
   if (pkg) {
-    const cid = pkg[1]!;
+    const id = pkg[1]!;
     const size = pkg[2]!.toLowerCase();
     const qualityHint = size === "pl" ? 100 : size === "pt" ? 80 : 60;
-    return { contentKey: `${cid}:package`, family: "package", qualityHint };
+    return { contentKey: `${id}:package`, family: "package", qualityHint };
   }
 
   // sample large/small: {cid}jp-{n} / {cid}js-{n}
-  const jp = file.match(/^([a-z0-9]+)(jp|js)-(\d+)\.(jpe?g|webp|png)$/i);
+  const jp = file.match(new RegExp(`^${cid}(jp|js)-(\\d+)\\.(jpe?g|webp|png)$`, "i"));
   if (jp) {
-    const cid = jp[1]!;
+    const id = jp[1]!;
     const kind = jp[2]!.toLowerCase();
     const n = jp[3]!;
     const qualityHint = kind === "jp" ? 100 : 70;
-    return { contentKey: `${cid}:sample:${n}`, family: "sample", qualityHint };
+    return { contentKey: `${id}:sample:${n}`, family: "sample", qualityHint };
   }
 
   // sample strip / small: {cid}-{n}.jpg — SAME scene key as jp-{n} (size variant)
-  const strip = file.match(/^([a-z0-9]+)-(\d+)\.(jpe?g|webp|png)$/i);
+  const strip = file.match(new RegExp(`^${cid}-(\\d+)\\.(jpe?g|webp|png)$`, "i"));
   if (strip) {
-    const cid = strip[1]!;
+    const id = strip[1]!;
     const n = strip[2]!;
-    return { contentKey: `${cid}:sample:${n}`, family: "sample", qualityHint: 65 };
+    return { contentKey: `${id}:sample:${n}`, family: "sample", qualityHint: 65 };
   }
 
   // fallback: basename without host
@@ -361,7 +368,27 @@ export function selectArticleImagesWithReport(input: {
     }
     seenExact.add(url);
 
-    const identity = imageContentKey(url);
+    // Prefer max official variant already present among candidates (same content key).
+    const upgrade = proposeMaxOfficialImageUrl(url);
+    let effectiveUrl = url;
+    let effectiveType = row.imageType;
+    if (upgrade) {
+      const hasUpgrade = rawRows.some((r) => {
+        try {
+          return new URL(r.sourceUrl).href === new URL(upgrade.toUrl).href;
+        } catch {
+          return r.sourceUrl === upgrade.toUrl;
+        }
+      });
+      if (hasUpgrade) {
+        effectiveUrl = upgrade.toUrl;
+        if (/small/i.test(effectiveType)) {
+          effectiveType = effectiveType.replace(/small/i, "large");
+        }
+      }
+    }
+
+    const identity = imageContentKey(effectiveUrl);
     if (!identity) {
       excluded.push({
         sourceUrl: url,
@@ -374,15 +401,15 @@ export function selectArticleImagesWithReport(input: {
     }
 
     prelim.push({
-      sourceUrl: url,
-      imageType: row.imageType,
+      sourceUrl: effectiveUrl,
+      imageType: effectiveType,
       usageStatus,
       researchImageId: row.researchImageId,
       provenance: row.provenance,
       contentKey: identity.contentKey,
-      qualityRank: qualityForType(row.imageType, identity.qualityHint),
-      heroRank: HERO_TYPE_RANK[row.imageType] ?? identity.qualityHint,
-      auxRank: AUX_TYPE_RANK[row.imageType] ?? (identity.family === "sample" ? 60 : 10),
+      qualityRank: qualityForType(effectiveType, identity.qualityHint),
+      heroRank: HERO_TYPE_RANK[effectiveType] ?? identity.qualityHint,
+      auxRank: AUX_TYPE_RANK[effectiveType] ?? (identity.family === "sample" ? 60 : 10),
       family: identity.family,
     });
   }

@@ -40,7 +40,7 @@ import {
 import { createLLMProvider } from "../adapters/llm/create-llm-provider.js";
 import { resolveWordPressPostDates } from "./wordpress-datetime.js";
 import type { ArticleImage } from "../generation/article-images.js";
-import { parseArticleImages } from "../generation/article-images.js";
+import { parseArticleImages, selectArticleImages } from "../generation/article-images.js";
 import { formatBloggerHtml } from "../generation/blogger-formatter.js";
 import {
   resolveArticleImagesByExternalIds,
@@ -249,6 +249,30 @@ async function resolveImagesForWordPressPublish(input: {
   let images = stored;
   let source: string = stored.length > 0 ? "structured" : "empty";
 
+  // Re-select stored images so underscore CIDs / size variants collapse to max official URL.
+  if (images.length > 0) {
+    const reselected = selectArticleImages({
+      researchImages: images.map((img, idx) => ({
+        id: img.researchImageId ?? `structured-${idx}`,
+        imageType: img.imageType,
+        sourceUrl: img.sourceUrl,
+        usageStatus: img.usageStatus,
+      })),
+      options: { allowRequiresConfirmationForDisplay: true },
+    });
+    if (reselected.length > 0 && reselected.length < images.length) {
+      notes.push(`image_variant_collapse_${images.length}_to_${reselected.length}`);
+      images = reselected;
+      source = "structured_reselected";
+    } else if (reselected.length > 0) {
+      const changed = reselected.some((img, i) => img.sourceUrl !== images[i]?.sourceUrl);
+      if (changed || reselected.length !== images.length) {
+        images = reselected;
+        source = "structured_reselected";
+        notes.push("image_max_variant_reselected");
+      }
+    }
+  }
   if (images.length === 0) {
     try {
       const refreshed = await resolveImagesForContentVersion(

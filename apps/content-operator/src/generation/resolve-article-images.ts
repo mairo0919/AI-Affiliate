@@ -5,7 +5,29 @@ import {
   selectArticleImages,
   type ArticleImage,
   type ArticleImageSelectionOptions,
+  type RawResearchImageRow,
 } from "./article-images.js";
+import { resolveMaxOfficialImageUrl } from "./fanza-image-variants.js";
+
+async function upgradeResearchImagesToMaxOfficial(
+  researchImages: RawResearchImageRow[],
+): Promise<RawResearchImageRow[]> {
+  const evidenceUrls = researchImages.map((r) => r.sourceUrl);
+  const out: RawResearchImageRow[] = [];
+  for (const row of researchImages) {
+    const resolved = await resolveMaxOfficialImageUrl(row.sourceUrl, { evidenceUrls });
+    let imageType = row.imageType;
+    if (resolved.upgraded && /small/i.test(imageType)) {
+      imageType = imageType.replace(/small/i, "large");
+    }
+    out.push({
+      ...row,
+      sourceUrl: resolved.url,
+      imageType,
+    });
+  }
+  return out;
+}
 
 const EMPTY_RESOLUTION = {
   images: [] as ArticleImage[],
@@ -90,7 +112,9 @@ export async function resolveArticleImagesByExternalIds(
     return { ...EMPTY_RESOLUTION };
   }
 
-  const researchImages = await repo.listResearchImagesByExternalIds(externalIdsTried);
+  const researchImages = await upgradeResearchImagesToMaxOfficial(
+    await repo.listResearchImagesByExternalIds(externalIdsTried),
+  );
   const images = selectArticleImages({
     researchImages,
     pageImageUrls: [],
@@ -133,11 +157,22 @@ export async function resolveArticleImagesForProduct(
   if (cidFromUrl) externalIds.add(cidFromUrl);
 
   const externalIdsTried = [...externalIds];
-  const researchImages = await repo.listResearchImagesByExternalIds(externalIdsTried);
+  const researchImages = await upgradeResearchImagesToMaxOfficial(
+    await repo.listResearchImagesByExternalIds(externalIdsTried),
+  );
 
   const urlCandidates = [product.url].filter((u): u is string => Boolean(u?.trim()));
   const pageDocs = await repo.listSourceDocumentsImageReferencesByUrls(urlCandidates);
-  const pageImageUrls = pageDocs.flatMap((d) => d.imageReferences);
+  const pageImageUrlsRaw = pageDocs.flatMap((d) => d.imageReferences);
+  const evidenceUrls = [
+    ...researchImages.map((r) => r.sourceUrl),
+    ...pageImageUrlsRaw,
+  ];
+  const pageImageUrls: string[] = [];
+  for (const u of pageImageUrlsRaw) {
+    const resolved = await resolveMaxOfficialImageUrl(u, { evidenceUrls });
+    pageImageUrls.push(resolved.url);
+  }
 
   const images = selectArticleImages({
     researchImages,
@@ -179,12 +214,23 @@ export async function resolveArticleImagesForResearchItem(
     return { ...EMPTY_RESOLUTION };
   }
 
-  const researchImages = await repo.listResearchImagesByResearchItemId(item.id);
+  const researchImages = await upgradeResearchImagesToMaxOfficial(
+    await repo.listResearchImagesByResearchItemId(item.id),
+  );
   const externalIdsTried = item.externalId?.trim() ? [item.externalId.trim()] : [];
 
   const urlCandidates = [item.url].filter((u): u is string => Boolean(u?.trim()));
   const pageDocs = await repo.listSourceDocumentsImageReferencesByUrls(urlCandidates);
-  const pageImageUrls = pageDocs.flatMap((d) => d.imageReferences);
+  const pageImageUrlsRaw = pageDocs.flatMap((d) => d.imageReferences);
+  const evidenceUrls = [
+    ...researchImages.map((r) => r.sourceUrl),
+    ...pageImageUrlsRaw,
+  ];
+  const pageImageUrls: string[] = [];
+  for (const u of pageImageUrlsRaw) {
+    const resolved = await resolveMaxOfficialImageUrl(u, { evidenceUrls });
+    pageImageUrls.push(resolved.url);
+  }
 
   const images = selectArticleImages({
     researchImages,
