@@ -12,7 +12,6 @@ import {
   probeImagePixelSize,
   proposeMaxOfficialImageUrl,
   resolveMaxOfficialImageUrl,
-  type ImagePixelSize,
 } from "../generation/fanza-image-variants.js";
 
 export type SmallImageCause = "A_evidence_has_larger" | "B_fanza_has_larger" | "C_only_small" | "D_unknown";

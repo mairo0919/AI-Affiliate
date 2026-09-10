@@ -106,8 +106,6 @@ export type ArticleImageCandidate = {
   family: "package" | "sample" | "other";
 };
 
-import { proposeMaxOfficialImageUrl } from "./fanza-image-variants.js";
-
 const HERO_TYPE_RANK: Record<string, number> = {
   main_large: 100,
   main_list: 80,
