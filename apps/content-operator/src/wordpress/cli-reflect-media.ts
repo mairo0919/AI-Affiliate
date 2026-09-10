@@ -52,6 +52,7 @@ async function pushTemplatePart(
   const get = await fetch(`${base}/wp-json/wp/v2/template-parts/${encodeURIComponent(id)}?context=edit`, {
     headers,
   });
+  const area = slug === "footer" ? "footer" : slug === "header" ? "header" : "uncategorized";
   if (get.status === 200) {
     const res = await fetch(`${base}/wp-json/wp/v2/template-parts/${encodeURIComponent(id)}`, {
       method: "POST",
@@ -67,7 +68,7 @@ async function pushTemplatePart(
       slug,
       theme: "otonaselect",
       type: "wp_template_part",
-      area: slug === "footer" ? "footer" : "uncategorized",
+      area,
       status: "publish",
       content,
     }),
@@ -189,6 +190,7 @@ export async function runWpReflectMediaCli(argv: string[]): Promise<void> {
 
   const single = readFileSync(resolve(THEME, "templates/single.html"), "utf8");
   const front = readFileSync(resolve(THEME, "templates/front-page.html"), "utf8");
+  const header = readFileSync(resolve(THEME, "parts/header.html"), "utf8");
   const footer = footerWithEnhance();
 
   if (!apply) {
@@ -199,6 +201,7 @@ export async function runWpReflectMediaCli(argv: string[]): Promise<void> {
   const templateResults = [];
   templateResults.push(await pushTemplate(base, headers, "single", single));
   templateResults.push(await pushTemplate(base, headers, "front-page", front));
+  const headerResult = await pushTemplatePart(base, headers, "header", header);
   const footerResult = await pushTemplatePart(base, headers, "footer", footer);
 
   const cardBackfill = await backfillCardImages(base, headers);
@@ -229,6 +232,7 @@ export async function runWpReflectMediaCli(argv: string[]): Promise<void> {
         ok: true,
         apply: true,
         templates: templateResults,
+        header: headerResult,
         footer: footerResult,
         cardBackfill,
         categories: categories
@@ -238,7 +242,7 @@ export async function runWpReflectMediaCli(argv: string[]): Promise<void> {
             }
           : null,
         themeVersion: theme?.version ?? null,
-        note: "TOP card images SSR via theme presentation.php; empty-state suppressed when publish>0.",
+        note: "Age Gate boot in header template-part; PHP plugin/theme is SSOT when deployed.",
       },
       null,
       2,
