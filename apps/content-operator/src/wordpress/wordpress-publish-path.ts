@@ -27,6 +27,13 @@ import {
   deriveWordPressTaxonomyFromEvidence,
   type EvidenceTaxonomyLabel,
 } from "./evidence-taxonomy.js";
+import {
+  evidenceFromStructuredContent,
+  evaluatePublicationMetadataQuality,
+  generatePublicationMetadata,
+  type PublicationMetadata,
+} from "./publication-metadata.js";
+import { requireApiLLMProvider } from "../adapters/llm/create-llm-provider.js";
 import { resolveWordPressPostDates } from "./wordpress-datetime.js";
 import type { ArticleImage } from "../generation/article-images.js";
 import { parseArticleImages } from "../generation/article-images.js";
@@ -622,10 +629,72 @@ export async function publishContentVersionToWordPress(
     };
   }
 
-  const structuredForHtml = {
+  const structuredForHtml: Record<string, unknown> = {
     ...structuredWithImages,
     images: imageEval.imagesForHtml,
   };
+
+  // Publication metadata layer (title/SEO/tax) — never rewrites article body sections.
+  const evidenceLabels = await loadEvidenceLabelsForProduct(deps.prisma, productCanonicalId);
+  const evidence = evidenceFromStructuredContent({
+    structured: structuredForHtml,
+    versionTitle: version.title,
+    evidenceLabels,
+    productCanonicalId,
+  });
+  let publicationMetadata =
+    structuredForHtml.publicationMetadata &&
+    typeof structuredForHtml.publicationMetadata === "object"
+      ? (structuredForHtml.publicationMetadata as PublicationMetadata)
+      : null;
+  const existingQuality = publicationMetadata
+    ? evaluatePublicationMetadataQuality(publicationMetadata, evidence)
+    : null;
+  if (!publicationMetadata || !existingQuality?.pass) {
+    try {
+      const llm = requireApiLLMProvider(deps.config);
+      publicationMetadata = await generatePublicationMetadata({ evidence, llm });
+    } catch {
+      publicationMetadata = await generatePublicationMetadata({ evidence, llm: null });
+    }
+    structuredForHtml.publicationMetadata = publicationMetadata;
+    structuredForHtml.seo = {
+      ...((structuredForHtml.seo && typeof structuredForHtml.seo === "object"
+        ? structuredForHtml.seo
+        : {}) as Record<string, unknown>),
+      title: publicationMetadata.seoTitle,
+      metaDescription: publicationMetadata.metaDescription,
+      categories: publicationMetadata.categories,
+      tags: publicationMetadata.tags,
+      performers: publicationMetadata.performers,
+      seriesName: publicationMetadata.seriesNames[0] ?? null,
+      seriesNames: publicationMetadata.seriesNames,
+    };
+    if (typeof deps.lifecycle.updateContentVersionStructuredContent === "function") {
+      await deps.lifecycle.updateContentVersionStructuredContent(version.id, {
+        ...structuredWithImages,
+        publicationMetadata,
+        seo: structuredForHtml.seo,
+      });
+    }
+  }
+
+  if (
+    (mode === "future" || mode === "publish") &&
+    publicationMetadata &&
+    !publicationMetadata.quality.pass
+  ) {
+    return {
+      ok: true,
+      published: false,
+      skipped: true,
+      reason: "PUBLICATION_METADATA_QUALITY",
+      contentVersionId: version.id,
+      contentId: version.contentId,
+      gateFailures: publicationMetadata.quality.failures,
+      duplicate: false,
+    };
+  }
 
   // Prefer article CTA; fall back to validated product URL; never invent affiliate.
   let built: ReturnType<typeof buildWordPressHtmlFromVersion>;
@@ -645,6 +714,11 @@ export async function publishContentVersionToWordPress(
       contentVersionId: version.id,
       error: e instanceof Error ? e.message : String(e),
     };
+  }
+
+  // WP post title uses publication metadata when available (Writer article.title untouched in HTML body).
+  if (publicationMetadata?.title) {
+    built = { ...built, title: publicationMetadata.title, excerpt: publicationMetadata.metaDescription || built.excerpt };
   }
 
   const authPass =
@@ -705,12 +779,13 @@ export async function publishContentVersionToWordPress(
     input.idempotencyKey ?? `wordpress:${version.id}:${mode}`;
 
   const seoAttach = buildSeoAttachFromStructured({
-    structured: structuredWithImages,
+    structured: structuredForHtml,
     title: built.title,
-    excerptFallback: built.excerpt,
+    excerptFallback: publicationMetadata?.metaDescription || built.excerpt,
     productCanonicalId,
     siteOrigin: deps.config.wordpressBaseUrl ?? OTONASELECT_PRODUCTION_ORIGIN,
-    evidenceLabels: await loadEvidenceLabelsForProduct(deps.prisma, productCanonicalId),
+    evidenceLabels,
+    publicationMetadata,
   });
   const seoTermIds = await resolveSeoTermIds(publisher, seoAttach);
   const scheduleInstant =
@@ -1033,6 +1108,7 @@ function buildSeoAttachFromStructured(input: {
   productCanonicalId: string | null;
   siteOrigin: string;
   evidenceLabels?: EvidenceTaxonomyLabel[];
+  publicationMetadata?: PublicationMetadata | null;
 }): WordPressSeoAttach {
   const article =
     input.structured.article && typeof input.structured.article === "object"
@@ -1042,6 +1118,7 @@ function buildSeoAttachFromStructured(input: {
     input.structured.seo && typeof input.structured.seo === "object"
       ? (input.structured.seo as Record<string, unknown>)
       : {};
+  const pub = input.publicationMetadata;
 
   const performers: Array<{ name: string; ascii?: string | null }> = [];
   const pushPerformer = (name: string, ascii?: string | null) => {
@@ -1052,6 +1129,7 @@ function buildSeoAttachFromStructured(input: {
   };
 
   for (const raw of [
+    ...(pub?.performers ?? []),
     ...(Array.isArray(input.structured.performers) ? input.structured.performers : []),
     ...(Array.isArray(seoBlock.performers) ? seoBlock.performers : []),
     ...(Array.isArray(article.performers) ? article.performers : []),
@@ -1064,12 +1142,14 @@ function buildSeoAttachFromStructured(input: {
   }
 
   const seriesNameFromStructured =
+    pub?.seriesNames?.[0] ||
     (typeof input.structured.seriesName === "string" && input.structured.seriesName.trim()) ||
     (typeof seoBlock.seriesName === "string" && seoBlock.seriesName.trim()) ||
     (typeof article.seriesName === "string" && article.seriesName.trim()) ||
     null;
 
   const structuredCategories = [
+    ...(pub?.categories ?? []),
     ...(Array.isArray(seoBlock.categories) ? seoBlock.categories : []),
     ...(Array.isArray(article.categories) ? article.categories : []),
   ]
@@ -1077,6 +1157,7 @@ function buildSeoAttachFromStructured(input: {
     .map((c) => c.trim());
 
   const structuredTags = [
+    ...(pub?.tags ?? []),
     ...(Array.isArray(seoBlock.tags) ? seoBlock.tags : []),
     ...(Array.isArray(article.tags) ? article.tags : []),
   ]
@@ -1088,30 +1169,33 @@ function buildSeoAttachFromStructured(input: {
     title: input.title,
     extraPerformers: performers.map((p) => p.name),
     extraSeriesName: seriesNameFromStructured,
+    extraSeriesNames: pub?.seriesNames,
     allowCategoryFallback: true,
   });
 
   // Merge structured categories/tags (only when already present — never invent).
-  const categories = [...new Set([...derived.categories, ...structuredCategories])];
-  const tags = [...new Set([...derived.tags, ...structuredTags])];
+  const categories = [...new Set([...(pub?.categories ?? derived.categories), ...structuredCategories])];
+  const tags = [...new Set([...(pub?.tags ?? derived.tags), ...structuredTags])];
 
   const attach = buildWordPressSeoAttach({
     title: input.title,
     seoTitle:
+      pub?.seoTitle ||
       (typeof seoBlock.title === "string" && seoBlock.title) ||
       (typeof article.seoTitle === "string" && article.seoTitle) ||
       input.title,
     metaDescription:
+      pub?.metaDescription ||
       (typeof seoBlock.metaDescription === "string" && seoBlock.metaDescription) ||
       (typeof article.metaDescription === "string" && article.metaDescription) ||
       input.excerptFallback,
     summary: input.excerptFallback,
-    performers: derived.performers.map((name) => {
+    performers: (pub?.performers ?? derived.performers).map((name) => {
       const hit = performers.find((p) => p.name.replace(/\s+/g, "") === name.replace(/\s+/g, ""));
       return { name, ascii: hit?.ascii ?? null };
     }),
-    seriesNames: derived.seriesNames,
-    seriesName: derived.seriesName,
+    seriesNames: pub?.seriesNames ?? derived.seriesNames,
+    seriesName: pub?.seriesNames?.[0] ?? derived.seriesName,
     categories,
     tags,
     productCanonicalId: input.productCanonicalId,

@@ -212,9 +212,20 @@ export function deriveWordPressTaxonomyFromEvidence(input: {
     }
   }
 
+  const makers = [
+    ...labelsOfType(labels, "maker"),
+    ...labelsOfType(labels, "label"),
+  ];
+
+  // Tags = cross-cutting attributes. Do not dump every compilation performer.
   const tags: string[] = [];
-  for (const p of performers) tags.push(p);
+  const performerTags =
+    performers.length > 5 ? performers.slice(0, 2) : performers.length > 3 ? performers.slice(0, 3) : performers;
+  for (const p of performerTags) tags.push(p);
   for (const s of seriesNames) tags.push(s);
+  for (const m of makers) {
+    if (m.length > 0 && m.length <= 24) tags.push(m);
+  }
   for (const g of genres) {
     if (g.length > 0 && g.length <= 24) tags.push(normalizeTaxonomyDisplayName(g));
   }
@@ -224,17 +235,42 @@ export function deriveWordPressTaxonomyFromEvidence(input: {
     }
   }
   // Normalize tag synonyms (BEST → keep ベスト token if present; collapse pure synonym tags)
+  const BANNED_TAG_EXACT = new Set([
+    "動画",
+    "作品",
+    "紹介",
+    "記事",
+    "おすすめ",
+    "人気",
+    "商品",
+    "ページ",
+  ]);
   const normalizedTags = uniqPreserve(
-    tags.map((t) => {
-      const n = normalizeTaxonomyDisplayName(t);
-      // Keep short form tags ベスト/総集編 as searchable tags even when series is ベスト・総集編
-      if (t === "ベスト" || t === "総集編" || t === "BEST" || t === "Best") return t === "BEST" || t === "Best" ? "ベスト" : t;
-      return n;
-    }),
+    tags
+      .map((t) => {
+        const n = normalizeTaxonomyDisplayName(t);
+        // Keep short form tags ベスト/総集編 as searchable tags even when series is ベスト・総集編
+        if (t === "ベスト" || t === "総集編" || t === "BEST" || t === "Best")
+          return t === "BEST" || t === "Best" ? "ベスト" : t;
+        return n;
+      })
+      .filter((t) => {
+        if (!t || t.length <= 1 || t.length > 32) return false;
+        if (/^\d+$/.test(t)) return false;
+        if (BANNED_TAG_EXACT.has(t)) return false;
+        return true;
+      }),
   );
 
+  // Cap performer taxonomy on mega-casts; keep featured names only.
+  const cappedPerformers = performers.length > 8 ? performers.slice(0, 3) : performers;
+
+  if (performers.length > cappedPerformers.length) {
+    notes.push(`performer_taxonomy_capped:${cappedPerformers.length}_of_${performers.length}`);
+  }
+
   return {
-    performers,
+    performers: cappedPerformers,
     seriesNames,
     seriesName: seriesNames[0] ?? null,
     categories: uniqueCategories,

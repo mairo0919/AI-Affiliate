@@ -35,6 +35,24 @@ export type {
   EvidenceTaxonomyLabel,
 } from "./evidence-taxonomy.js";
 export {
+  buildDeterministicPublicationMetadata,
+  generatePublicationMetadata,
+  evaluatePublicationMetadataQuality,
+  evidenceFromStructuredContent,
+  filterMeaningfulTags,
+  selectTitleAxis,
+} from "./publication-metadata.js";
+export type {
+  PublicationMetadata,
+  PublicationMetadataEvidence,
+  PublicationMetadataQuality,
+  TitleAxis,
+} from "./publication-metadata.js";
+export {
+  refreshWordPressPublicationMetadata,
+  DEFAULT_FUTURE_METADATA_REFRESH_IDS,
+} from "./refresh-wp-metadata.js";
+export {
   resolveWordPressPostDates,
   isWordPressTimezoneTokyo,
 } from "./wordpress-datetime.js";
