@@ -12,7 +12,9 @@ import {
 } from "../adapters/publisher/wordpress-api-publisher.js";
 import {
   deriveWordPressTaxonomyFromEvidence,
+  isAttributeSeriesName,
   PRODUCT_ARTICLE_CATEGORY_FALLBACK,
+  uniqPreserve,
   type EvidenceTaxonomyLabel,
 } from "./evidence-taxonomy.js";
 import {
@@ -266,7 +268,11 @@ export async function refreshWordPressCategories(deps: {
     const before = snap?.categories ?? [];
     const after = derived.categories;
     const seriesBefore = snap?.series ?? [];
-    const seriesAfter = derived.seriesNames;
+    // Keep existing official series; only drop attribute series. Merge Evidence official series.
+    const seriesAfter = uniqPreserve([
+      ...seriesBefore.filter((s) => !isAttributeSeriesName(s)),
+      ...derived.seriesNames,
+    ]);
     const catsSame = sameNameSet(before, after);
     const seriesSame = sameNameSet(seriesBefore, seriesAfter);
 

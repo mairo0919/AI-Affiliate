@@ -115,9 +115,16 @@ add_action('init', static function (): void {
 
 /**
  * Hide legacy catch-all category from public term lists.
+ * Keep REST (authenticated ops) and admin fully visible so refresh tools stay accurate.
  */
 add_filter('get_terms', static function ($terms, $taxonomies = []) {
-	if (is_admin() || !is_array($terms) || is_wp_error($terms)) {
+	if (!is_array($terms) || is_wp_error($terms)) {
+		return $terms;
+	}
+	if (is_admin()) {
+		return $terms;
+	}
+	if (defined('REST_REQUEST') && REST_REQUEST && current_user_can('edit_posts')) {
 		return $terms;
 	}
 	$out = [];
