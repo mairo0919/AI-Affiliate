@@ -33,8 +33,8 @@ describe("otonaselect SEO foundation contracts", () => {
     expect(homeQuery).toContain("pre_get_posts");
     expect(homeQuery).toContain("posts_per_page");
     expect(homeQuery).toContain("ignore_sticky_posts");
-    expect(homeQuery).toMatch(/orderby['\"]?\s*,\s*['\"]date['\"]/);
-    expect(homeQuery).toMatch(/order['\"]?\s*,\s*['\"]DESC['\"]/);
+    expect(homeQuery).toContain("orderby', 'date'");
+    expect(homeQuery).toContain("order', 'DESC'");
     expect(homeQuery).toContain("set_404");
 
     const seo = read("inc/seo-head.php");
