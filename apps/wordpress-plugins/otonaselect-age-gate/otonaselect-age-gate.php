@@ -1,16 +1,17 @@
 <?php
 /**
  * Plugin Name: OtonaSelect Age Gate
- * Description: Site-wide 18+ age confirmation (SSOT). Self-contained — does not load theme age-gate.php.
- * Version: 1.0.2
+ * Description: Site-wide 18+ age confirmation (SSOT). Self-contained single file. Does not load theme age-gate.php.
+ * Version: 1.0.3
  * Requires at least: 6.0
  * Requires PHP: 7.4
  * Author: Otona Select
  *
- * Important:
- * - Single-file plugin (no secondary require) to avoid "failed opening required" fatals.
- * - All symbols are function_exists / defined guarded for safe coexistence with theme fallback.
- * - Conditional tags are only used when WP_Query is available.
+ * Load order guarantee:
+ * - This file is included while WordPress loads active plugins (before the theme).
+ * - OTONASELECT_AGE_GATE_PLUGIN_ACTIVE / OTONASELECT_AGE_GATE_LOADED are defined
+ *   immediately so theme functions.php can skip requiring inc/age-gate.php
+ *   without relying on is_plugin_active() timing.
  */
 
 declare(strict_types=1);
@@ -19,35 +20,38 @@ if (!defined('ABSPATH')) {
 	exit;
 }
 
+// SSOT signals for the theme — MUST run at include-time (not deferred to init).
+if (!defined('OTONASELECT_AGE_GATE_PLUGIN_ACTIVE')) {
+	define('OTONASELECT_AGE_GATE_PLUGIN_ACTIVE', true);
+}
+if (!defined('OTONASELECT_AGE_GATE_LOADED')) {
+	define('OTONASELECT_AGE_GATE_LOADED', true);
+}
+if (!defined('OTONASELECT_AGE_COOKIE')) {
+	define('OTONASELECT_AGE_COOKIE', 'otonaselect_age_ok');
+}
+if (!defined('OTONASELECT_AGE_COOKIE_OK')) {
+	define('OTONASELECT_AGE_COOKIE_OK', '1');
+}
+if (!defined('OTONASELECT_AGE_COOKIE_DENY')) {
+	define('OTONASELECT_AGE_COOKIE_DENY', '0');
+}
+
 /**
- * Bootstrap after pluggable functions exist.
+ * Register front-door hook after pluggable APIs exist.
  */
 add_action('init', 'otonaselect_age_gate_plugin_bootstrap', 0);
 
-/**
- * @return void
- */
+if (!function_exists('otonaselect_age_gate_plugin_bootstrap')) {
 function otonaselect_age_gate_plugin_bootstrap() {
-	if (defined('OTONASELECT_AGE_GATE_LOADED')) {
-		return;
-	}
-	define('OTONASELECT_AGE_GATE_LOADED', true);
-
-	if (!defined('OTONASELECT_AGE_COOKIE')) {
-		define('OTONASELECT_AGE_COOKIE', 'otonaselect_age_ok');
-	}
-	if (!defined('OTONASELECT_AGE_COOKIE_OK')) {
-		define('OTONASELECT_AGE_COOKIE_OK', '1');
-	}
-	if (!defined('OTONASELECT_AGE_COOKIE_DENY')) {
-		define('OTONASELECT_AGE_COOKIE_DENY', '0');
-	}
-
 	if (!has_action('template_redirect', 'otonaselect_age_gate_on_template_redirect')) {
 		add_action('template_redirect', 'otonaselect_age_gate_on_template_redirect', 0);
 	}
 }
+}
 
+
+if (!function_exists('otonaselect_age_cookie_ttl_ok')) {
 /**
  * @return int
  */
@@ -55,14 +59,20 @@ function otonaselect_age_cookie_ttl_ok() {
 	$day = defined('DAY_IN_SECONDS') ? (int) DAY_IN_SECONDS : 86400;
 	return 30 * $day;
 }
+}
 
+
+if (!function_exists('otonaselect_age_cookie_ttl_deny')) {
 /**
  * @return int
  */
 function otonaselect_age_cookie_ttl_deny() {
 	return defined('DAY_IN_SECONDS') ? (int) DAY_IN_SECONDS : 86400;
 }
+}
 
+
+if (!function_exists('otonaselect_age_gate_is_crawler')) {
 /**
  * @return bool
  */
@@ -76,7 +86,10 @@ function otonaselect_age_gate_is_crawler() {
 		$ua
 	);
 }
+}
 
+
+if (!function_exists('otonaselect_age_gate_query_ready')) {
 /**
  * @return bool
  */
@@ -84,7 +97,10 @@ function otonaselect_age_gate_query_ready() {
 	global $wp_query;
 	return isset($wp_query) && class_exists('WP_Query') && $wp_query instanceof WP_Query;
 }
+}
 
+
+if (!function_exists('otonaselect_age_gate_should_skip_request')) {
 /**
  * @return bool
  */
@@ -137,7 +153,10 @@ function otonaselect_age_gate_should_skip_request() {
 	}
 	return false;
 }
+}
 
+
+if (!function_exists('otonaselect_age_gate_cookie_value')) {
 /**
  * @return string|null
  */
@@ -151,7 +170,10 @@ function otonaselect_age_gate_cookie_value() {
 	}
 	return null;
 }
+}
 
+
+if (!function_exists('otonaselect_age_gate_set_cookie')) {
 /**
  * @param string $value
  * @param int    $ttl
@@ -178,7 +200,10 @@ function otonaselect_age_gate_set_cookie($value, $ttl) {
 	}
 	$_COOKIE[OTONASELECT_AGE_COOKIE] = (string) $value;
 }
+}
 
+
+if (!function_exists('otonaselect_age_gate_request_path')) {
 /**
  * @return string
  */
@@ -187,7 +212,10 @@ function otonaselect_age_gate_request_path() {
 	$path = function_exists('wp_parse_url') ? wp_parse_url($uri, PHP_URL_PATH) : parse_url($uri, PHP_URL_PATH);
 	return (is_string($path) && $path !== '') ? $path : '/';
 }
+}
 
+
+if (!function_exists('otonaselect_age_gate_record')) {
 /**
  * @param string $type
  * @return void
@@ -226,7 +254,10 @@ function otonaselect_age_gate_record($type) {
 		update_option($opt, $store, false);
 	}
 }
+}
 
+
+if (!function_exists('otonaselect_age_gate_canonical_redirect_url')) {
 /**
  * @return string
  */
@@ -247,7 +278,10 @@ function otonaselect_age_gate_canonical_redirect_url() {
 	$origin = function_exists('untrailingslashit') ? untrailingslashit($origin) : rtrim($origin, '/');
 	return $origin . $path . (is_string($query) && $query !== '' ? '?' . $query : '');
 }
+}
 
+
+if (!function_exists('otonaselect_age_gate_handle_post')) {
 /**
  * @return void
  */
@@ -291,14 +325,20 @@ function otonaselect_age_gate_handle_post() {
 		exit;
 	}
 }
+}
 
+
+if (!function_exists('otonaselect_age_gate_inline_css')) {
 /**
  * @return string
  */
 function otonaselect_age_gate_inline_css() {
 	return 'html,body{margin:0;padding:0;min-height:100%;}body.otonaselect-age-gate-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP","Helvetica Neue",Arial,sans-serif;background:linear-gradient(165deg,#f7f7f7 0%,#ffffff 45%,#f0f0f0 100%);color:#1a1a1a;min-height:100vh;display:flex;align-items:center;justify-content:center;}.otonaselect-age-gate{width:100%;padding:1.5rem;box-sizing:border-box;}.otonaselect-age-gate-panel{max-width:28rem;margin:0 auto;padding:2rem 1.5rem;background:#fff;border:1px solid #e6e6e6;border-radius:4px;text-align:center;}.otonaselect-age-gate-brand{margin:0 0 1.25rem;font-size:1.5rem;font-weight:700;letter-spacing:0.04em;line-height:1.3;}.otonaselect-age-gate-title{margin:0 0 0.75rem;font-size:1.05rem;font-weight:600;line-height:1.55;}.otonaselect-age-gate-text{margin:0 0 0.5rem;font-size:0.9375rem;line-height:1.7;color:#1a1a1a;}.otonaselect-age-gate-text.muted{color:#5c5c5c;font-size:0.875rem;}.otonaselect-age-gate-form{margin-top:1.5rem;}.otonaselect-age-gate-actions{display:flex;flex-direction:column;gap:0.75rem;margin-top:1.25rem;}.otonaselect-age-gate-btn{display:block;width:100%;box-sizing:border-box;min-height:3rem;padding:0.85rem 1rem;font-size:1rem;font-weight:600;line-height:1.3;border-radius:4px;border:1px solid #222;cursor:pointer;text-decoration:none;text-align:center;}.otonaselect-age-gate-btn.is-primary{background:#222;color:#fff;}.otonaselect-age-gate-btn.is-secondary{background:#fff;color:#222;}.otonaselect-age-gate-btn:focus-visible{outline:2px solid #222;outline-offset:2px;}@media (min-width:640px){.otonaselect-age-gate-actions{flex-direction:row;}.otonaselect-age-gate-btn{flex:1;}.otonaselect-age-gate-panel{padding:2.5rem 2rem;}}';
 }
+}
 
+
+if (!function_exists('otonaselect_age_gate_render_and_exit')) {
 /**
  * @param string $mode gate|denied
  * @return void
@@ -376,7 +416,10 @@ function otonaselect_age_gate_render_and_exit($mode) {
 	echo '</div></main></body></html>';
 	exit;
 }
+}
 
+
+if (!function_exists('otonaselect_age_gate_on_template_redirect')) {
 /**
  * @return void
  */
@@ -399,3 +442,5 @@ function otonaselect_age_gate_on_template_redirect() {
 		return;
 	}
 }
+}
+

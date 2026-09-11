@@ -1,9 +1,9 @@
 <?php
 /**
- * Site-wide Age Gate (18+).
+ * Theme Age Gate fallback (only when the plugin is NOT active).
  *
- * Server-side first render for unverified humans so adult images/titles
- * never flash before confirmation. Known crawlers skip the gate for SEO.
+ * SSOT is the OtonaSelect Age Gate plugin. Theme functions.php skips this file
+ * when OTONASELECT_AGE_GATE_PLUGIN_ACTIVE is already defined.
  *
  * @package OtonaSelect
  */
@@ -14,30 +14,42 @@ if (!defined('ABSPATH')) {
 	exit;
 }
 
-if (defined('OTONASELECT_AGE_GATE_LOADED')) {
+// Hard stop if the plugin (or another loader) already owns Age Gate.
+if (defined('OTONASELECT_AGE_GATE_PLUGIN_ACTIVE') || defined('OTONASELECT_AGE_GATE_LOADED')) {
 	return;
 }
+if (function_exists('otonaselect_age_gate_on_template_redirect')) {
+	return;
+}
+
 define('OTONASELECT_AGE_GATE_LOADED', true);
 
-/** Cookie: accepted adult confirmation. */
-const OTONASELECT_AGE_COOKIE = 'otonaselect_age_ok';
+if (!defined('OTONASELECT_AGE_COOKIE')) {
+	define('OTONASELECT_AGE_COOKIE', 'otonaselect_age_ok');
+}
+if (!defined('OTONASELECT_AGE_COOKIE_OK')) {
+	define('OTONASELECT_AGE_COOKIE_OK', '1');
+}
+if (!defined('OTONASELECT_AGE_COOKIE_DENY')) {
+	define('OTONASELECT_AGE_COOKIE_DENY', '0');
+}
 
-/** Cookie value when accepted. */
-const OTONASELECT_AGE_COOKIE_OK = '1';
-
-/** Cookie value when under-18 (blocks site content). */
-const OTONASELECT_AGE_COOKIE_DENY = '0';
-
-/** Retention for accept cookie (seconds). Not permanent. */
+if (!function_exists('otonaselect_age_cookie_ttl_ok')) {
 function otonaselect_age_cookie_ttl_ok(): int {
 	return 30 * DAY_IN_SECONDS;
 }
+}
 
+
+if (!function_exists('otonaselect_age_cookie_ttl_deny')) {
 /** Retention for deny cookie (seconds). */
 function otonaselect_age_cookie_ttl_deny(): int {
 	return DAY_IN_SECONDS;
 }
+}
 
+
+if (!function_exists('otonaselect_age_gate_is_crawler')) {
 /**
  * Whether the current request is a known search/social crawler.
  * Crawlers receive full HTML (canonical / OG / JSON-LD unchanged).
@@ -57,7 +69,10 @@ function otonaselect_age_gate_is_crawler(): bool {
 		$ua
 	);
 }
+}
 
+
+if (!function_exists('otonaselect_age_gate_should_skip_request')) {
 function otonaselect_age_gate_should_skip_request(): bool {
 	if (is_admin() || wp_doing_ajax() || wp_doing_cron()) {
 		return true;
@@ -88,7 +103,10 @@ function otonaselect_age_gate_should_skip_request(): bool {
 	}
 	return false;
 }
+}
 
+
+if (!function_exists('otonaselect_age_gate_cookie_value')) {
 function otonaselect_age_gate_cookie_value(): ?string {
 	if (!isset($_COOKIE[OTONASELECT_AGE_COOKIE])) {
 		return null;
@@ -99,7 +117,10 @@ function otonaselect_age_gate_cookie_value(): ?string {
 	}
 	return null;
 }
+}
 
+
+if (!function_exists('otonaselect_age_gate_set_cookie')) {
 function otonaselect_age_gate_set_cookie(string $value, int $ttl): void {
 	$path = defined('COOKIEPATH') && is_string(COOKIEPATH) && COOKIEPATH !== '' ? COOKIEPATH : '/';
 	$domain = defined('COOKIE_DOMAIN') && is_string(COOKIE_DOMAIN) ? COOKIE_DOMAIN : '';
@@ -117,13 +138,19 @@ function otonaselect_age_gate_set_cookie(string $value, int $ttl): void {
 	]);
 	$_COOKIE[OTONASELECT_AGE_COOKIE] = $value;
 }
+}
 
+
+if (!function_exists('otonaselect_age_gate_request_path')) {
 function otonaselect_age_gate_request_path(): string {
 	$uri = isset($_SERVER['REQUEST_URI']) ? (string) wp_unslash($_SERVER['REQUEST_URI']) : '/';
 	$path = wp_parse_url($uri, PHP_URL_PATH);
 	return is_string($path) && $path !== '' ? $path : '/';
 }
+}
 
+
+if (!function_exists('otonaselect_age_gate_record')) {
 /**
  * Record age-gate analytics without PII (aggregated counters only).
  */
@@ -156,7 +183,10 @@ function otonaselect_age_gate_record(string $type): void {
 	$store[$key] = (int) ($store[$key] ?? 0) + 1;
 	update_option($opt, $store, false);
 }
+}
 
+
+if (!function_exists('otonaselect_age_gate_handle_post')) {
 /**
  * Handle accept / deny POST before any adult markup is emitted.
  */
@@ -189,7 +219,10 @@ function otonaselect_age_gate_handle_post(): void {
 		exit;
 	}
 }
+}
 
+
+if (!function_exists('otonaselect_age_gate_canonical_redirect_url')) {
 function otonaselect_age_gate_canonical_redirect_url(): string {
 	if (function_exists('otonaselect_canonical_url')) {
 		$url = otonaselect_canonical_url();
@@ -207,7 +240,10 @@ function otonaselect_age_gate_canonical_redirect_url(): string {
 	$origin = untrailingslashit($origin);
 	return $origin . $path . (is_string($query) && $query !== '' ? '?' . $query : '');
 }
+}
 
+
+if (!function_exists('otonaselect_age_gate_render_and_exit')) {
 /**
  * Render age gate or under-18 exit screen and stop the normal template.
  *
@@ -281,7 +317,10 @@ function otonaselect_age_gate_render_and_exit(string $mode): void {
 	echo '</div></main></body></html>';
 	exit;
 }
+}
 
+
+if (!function_exists('otonaselect_age_gate_inline_css')) {
 function otonaselect_age_gate_inline_css(): string {
 	return <<<'CSS'
 html,body{margin:0;padding:0;min-height:100%;}
@@ -329,6 +368,8 @@ body.otonaselect-age-gate-body{
 }
 CSS;
 }
+}
+
 
 add_action('template_redirect', static function (): void {
 	try {

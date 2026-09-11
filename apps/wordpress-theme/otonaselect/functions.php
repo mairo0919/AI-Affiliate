@@ -23,11 +23,13 @@ require_once $otonaselect_inc . '/breadcrumbs.php';
 require_once $otonaselect_inc . '/related.php';
 require_once $otonaselect_inc . '/presentation.php';
 require_once $otonaselect_inc . '/analytics.php';
-// Age Gate SSOT = plugin `otonaselect-age-gate` when active.
-// Theme fallback loads only if the plugin is not active (avoids double gates).
-$otonaselect_age_plugin = 'otonaselect-age-gate/otonaselect-age-gate.php';
-$otonaselect_age_plugins = (array) get_option('active_plugins', []);
-if (!in_array($otonaselect_age_plugin, $otonaselect_age_plugins, true)) {
+// Age Gate SSOT = plugin. The plugin defines OTONASELECT_AGE_GATE_PLUGIN_ACTIVE
+// at include-time (before the theme loads). Avoid admin-only plugin APIs here.
+if (
+	!defined('OTONASELECT_AGE_GATE_PLUGIN_ACTIVE')
+	&& !defined('OTONASELECT_AGE_GATE_LOADED')
+	&& !function_exists('otonaselect_age_gate_on_template_redirect')
+) {
 	require_once $otonaselect_inc . '/age-gate.php';
 }
 require_once $otonaselect_inc . '/contact.php';
@@ -37,7 +39,7 @@ require_once $otonaselect_inc . '/site-pages.php';
  * Enqueue the theme stylesheet (block themes still benefit from style.css rules).
  */
 add_action('wp_enqueue_scripts', static function (): void {
-	$ver = wp_get_theme()->get('Version') ?: '1.6.2';
+	$ver = wp_get_theme()->get('Version') ?: '1.6.3';
 	wp_enqueue_style(
 		'otonaselect-style',
 		get_stylesheet_uri(),
