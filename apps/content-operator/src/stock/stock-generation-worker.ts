@@ -182,11 +182,12 @@ export async function runStockGenerationBatch(deps: {
   }
 
   const remainingDaily = Math.max(0, runtime.maxGenerationsPerDay - generatedToday);
-  const toGenerate = Math.min(
-    runtime.generationBatch,
-    remainingDaily,
-    deps.forceBatch ?? runtime.generationBatch,
-  );
+  // --batch / forceBatch overrides the default tick size (still capped by daily soft budget).
+  const requested =
+    deps.forceBatch != null && Number.isFinite(deps.forceBatch)
+      ? Math.max(0, Math.floor(deps.forceBatch))
+      : runtime.generationBatch;
+  const toGenerate = Math.min(requested, remainingDaily);
 
   if (toGenerate <= 0) {
     return {

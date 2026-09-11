@@ -149,6 +149,7 @@ import {
   runStockPipelineCli,
   runConfirmFanzaImageTermsCli,
 } from "./stock/cli-handlers.js";
+import { runInitialPublishBoostCli } from "./stock/cli-initial-publish-boost.js";
 import { runWpRefreshMetadataCli } from "./wordpress/cli-refresh-metadata.js";
 import { runWpRefreshAdultTagsCli } from "./wordpress/cli-refresh-adult-tags.js";
 import { runWpUpgradeImageResolutionCli } from "./wordpress/cli-upgrade-image-resolution.js";
@@ -2492,6 +2493,9 @@ async function main(): Promise<void> {
       break;
     case "stock-pipeline":
       await runStockPipelineCli(rest);
+      break;
+    case "initial-publish-boost":
+      await runInitialPublishBoostCli(rest);
       break;
     case "confirm-fanza-image-terms":
       await runConfirmFanzaImageTermsCli(rest);

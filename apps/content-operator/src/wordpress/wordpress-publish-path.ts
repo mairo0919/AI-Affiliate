@@ -114,8 +114,9 @@ export interface WordPressPublishOneInput {
   /** publish | draft | future — future requires scheduledAt and PUBLIC image gate */
   mode?: "publish" | "draft" | "future";
   /**
-   * Absolute Instant for WordPress future reservation (JST slots via caller).
-   * When set with mode=future|publish, post dates use this Instant.
+   * Absolute Instant for WordPress dates.
+   * - mode=future (or publish with future Instant): WP status=future
+   * - mode=publish with past Instant: backdated publish (initial boost)
    */
   scheduledAt?: Date;
   /** Override dry-run (no external call, no DB write of PUBLISHED when true) */
@@ -125,9 +126,9 @@ export interface WordPressPublishOneInput {
   /** Merged into PublicationTarget.platformMetadata (daily ops mix keys, etc.). */
   platformMetadata?: Record<string, unknown>;
   /**
-   * When a WORDPRESS DRAFT already exists for this contentVersion, rebuild HTML
-   * (including draft-eligible RC preview images) and PATCH the same post.
-   * Never creates a new post. Never touches posts 13–25 unless they are this target.
+   * When a WORDPRESS DRAFT or SCHEDULED already exists for this contentVersion,
+   * rebuild HTML and PATCH the same post (promote scheduled → publish allowed).
+   * Never creates a new post for a different WP id.
    */
   updateExistingDraft?: boolean;
 }
@@ -495,7 +496,7 @@ export async function publishContentVersionToWordPress(
   const existing = await deps.prisma.publicationTarget.findMany({
     where: {
       platform: "WORDPRESS",
-      status: { in: ["PUBLISHED", "DRAFT"] },
+      status: { in: ["PUBLISHED", "DRAFT", "SCHEDULED"] },
       OR: [
         { contentVersionId: version.id },
         ...(canonicalId
@@ -510,14 +511,15 @@ export async function publishContentVersionToWordPress(
     (t) =>
       t.contentVersionId === version.id &&
       Boolean(t.publishedExternalId) &&
-      (t.status === "PUBLISHED" || t.status === "DRAFT"),
+      (t.status === "PUBLISHED" || t.status === "DRAFT" || t.status === "SCHEDULED"),
   );
   const updatingExistingDraft =
     Boolean(input.updateExistingDraft) &&
-    sameVersion?.status === "DRAFT" &&
-    Boolean(sameVersion.publishedExternalId);
+    Boolean(sameVersion) &&
+    (sameVersion!.status === "DRAFT" || sameVersion!.status === "SCHEDULED") &&
+    Boolean(sameVersion!.publishedExternalId);
 
-  if (sameVersion && !updatingExistingDraft) {
+  if (sameVersion && (sameVersion.status === "PUBLISHED" || !updatingExistingDraft)) {
     return {
       ok: true,
       published: false,
@@ -820,14 +822,19 @@ export async function publishContentVersionToWordPress(
     publicationMetadata,
   });
   const seoTermIds = await resolveSeoTermIds(publisher, seoAttach);
+  const wantsDated =
+    Boolean(input.scheduledAt) && (mode === "future" || mode === "publish");
+  const isFutureDate = Boolean(
+    input.scheduledAt && input.scheduledAt.getTime() > Date.now(),
+  );
   const scheduleInstant =
-    input.scheduledAt &&
-    (mode === "future" || mode === "publish") &&
-    input.scheduledAt.getTime() > Date.now()
-      ? input.scheduledAt
-      : null;
+    wantsDated && isFutureDate && input.scheduledAt ? input.scheduledAt : null;
   const effectiveMode: "draft" | "publish" | "future" =
-    scheduleInstant && mode !== "draft" ? "future" : mode;
+    scheduleInstant && mode !== "draft"
+      ? "future"
+      : mode === "future" && !scheduleInstant
+        ? "publish"
+        : mode;
   if (
     effectiveMode === "future" &&
     !deps.config.wordpressAllowDirectPublish &&
@@ -843,8 +850,13 @@ export async function publishContentVersionToWordPress(
       duplicate: false,
     };
   }
+  const postDateSource =
+    scheduleInstant ??
+    (mode === "publish" && input.scheduledAt && !isFutureDate
+      ? input.scheduledAt
+      : new Date());
   const postDates = resolveWordPressPostDates(
-    scheduleInstant ?? new Date(),
+    postDateSource,
     deps.config.publicationTimezone || "Asia/Tokyo",
   );
 
@@ -887,7 +899,12 @@ export async function publishContentVersionToWordPress(
       published = {
         ...published,
         externalId: sameVersion.publishedExternalId,
-        status: effectiveMode === "future" ? "DRAFT" : "DRAFT",
+        status:
+          effectiveMode === "future"
+            ? "SCHEDULED"
+            : effectiveMode === "draft"
+              ? "DRAFT"
+              : "PUBLISHED",
         url: published.url ?? sameVersion.publishedUrl ?? "",
       };
     } else {
@@ -967,6 +984,8 @@ export async function publishContentVersionToWordPress(
       : published.status === "DRAFT" || effectiveMode === "draft"
         ? "DRAFT"
         : "PUBLISHED";
+  const effectivePublishedAt =
+    mode === "publish" && input.scheduledAt && !isFutureDate ? input.scheduledAt : now;
   const platformMetadata = {
     canonicalId,
     productCanonicalId: productCanonicalId ?? undefined,
@@ -982,9 +1001,14 @@ export async function publishContentVersionToWordPress(
     imageExcludedCount: imageEval.excluded.length,
     imageRefresh: imageRefreshMeta,
     draftOnly: effectiveMode === "draft",
-    scheduledAt: scheduleInstant?.toISOString() ?? null,
+    scheduledAt:
+      scheduleInstant?.toISOString() ??
+      (mode === "publish" && input.scheduledAt && !isFutureDate
+        ? input.scheduledAt.toISOString()
+        : null),
     wpDate: postDates.date,
     wpDateGmt: postDates.date_gmt,
+    initialBoostBackdated: Boolean(mode === "publish" && input.scheduledAt && !isFutureDate),
     protectedWpPosts: [43, 46],
     ...(input.platformMetadata ?? {}),
   };
@@ -1001,7 +1025,7 @@ export async function publishContentVersionToWordPress(
           updatedAt: now.toISOString(),
         },
         publishedUrl: published.url || sameVersion.publishedUrl,
-        publishedAt: now,
+        publishedAt: effectivePublishedAt,
       });
     }
     const record: PublicationRecord = await deps.lifecycle.createPublicationRecord({
@@ -1028,7 +1052,7 @@ export async function publishContentVersionToWordPress(
       externalId: sameVersion.publishedExternalId!,
       url: published.url || sameVersion.publishedUrl || "",
       status: targetStatus,
-      publishedAt: now.toISOString(),
+      publishedAt: effectivePublishedAt.toISOString(),
       duplicate: false,
       dryRun: false,
     };
@@ -1044,7 +1068,7 @@ export async function publishContentVersionToWordPress(
     status: targetStatus,
     publishedExternalId: published.externalId,
     publishedUrl: published.url,
-    publishedAt: now,
+    publishedAt: effectivePublishedAt,
     platformMetadata,
   });
 
@@ -1069,7 +1093,7 @@ export async function publishContentVersionToWordPress(
     externalId: published.externalId,
     url: published.url,
     status: targetStatus,
-    publishedAt: now.toISOString(),
+    publishedAt: effectivePublishedAt.toISOString(),
     duplicate: false,
     dryRun: false,
   };
@@ -1084,6 +1108,9 @@ export interface WordPressBatchInput {
   route?: string;
   resolveCanonicalId?: (contentVersionId: string) => string | null | undefined;
   resolveCtaUrl?: (contentVersionId: string) => string | null | undefined;
+  /** Optional per-version Instant (past = backdate publish, future = schedule). */
+  resolveScheduledAt?: (contentVersionId: string) => Date | null | undefined;
+  updateExistingDraft?: boolean;
 }
 
 export interface WordPressBatchResult {
@@ -1115,6 +1142,8 @@ export async function runWordPressPublicationBatch(
       canonicalId: input.resolveCanonicalId?.(contentVersionId) ?? null,
       ctaUrl: input.resolveCtaUrl?.(contentVersionId) ?? null,
       mode: input.mode,
+      scheduledAt: input.resolveScheduledAt?.(contentVersionId) ?? undefined,
+      updateExistingDraft: input.updateExistingDraft,
       dryRun: input.dryRun,
       route: input.route ?? "WORDPRESS_BATCH",
     });
