@@ -11,18 +11,20 @@ function read(rel: string): string {
 }
 
 describe("otonaselect SEO foundation contracts", () => {
-  it("ships theme 1.6.4 with rewrite flush version gate", () => {
-    expect(read("style.css")).toMatch(/Version:\s*1\.6\.4/);
+  it("ships theme 1.6.5 with rewrite flush version gate", () => {
+    expect(read("style.css")).toMatch(/Version:\s*1\.6\.5/);
     const tax = read("inc/taxonomies.php");
     expect(tax).toContain("otonaselect-tax-rewrite-1.6.4");
     expect(tax).toContain("flush_rewrite_rules");
     expect(read("inc/site-pages.php")).toContain("/flush-rewrites");
   });
 
-  it("discloses adult rating without inventing rich result claims", () => {
+  it("discloses adult rating on HTML only — never on sitemap responses", () => {
     const seo = read("inc/seo-head.php");
     expect(seo).toContain('name="rating" content="adult"');
     expect(seo).toContain("RTA-ACCT-000041-RTA");
+    expect(seo).toContain("otonaselect_is_technical_crawl_surface");
+    expect(seo).toContain("wp-sitemap");
     expect(seo).toContain("www.otonaselect.net");
     expect(seo).toContain("hide_empty");
     expect(seo).toContain("is_author()");

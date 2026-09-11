@@ -309,10 +309,45 @@ add_action('wp_head', static function (): void {
 }, 2);
 
 /**
- * RTA label header — adult content disclosure complementary to rating meta.
+ * Technical crawl surfaces (sitemaps / robots / feeds / XML) must stay clean XML/text.
+ * Adult RTA belongs on HTML documents only — not on sitemap responses Google fetches.
+ */
+function otonaselect_is_technical_crawl_surface(): bool {
+	if (defined('REST_REQUEST') && REST_REQUEST) {
+		return true;
+	}
+	if (function_exists('wp_is_json_request') && wp_is_json_request()) {
+		return true;
+	}
+	if (function_exists('is_feed') && is_feed()) {
+		return true;
+	}
+	if (function_exists('is_robots') && is_robots()) {
+		return true;
+	}
+
+	global $wp;
+	if ($wp instanceof WP) {
+		$qv = $wp->query_vars ?? [];
+		if (!empty($qv['sitemap']) || !empty($qv['sitemap-stylesheet'])) {
+			return true;
+		}
+	}
+
+	$request = isset($_SERVER['REQUEST_URI']) ? (string) wp_unslash($_SERVER['REQUEST_URI']) : '';
+	$path = wp_parse_url($request, PHP_URL_PATH);
+	$path = is_string($path) ? $path : '';
+	if ($path !== '' && preg_match('#/(?:wp-sitemap(?:-[a-z0-9_-]+)?\.(?:xml|xsl)|robots\.txt)$#i', $path)) {
+		return true;
+	}
+	return false;
+}
+
+/**
+ * RTA label header — adult disclosure for HTML pages only (never sitemap/robots/XML).
  */
 add_action('send_headers', static function (): void {
-	if (is_admin() || headers_sent()) {
+	if (is_admin() || headers_sent() || otonaselect_is_technical_crawl_surface()) {
 		return;
 	}
 	header('RATING: RTA-ACCT-000041-RTA', false);
@@ -323,6 +358,10 @@ add_action('send_headers', static function (): void {
  */
 add_action('template_redirect', static function (): void {
 	if (is_admin() || wp_doing_ajax() || wp_doing_cron() || (defined('REST_REQUEST') && REST_REQUEST)) {
+		return;
+	}
+	// Never redirect sitemap/robots — Google must fetch the XML body at the declared URL.
+	if (otonaselect_is_technical_crawl_surface()) {
 		return;
 	}
 	$host = isset($_SERVER['HTTP_HOST']) ? strtolower((string) wp_unslash($_SERVER['HTTP_HOST'])) : '';
