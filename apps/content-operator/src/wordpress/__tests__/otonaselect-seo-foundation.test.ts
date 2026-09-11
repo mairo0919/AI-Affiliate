@@ -11,12 +11,24 @@ function read(rel: string): string {
 }
 
 describe("otonaselect SEO foundation contracts", () => {
-  it("ships theme 1.6.6 with rewrite flush version gate", () => {
-    expect(read("style.css")).toMatch(/Version:\s*1\.6\.6/);
+  it("ships theme 1.6.7 with rewrite flush version gate", () => {
+    expect(read("style.css")).toMatch(/Version:\s*1\.6\.7/);
     const tax = read("inc/taxonomies.php");
-    expect(tax).toContain("otonaselect-tax-rewrite-1.6.4");
+    expect(tax).toContain("otonaselect-tax-rewrite-1.6.7");
     expect(tax).toContain("flush_rewrite_rules");
     expect(read("inc/site-pages.php")).toContain("/flush-rewrites");
+    expect(read("inc/site-pages.php")).toContain("otonaselect-tax-rewrite-1.6.7");
+  });
+
+  it("ships taxonomy hub pages and header nav to dedicated listings", () => {
+    expect(read("parts/header.html")).toContain("/performers/");
+    expect(read("parts/header.html")).toContain("/categories/");
+    expect(read("parts/header.html")).toContain("/series-list/");
+    expect(read("inc/taxonomy-hubs.php")).toContain("otonaselect_render_performer_hub");
+    expect(read("inc/reading.php")).toContain("otonaselect_reading_kana");
+    expect(read("templates/page-performers.html")).toContain("otonaselect-performer-hub-slot");
+    expect(read("templates/page-categories.html")).toContain("otonaselect-category-hub-slot");
+    expect(read("templates/page-series-list.html")).toContain("otonaselect-series-hub-slot");
   });
 
   it("lists home latest posts by post_date DESC with 12/page and /page/N/", () => {

@@ -162,7 +162,7 @@ add_action('rest_api_init', static function (): void {
 		},
 		'callback' => static function () {
 			flush_rewrite_rules(false);
-			$ver = 'otonaselect-tax-rewrite-1.6.4';
+			$ver = 'otonaselect-tax-rewrite-1.6.7';
 			update_option('otonaselect_tax_rewrite_version', $ver, true);
 			return rest_ensure_response([
 				'ok' => true,
