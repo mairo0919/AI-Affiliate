@@ -85,6 +85,14 @@ add_action('init', static function (): void {
 			'query_var' => true,
 		]
 	);
+
+	// Pretty permalinks for custom taxonomies require a rewrite flush after
+	// registration (or slug changes). Version-gate so production heals on load.
+	$rewrite_ver = 'otonaselect-tax-rewrite-1.6.4';
+	if (get_option('otonaselect_tax_rewrite_version') !== $rewrite_ver) {
+		flush_rewrite_rules(false);
+		update_option('otonaselect_tax_rewrite_version', $rewrite_ver, true);
+	}
 }, 5);
 
 /**

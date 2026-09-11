@@ -46,7 +46,7 @@ function buildSyncPluginZip(): { zipPath: string; workDir: string } {
 /**
  * Plugin Name: OtonaSelect Theme Sync
  * Description: One-shot sync of otonaselect block theme files (v1.6). Safe to deactivate after sync.
- * Version: 1.6.2
+ * Version: 1.6.4
  */
 declare(strict_types=1);
 if (!defined('ABSPATH')) { exit; }
@@ -79,7 +79,8 @@ register_activation_hook(__FILE__, static function (): void {
       copy($item->getPathname(), $target);
     }
   }
-  flush_rewrite_rules();
+  flush_rewrite_rules(false);
+  update_option('otonaselect_tax_rewrite_version', 'otonaselect-tax-rewrite-1.6.4', true);
 });
 `;
   writeFileSync(join(pluginDir, "otonaselect-theme-sync.php"), pluginPhp, "utf8");
@@ -131,6 +132,17 @@ async function installPluginFromZip(
     ok: false,
     detail: `upload_status_${upload.status}; snip=${text.slice(0, 240).replace(/\s+/g, " ")}`,
   };
+}
+
+async function deleteSyncPlugin(base: string, auth: string): Promise<{ status: number; ok: boolean }> {
+  const res = await fetch(
+    `${base}/wp-json/wp/v2/plugins/otonaselect-theme-sync%2Fotonaselect-theme-sync?force=true`,
+    {
+      method: "DELETE",
+      headers: { Authorization: `Basic ${auth}` },
+    },
+  );
+  return { status: res.status, ok: res.status === 200 || res.status === 404 };
 }
 
 async function activateAndVerify(base: string, auth: string): Promise<Record<string, unknown>> {
@@ -217,9 +229,9 @@ export async function runWpDeployOtonaselectThemeCli(argv: string[]): Promise<vo
   const { zipPath, workDir } = buildSyncPluginZip();
   const outDir = resolve(HERE, "../../tmp-artifacts");
   mkdirSync(outDir, { recursive: true });
-  const savedZip = join(outDir, "otonaselect-theme-sync-1.6.2.zip");
+  const savedZip = join(outDir, "otonaselect-theme-sync-1.6.4.zip");
   writeFileSync(savedZip, readFileSync(zipPath));
-  const themeZip = join(outDir, "otonaselect-theme-1.6.2.zip");
+  const themeZip = join(outDir, "otonaselect-theme-1.6.4.zip");
   execFileSync("zip", ["-r", "-q", themeZip, "otonaselect", "-x", "*.DS_Store"], {
     cwd: resolve(THEME_SRC, ".."),
   });
@@ -243,18 +255,34 @@ export async function runWpDeployOtonaselectThemeCli(argv: string[]): Promise<vo
   }
 
   const { base, auth } = wpAuth(config);
+  const deleted = await deleteSyncPlugin(base, auth);
   const installed = await installPluginFromZip(base, auth, zipPath);
   const verify = await activateAndVerify(base, auth);
+
+  // Prefer REST flush after theme files land (also covered by sync activation).
+  const flush = await fetch(`${base}/wp-json/otonaselect/v1/flush-rewrites`, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${auth}`,
+      "Content-Type": "application/json",
+    },
+    body: "{}",
+  }).then(async (r) => ({
+    status: r.status,
+    body: await r.json().catch(() => null),
+  }));
 
   console.log(
     JSON.stringify(
       {
-        ok: Boolean(verify.themeVersion === "1.6.0" || installed.ok),
+        ok: Boolean(verify.themeVersion === "1.6.4" || installed.ok || flush.status === 200),
         apply: true,
         syncPluginZip: savedZip,
         themeZip,
+        deleted,
         install: installed,
         verify,
+        flush,
       },
       null,
       2,

@@ -111,4 +111,20 @@ add_action('rest_api_init', static function (): void {
 			return rest_ensure_response(otonaselect_ensure_foundation_pages());
 		},
 	]);
+
+	register_rest_route('otonaselect/v1', '/flush-rewrites', [
+		'methods' => 'POST',
+		'permission_callback' => static function (): bool {
+			return current_user_can('manage_options');
+		},
+		'callback' => static function () {
+			flush_rewrite_rules(false);
+			$ver = 'otonaselect-tax-rewrite-1.6.4';
+			update_option('otonaselect_tax_rewrite_version', $ver, true);
+			return rest_ensure_response([
+				'ok' => true,
+				'rewriteVersion' => $ver,
+			]);
+		},
+	]);
 });

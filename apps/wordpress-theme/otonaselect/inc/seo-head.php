@@ -175,10 +175,10 @@ add_action('wp_head', static function (): void {
 }, 1);
 
 /**
- * Robots: public content indexable; keep admin/search/private controlled.
+ * Robots: public content indexable; keep thin/duplicate surfaces noindex.
  */
 add_filter('wp_robots', static function (array $robots): array {
-	if (is_search() || is_404()) {
+	if (is_search() || is_404() || is_author() || is_date() || is_attachment()) {
 		$robots['noindex'] = true;
 		$robots['follow'] = true;
 		unset($robots['index']);
@@ -193,7 +193,17 @@ add_filter('wp_robots', static function (array $robots): array {
 			return $robots;
 		}
 	}
-	// Published posts / archives / home: index,follow
+	// Empty taxonomy archives: keep crawlable for discovery, but do not index.
+	if (is_category() || is_tag() || is_tax()) {
+		$term = get_queried_object();
+		if ($term instanceof WP_Term && (int) $term->count <= 0) {
+			$robots['noindex'] = true;
+			$robots['follow'] = true;
+			unset($robots['index']);
+			return $robots;
+		}
+	}
+	// Published posts / non-empty archives / home: index,follow
 	$robots['index'] = true;
 	$robots['follow'] = true;
 	unset($robots['noindex'], $robots['nofollow']);
@@ -273,6 +283,10 @@ add_action('wp_head', static function (): void {
 		echo '<meta name="twitter:image" content="' . esc_url($og_image) . '" />' . "\n";
 	}
 
+	// Adult / explicit disclosure for SafeSearch (do not hide adult nature).
+	echo '<meta name="rating" content="adult" />' . "\n";
+	echo '<meta name="RATING" content="RTA-ACCT-000041-RTA" />' . "\n";
+
 	if (is_singular('post')) {
 		$post = get_post();
 		if ($post instanceof WP_Post) {
@@ -289,7 +303,65 @@ add_action('wp_head', static function (): void {
 }, 2);
 
 /**
- * Sitemap: force production host; exclude legacy hosts.
+ * RTA label header — adult content disclosure complementary to rating meta.
+ */
+add_action('send_headers', static function (): void {
+	if (is_admin() || headers_sent()) {
+		return;
+	}
+	header('RATING: RTA-ACCT-000041-RTA', false);
+}, 1);
+
+/**
+ * Canonical host: http / www → https://otonaselect.net (single hop).
+ */
+add_action('template_redirect', static function (): void {
+	if (is_admin() || wp_doing_ajax() || wp_doing_cron() || (defined('REST_REQUEST') && REST_REQUEST)) {
+		return;
+	}
+	$host = isset($_SERVER['HTTP_HOST']) ? strtolower((string) wp_unslash($_SERVER['HTTP_HOST'])) : '';
+	$host = preg_replace('/:\d+$/', '', $host) ?? $host;
+	$https = (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off')
+		|| (isset($_SERVER['SERVER_PORT']) && (string) $_SERVER['SERVER_PORT'] === '443')
+		|| (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && strtolower((string) $_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https');
+	$needs_host = $host === 'www.otonaselect.net';
+	$needs_https = !$https && ($host === 'otonaselect.net' || $host === 'www.otonaselect.net');
+	if (!$needs_host && !$needs_https) {
+		return;
+	}
+	$request = isset($_SERVER['REQUEST_URI']) ? (string) wp_unslash($_SERVER['REQUEST_URI']) : '/';
+	$path = wp_parse_url($request, PHP_URL_PATH);
+	$query = wp_parse_url($request, PHP_URL_QUERY);
+	$path = is_string($path) && $path !== '' ? $path : '/';
+	$target = OTONASELECT_PRODUCTION_ORIGIN . $path . (is_string($query) && $query !== '' ? '?' . $query : '');
+	wp_redirect($target, 301);
+	exit;
+}, 0);
+
+/**
+ * robots.txt: keep public surfaces crawlable; never block CSS/JS needed for rendering.
+ */
+add_filter('robots_txt', static function (string $output, bool $public): string {
+	if (!$public) {
+		return $output;
+	}
+	$lines = [
+		'User-agent: *',
+		'Allow: /',
+		'Disallow: /wp-admin/',
+		'Allow: /wp-admin/admin-ajax.php',
+		'Disallow: /wp-login.php',
+		'Disallow: /xmlrpc.php',
+		'',
+		'# Adult content site — crawl public HTML; do not block theme assets.',
+		'Sitemap: ' . OTONASELECT_PRODUCTION_ORIGIN . '/wp-sitemap.xml',
+		'',
+	];
+	return implode("\n", $lines);
+}, 20, 2);
+
+/**
+ * Sitemap: force production host; exclude empty terms / user archives.
  */
 add_filter('wp_sitemaps_enabled', '__return_true');
 add_filter('wp_sitemaps_posts_entry', static function (array $entry): array {
@@ -304,6 +376,16 @@ add_filter('wp_sitemaps_taxonomies_entry', static function (array $entry): array
 	}
 	return $entry;
 });
+add_filter('wp_sitemaps_taxonomies_query_args', static function (array $args): array {
+	$args['hide_empty'] = true;
+	return $args;
+});
+add_filter('wp_sitemaps_add_provider', static function ($provider, string $name) {
+	if ($name === 'users') {
+		return false;
+	}
+	return $provider;
+}, 10, 2);
 add_filter('home_url', static function ($url, $path = '', $scheme = null) {
 	if (is_admin() || wp_doing_cron()) {
 		return $url;

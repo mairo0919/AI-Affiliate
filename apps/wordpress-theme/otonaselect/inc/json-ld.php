@@ -37,25 +37,18 @@ function otonaselect_breadcrumb_items(): array {
 		$post_id = (int) get_queried_object_id();
 		$performers = get_the_terms($post_id, OTONASELECT_TAX_PERFORMER);
 		if (is_array($performers) && $performers !== []) {
-			$items[] = [
-				'name' => '出演者',
-				'url' => otonaselect_public_origin() . '/performer/',
-			];
+			// No root /performer/ landing — link the concrete term only (avoid 404 crumbs).
 			$first = $performers[0];
 			if ($first instanceof WP_Term) {
 				$link = get_term_link($first);
 				$items[] = [
 					'name' => $first->name,
-					'url' => !is_wp_error($link) ? otonaselect_replace_legacy_host($link) : otonaselect_public_origin() . '/performer/' . $first->slug . '/',
+					'url' => !is_wp_error($link) ? otonaselect_replace_legacy_host($link) : otonaselect_public_origin() . '/performer/' . rawurlencode($first->slug) . '/',
 				];
 			}
 		} else {
 			$cats = get_the_category($post_id);
 			if (is_array($cats) && $cats !== []) {
-				$items[] = [
-					'name' => 'カテゴリ',
-					'url' => otonaselect_public_origin() . '/',
-				];
 				$cat = $cats[0];
 				$link = get_category_link($cat->term_id);
 				$items[] = [
@@ -72,12 +65,8 @@ function otonaselect_breadcrumb_items(): array {
 		return $items;
 	}
 
-	if (is_tax(OTONASELECT_TAX_PERFORMER)) {
+	if (is_tax(OTONASELECT_TAX_PERFORMER) || is_tax(OTONASELECT_TAX_SERIES)) {
 		$term = get_queried_object();
-		$items[] = [
-			'name' => '出演者',
-			'url' => otonaselect_public_origin() . '/performer/',
-		];
 		if ($term instanceof WP_Term) {
 			$items[] = [
 				'name' => $term->name,
@@ -87,27 +76,8 @@ function otonaselect_breadcrumb_items(): array {
 		return $items;
 	}
 
-	if (is_tax(OTONASELECT_TAX_SERIES)) {
+	if (is_category() || is_tag()) {
 		$term = get_queried_object();
-		$items[] = [
-			'name' => 'シリーズ',
-			'url' => otonaselect_public_origin() . '/series/',
-		];
-		if ($term instanceof WP_Term) {
-			$items[] = [
-				'name' => $term->name,
-				'url' => otonaselect_canonical_url(),
-			];
-		}
-		return $items;
-	}
-
-	if (is_category()) {
-		$term = get_queried_object();
-		$items[] = [
-			'name' => 'カテゴリ',
-			'url' => otonaselect_public_origin() . '/',
-		];
 		if ($term instanceof WP_Term) {
 			$items[] = [
 				'name' => $term->name,
