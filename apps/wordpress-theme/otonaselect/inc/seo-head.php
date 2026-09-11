@@ -158,7 +158,13 @@ add_filter('document_title_parts', static function (array $parts): array {
 			$parts['title'] = $title;
 		}
 	}
-	$parts['site'] = get_bloginfo('name') ?: 'オトナセレクト';
+	$site = get_bloginfo('name') ?: 'オトナセレクト';
+	$parts['site'] = $site;
+	// Front page: avoid "オトナセレクト – オトナセレクト".
+	if (is_front_page() || is_home()) {
+		$parts['title'] = $site;
+		unset($parts['site']);
+	}
 	return $parts;
 });
 
@@ -313,7 +319,7 @@ add_action('send_headers', static function (): void {
 }, 1);
 
 /**
- * Canonical host: http / www → https://otonaselect.net (single hop).
+ * Canonical host: http / www / legacy mixh → https://otonaselect.net (single hop).
  */
 add_action('template_redirect', static function (): void {
 	if (is_admin() || wp_doing_ajax() || wp_doing_cron() || (defined('REST_REQUEST') && REST_REQUEST)) {
@@ -324,8 +330,8 @@ add_action('template_redirect', static function (): void {
 	$https = (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off')
 		|| (isset($_SERVER['SERVER_PORT']) && (string) $_SERVER['SERVER_PORT'] === '443')
 		|| (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && strtolower((string) $_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https');
-	$needs_host = $host === 'www.otonaselect.net';
-	$needs_https = !$https && ($host === 'otonaselect.net' || $host === 'www.otonaselect.net');
+	$needs_host = $host === 'www.otonaselect.net' || in_array($host, OTONASELECT_LEGACY_HOSTS, true);
+	$needs_https = !$https && ($host === 'otonaselect.net' || $host === 'www.otonaselect.net' || in_array($host, OTONASELECT_LEGACY_HOSTS, true));
 	if (!$needs_host && !$needs_https) {
 		return;
 	}
