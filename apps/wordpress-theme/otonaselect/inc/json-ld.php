@@ -37,7 +37,10 @@ function otonaselect_breadcrumb_items(): array {
 		$post_id = (int) get_queried_object_id();
 		$performers = get_the_terms($post_id, OTONASELECT_TAX_PERFORMER);
 		if (is_array($performers) && $performers !== []) {
-			// No root /performer/ landing — link the concrete term only (avoid 404 crumbs).
+			$items[] = [
+				'name' => '出演者',
+				'url' => otonaselect_public_origin() . '/performers/',
+			];
 			$first = $performers[0];
 			if ($first instanceof WP_Term) {
 				$link = get_term_link($first);
@@ -49,6 +52,10 @@ function otonaselect_breadcrumb_items(): array {
 		} else {
 			$cats = get_the_category($post_id);
 			if (is_array($cats) && $cats !== []) {
+				$items[] = [
+					'name' => 'カテゴリ',
+					'url' => otonaselect_public_origin() . '/categories/',
+				];
 				$cat = $cats[0];
 				$link = get_category_link($cat->term_id);
 				$items[] = [
@@ -65,7 +72,36 @@ function otonaselect_breadcrumb_items(): array {
 		return $items;
 	}
 
-	if (is_tax(OTONASELECT_TAX_PERFORMER) || is_tax(OTONASELECT_TAX_SERIES)) {
+	if (is_page()) {
+		$slug = get_post_field('post_name', get_queried_object_id());
+		$title = get_the_title();
+		$items[] = [
+			'name' => is_string($title) && $title !== '' ? $title : (is_string($slug) ? $slug : 'ページ'),
+			'url' => otonaselect_canonical_url(),
+		];
+		return $items;
+	}
+
+	if (is_tax(OTONASELECT_TAX_PERFORMER)) {
+		$items[] = [
+			'name' => '出演者',
+			'url' => otonaselect_public_origin() . '/performers/',
+		];
+		$term = get_queried_object();
+		if ($term instanceof WP_Term) {
+			$items[] = [
+				'name' => $term->name,
+				'url' => otonaselect_canonical_url(),
+			];
+		}
+		return $items;
+	}
+
+	if (is_tax(OTONASELECT_TAX_SERIES)) {
+		$items[] = [
+			'name' => 'シリーズ',
+			'url' => otonaselect_public_origin() . '/series-list/',
+		];
 		$term = get_queried_object();
 		if ($term instanceof WP_Term) {
 			$items[] = [
@@ -77,6 +113,12 @@ function otonaselect_breadcrumb_items(): array {
 	}
 
 	if (is_category() || is_tag()) {
+		if (is_category()) {
+			$items[] = [
+				'name' => 'カテゴリ',
+				'url' => otonaselect_public_origin() . '/categories/',
+			];
+		}
 		$term = get_queried_object();
 		if ($term instanceof WP_Term) {
 			$items[] = [

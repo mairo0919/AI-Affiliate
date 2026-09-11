@@ -302,6 +302,8 @@ export class WordPressApiPublisher implements PublisherAdapter {
     taxonomyRestBase: "tags" | "categories" | "performer" | "series";
     name: string;
     slug?: string | null;
+    /** Term meta (e.g. otonaselect_reading_kana). Applied after ensure. */
+    meta?: Record<string, string> | null;
   }): Promise<number | null> {
     const name = input.name.trim();
     if (!name) return null;
@@ -321,6 +323,7 @@ export class WordPressApiPublisher implements PublisherAdapter {
       `/${input.taxonomyRestBase}?search=${encodeURIComponent(name)}&per_page=20`,
     ].filter((p): p is string => Boolean(p));
 
+    let termId: number | null = null;
     for (const listPath of listPaths) {
       const listed = await this.request(listPath, { method: "GET" });
       if (!listed.ok) continue;
@@ -329,32 +332,51 @@ export class WordPressApiPublisher implements PublisherAdapter {
         (slug ? rows.find((r) => r.slug === slug) : undefined) ??
         rows.find((r) => r.name === name) ??
         rows.find((r) => r.name && normalize(r.name) === nameKey);
-      if (hit?.id) return Number(hit.id);
+      if (hit?.id) {
+        termId = Number(hit.id);
+        break;
+      }
     }
 
-    const created = await this.request(`/${input.taxonomyRestBase}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name, ...(slug ? { slug } : {}) }),
-    });
-    if (!created.ok) {
-      // Race: term may already exist — re-search once.
-      const again = await this.request(
-        `/${input.taxonomyRestBase}?search=${encodeURIComponent(name)}&per_page=20`,
-        { method: "GET" },
-      );
-      if (again.ok) {
-        const rows = (await again.json()) as Array<{ id?: number; name?: string; slug?: string }>;
-        const hit =
-          rows.find((r) => r.name === name) ??
-          rows.find((r) => r.name && normalize(r.name) === nameKey) ??
-          (slug ? rows.find((r) => r.slug === slug) : undefined);
-        if (hit?.id) return Number(hit.id);
+    if (!termId) {
+      const created = await this.request(`/${input.taxonomyRestBase}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name, ...(slug ? { slug } : {}) }),
+      });
+      if (!created.ok) {
+        // Race: term may already exist — re-search once.
+        const again = await this.request(
+          `/${input.taxonomyRestBase}?search=${encodeURIComponent(name)}&per_page=20`,
+          { method: "GET" },
+        );
+        if (again.ok) {
+          const rows = (await again.json()) as Array<{ id?: number; name?: string; slug?: string }>;
+          const hit =
+            rows.find((r) => r.name === name) ??
+            rows.find((r) => r.name && normalize(r.name) === nameKey) ??
+            (slug ? rows.find((r) => r.slug === slug) : undefined);
+          if (hit?.id) termId = Number(hit.id);
+        }
+      } else {
+        const json = (await created.json()) as { id?: number };
+        termId = json.id ? Number(json.id) : null;
       }
-      return null;
     }
-    const json = (await created.json()) as { id?: number };
-    return json.id ? Number(json.id) : null;
+
+    if (termId && input.meta && Object.keys(input.meta).length > 0) {
+      try {
+        await this.request(`/${input.taxonomyRestBase}/${termId}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ meta: input.meta }),
+        });
+      } catch {
+        /* term meta optional — theme may not expose yet */
+      }
+    }
+
+    return termId;
   }
 
   private async createOrUpdatePost(

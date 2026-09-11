@@ -62,6 +62,30 @@ HTML,
 <!-- wp:paragraph --><p>本サイト利用により生じた損害について、法令で認められる範囲を超えて責任を負いません。</p><!-- /wp:paragraph -->
 HTML,
 		],
+		'performers' => [
+			'title' => '出演者一覧',
+			'content' => <<<'HTML'
+<!-- wp:html -->
+<div class="otonaselect-performer-hub-slot"></div>
+<!-- /wp:html -->
+HTML,
+		],
+		'categories' => [
+			'title' => 'カテゴリ一覧',
+			'content' => <<<'HTML'
+<!-- wp:html -->
+<div class="otonaselect-category-hub-slot"></div>
+<!-- /wp:html -->
+HTML,
+		],
+		'series-list' => [
+			'title' => 'シリーズ一覧',
+			'content' => <<<'HTML'
+<!-- wp:html -->
+<div class="otonaselect-series-hub-slot"></div>
+<!-- /wp:html -->
+HTML,
+		],
 	];
 }
 
@@ -73,10 +97,29 @@ HTML,
 function otonaselect_ensure_foundation_pages(): array {
 	$created = [];
 	$existing = [];
+	$updated = [];
 	foreach (otonaselect_foundation_page_defs() as $slug => $def) {
 		$found = get_page_by_path($slug);
 		if ($found instanceof WP_Post) {
 			$existing[] = $slug;
+			// Hub pages: refresh slot markup if missing (idempotent content fix).
+			if (in_array($slug, ['performers', 'categories', 'series-list'], true)) {
+				$content = (string) $found->post_content;
+				$needs =
+					($slug === 'performers' && !str_contains($content, 'otonaselect-performer-hub-slot'))
+					|| ($slug === 'categories' && !str_contains($content, 'otonaselect-category-hub-slot'))
+					|| ($slug === 'series-list' && !str_contains($content, 'otonaselect-series-hub-slot'));
+				if ($needs) {
+					$r = wp_update_post([
+						'ID' => (int) $found->ID,
+						'post_content' => $def['content'],
+						'post_title' => $def['title'],
+					], true);
+					if (!is_wp_error($r)) {
+						$updated[] = $slug;
+					}
+				}
+			}
 			continue;
 		}
 		$id = wp_insert_post([
@@ -90,7 +133,7 @@ function otonaselect_ensure_foundation_pages(): array {
 			$created[] = $slug;
 		}
 	}
-	return compact('created', 'existing');
+	return compact('created', 'existing', 'updated');
 }
 
 add_action('after_switch_theme', static function (): void {

@@ -12,7 +12,7 @@ if (!defined('ABSPATH')) {
 }
 
 /**
- * Main query for the blog-on-front stream.
+ * Main query for the blog-on-front stream and taxonomy archives.
  * Order is always post_date DESC; sticky never jumps ahead.
  */
 add_action(
@@ -24,7 +24,12 @@ add_action(
 
 		$is_blog_front = $query->is_home() && $query->is_front_page();
 		$is_posts_index = $query->is_home() && !$query->is_front_page();
-		if (!$is_blog_front && !$is_posts_index) {
+		$is_tax_archive =
+			$query->is_category()
+			|| $query->is_tag()
+			|| $query->is_tax([OTONASELECT_TAX_PERFORMER, OTONASELECT_TAX_SERIES]);
+
+		if (!$is_blog_front && !$is_posts_index && !$is_tax_archive) {
 			return;
 		}
 

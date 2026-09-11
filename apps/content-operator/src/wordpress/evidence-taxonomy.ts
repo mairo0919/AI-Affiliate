@@ -55,35 +55,40 @@ const CATEGORY_EVIDENCE_RULES: Array<{ needle: RegExp; category: string; priorit
 const CATEGORY_DISPLAY_ORDER = ["単体作品", "企画", "VR", "ベスト・総集編"] as const;
 
 /**
- * Semantic series groupings — only when evidence strongly indicates a work-group axis.
- * Synonyms collapse to one canonical series display name (no BEST/ベスト duplicate terms).
+ * Attribute-like names that must NEVER become series terms.
+ * They belong in category / tag taxonomies only.
  */
-const SEMANTIC_SERIES_RULES: Array<{ needle: RegExp; series: string }> = [
-  {
-    // BEST / ベスト / 総集編 / ベスト盤 / 長時間BEST — meaningful compilation grouping
-    needle: /長時間\s*BEST|長時間ベスト|ベスト盤|ベストコレクション|総集編|\bBEST\b|ベスト/i,
-    series: "ベスト・総集編",
-  },
-  {
-    needle: /デビュー作|Debut\s*Work|\bDEBUT\b|デビュー記念|デビュー/i,
-    series: "デビュー作",
-  },
-  {
-    needle: /\d+\s*周年記念|\d+\s*周年|周年記念/,
-    series: "周年記念",
-  },
-  {
-    needle: /完全版|Complete\s*Edition|\bCOMPLETE\b/i,
-    series: "完全版",
-  },
-];
+export const SERIES_ATTRIBUTE_BLOCKLIST = [
+  "ベスト・総集編",
+  "ベスト",
+  "総集編",
+  "BEST",
+  "デビュー作",
+  "デビュー",
+  "周年記念",
+  "完全版",
+  "VR",
+  "単体作品",
+  "企画",
+  "作品紹介",
+] as const;
 
 /**
- * When no category rule matches but we still have a product article with actress/genre
- * evidence, use this single non-Uncategorized fallback (explicit policy).
+ * @deprecated Legacy catch-all category — never assign on new publishes.
+ * Kept only so refresh/cleanup can detect and remove it.
  */
 export const PRODUCT_ARTICLE_CATEGORY_FALLBACK = "作品紹介";
 
+/** True when a candidate series name is an attribute, not a work series. */
+export function isAttributeSeriesName(name: string): boolean {
+  const n = normalizeTaxonomyDisplayName(name);
+  const key = n.replace(/\s+/g, "").toLowerCase();
+  for (const blocked of SERIES_ATTRIBUTE_BLOCKLIST) {
+    if (blocked.replace(/\s+/g, "").toLowerCase() === key) return true;
+  }
+  if (/^(best|ベスト|総集編|デビュー|完全版|周年)/i.test(n)) return true;
+  return false;
+}
 export function uniqPreserve(names: string[]): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
@@ -131,7 +136,8 @@ export function normalizeTaxonomyDisplayName(name: string): string {
 }
 
 /**
- * Derive series list: official series labels first, then semantic groupings from title/evidence.
+ * Derive series list from official FANZA/Evidence series labels only.
+ * Never invents series from title similarity or attribute keywords.
  */
 export function deriveSeriesNamesFromEvidence(input: {
   labels: EvidenceTaxonomyLabel[];
@@ -139,25 +145,14 @@ export function deriveSeriesNamesFromEvidence(input: {
   subtitle?: string | null;
   extraSeriesNames?: string[] | null;
 }): string[] {
-  const title = input.title?.trim() ?? "";
-  const subtitle = input.subtitle?.trim() ?? "";
-  const labels = input.labels.filter((l) => l.name?.trim());
-  const blob = evidenceBlob(labels, title, subtitle);
-
   const official = [
-    ...labelsOfType(labels, "series"),
+    ...labelsOfType(input.labels.filter((l) => l.name?.trim()), "series"),
     ...(input.extraSeriesNames ?? []),
-  ].map(normalizeTaxonomyDisplayName);
+  ]
+    .map(normalizeTaxonomyDisplayName)
+    .filter((n) => n.length > 0 && !isAttributeSeriesName(n));
 
-  const semantic: string[] = [];
-  for (const rule of SEMANTIC_SERIES_RULES) {
-    if (rule.needle.test(blob)) {
-      semantic.push(rule.series);
-    }
-  }
-
-  // Official names that are themselves best/debut synonyms collapse via normalize.
-  return uniqPreserve([...official, ...semantic]);
+  return uniqPreserve(official);
 }
 
 /**
@@ -238,16 +233,21 @@ export function deriveWordPressTaxonomyFromEvidence(input: {
     (c) => !(CATEGORY_DISPLAY_ORDER as readonly string[]).includes(c),
   );
   const uniqueCategories = uniqPreserve([...orderedPreferred, ...orderedRest]);
-  // Drop legacy catch-all when a real format category exists.
-  const withoutIntro = uniqueCategories.filter((c) => c !== PRODUCT_ARTICLE_CATEGORY_FALLBACK);
-  const finalCategories =
-    withoutIntro.length > 0 ? withoutIntro : [...uniqueCategories];
+  // Never keep legacy catch-all 「作品紹介」.
+  const finalCategories = uniqueCategories.filter(
+    (c) => c !== PRODUCT_ARTICLE_CATEGORY_FALLBACK,
+  );
 
   if (finalCategories.length === 0 && input.allowCategoryFallback !== false) {
     if (performers.length > 0 || genres.length > 0 || title.length > 0) {
-      finalCategories.push(PRODUCT_ARTICLE_CATEGORY_FALLBACK);
+      // Formal inference only — never 「作品紹介」.
+      const multiCast =
+        performers.length >= 2 ||
+        /オムニバス|複数人|共演|大放出|\d+\s*人|プレイ集|作品集/i.test(blob);
+      const inferred = multiCast ? "企画" : "単体作品";
+      finalCategories.push(inferred);
       categoryFallbackUsed = true;
-      notes.push("category_fallback_作品紹介");
+      notes.push(`category_inferred_${inferred}`);
     }
   } else if (genres.some((g) => CATEGORY_EVIDENCE_RULES.some((r) => r.needle.test(g)))) {
     notes.push("category_from_official_genre");
@@ -296,13 +296,16 @@ export function deriveWordPressTaxonomyFromEvidence(input: {
     for (const p of performerTags) tags.push(p);
   }
   for (const s of seriesNames) {
-    if (s === "ベスト・総集編") {
-      tags.push("ベスト");
-      tags.push("総集編");
-    } else if (s !== "デビュー作" && s !== "完全版" && s !== "周年記念") {
-      tags.push(s);
-    }
+    tags.push(s);
   }
+  // Attribute cues stay as tags even when they are not series.
+  if (/ベスト|総集編|\bBEST\b/i.test(blob)) {
+    tags.push("ベスト");
+    tags.push("総集編");
+  }
+  if (/デビュー/i.test(blob)) tags.push("デビュー");
+  if (/完全版/i.test(blob)) tags.push("完全版");
+  if (/周年/i.test(blob)) tags.push("周年記念");
   for (const m of makers) {
     if (m.length > 0 && m.length <= 24) tags.push(m);
   }

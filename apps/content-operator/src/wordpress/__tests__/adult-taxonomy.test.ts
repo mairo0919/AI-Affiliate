@@ -93,7 +93,7 @@ describe("deriveWordPressTaxonomy adult tags", () => {
     expect(d.categories).not.toEqual(expect.arrayContaining(["巨乳", "人妻", "メンエス"]));
   });
 
-  it("keeps official series and adds semantic best/compilation series", () => {
+  it("keeps official series and never invents attribute series from genre", () => {
     const d = deriveWordPressTaxonomyFromEvidence({
       title: "奥田咲とエスワンベスト第6弾",
       labels: [
@@ -102,20 +102,21 @@ describe("deriveWordPressTaxonomy adult tags", () => {
         { type: "genre", name: "ベスト・総集編" },
       ],
     });
-    expect(d.seriesNames).toEqual(expect.arrayContaining(["エスワン", "ベスト・総集編"]));
+    expect(d.seriesNames).toEqual(["エスワン"]);
+    expect(d.seriesNames).not.toContain("ベスト・総集編");
     expect(d.categories).toContain("ベスト・総集編");
     expect(d.tags).toEqual(expect.arrayContaining(["ベスト", "総集編"]));
     expect(d.tags).not.toContain("奥田咲");
   });
 
-  it("keeps adult tag デビュー instead of series label デビュー作", () => {
+  it("keeps adult tag デビュー and does not create attribute series デビュー作", () => {
     const d = deriveWordPressTaxonomyFromEvidence({
       title: "新人デビュー記念",
       labels: [{ type: "actress", name: "奥田咲" }],
     });
     expect(d.tags).toContain("デビュー");
     expect(d.tags).not.toContain("デビュー作");
-    expect(d.seriesNames).toContain("デビュー作");
+    expect(d.seriesNames).not.toContain("デビュー作");
   });
 
   it("prefers genre over related_tag over title", () => {

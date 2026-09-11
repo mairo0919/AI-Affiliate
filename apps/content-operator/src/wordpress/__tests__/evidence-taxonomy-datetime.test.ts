@@ -26,7 +26,7 @@ describe("evidence-taxonomy", () => {
     expect(d.performers).toEqual(["奥田咲", "三上悠亜"]);
   });
 
-  it("keeps official series and adds semantic best/compilation series", () => {
+  it("keeps official series and never invents attribute series", () => {
     const d = deriveWordPressTaxonomyFromEvidence({
       title: "奥田咲とエスワンベスト第6弾",
       labels: [
@@ -35,33 +35,62 @@ describe("evidence-taxonomy", () => {
         { type: "genre", name: "ベスト・総集編" },
       ],
     });
-    expect(d.seriesNames).toEqual(expect.arrayContaining(["エスワン", "ベスト・総集編"]));
+    expect(d.seriesNames).toEqual(["エスワン"]);
+    expect(d.seriesNames).not.toContain("ベスト・総集編");
     expect(d.categories).toContain("ベスト・総集編");
     expect(d.tags).toEqual(expect.arrayContaining(["ベスト", "総集編"]));
     expect(d.tags).not.toContain("奥田咲");
     expect(d.performers).toContain("奥田咲");
   });
 
-  it("normalizes BEST/ベスト/総集編 synonyms for series display", () => {
+  it("normalizes BEST/ベスト/総集編 synonyms for category display", () => {
     expect(normalizeTaxonomyDisplayName("BEST")).toBe("ベスト・総集編");
     expect(normalizeTaxonomyDisplayName("ベスト盤")).toBe("ベスト・総集編");
     expect(normalizeTaxonomyDisplayName("総集編")).toBe("ベスト・総集編");
     expect(normalizeTaxonomyDisplayName("エスワン")).toBe("エスワン");
   });
 
-  it("derives debut / complete semantic series from title evidence", () => {
+  it("does not invent debut/complete as series from title alone", () => {
     expect(
       deriveSeriesNamesFromEvidence({
         title: "新人DEBUT記念",
         labels: [],
       }),
-    ).toContain("デビュー作");
+    ).toEqual([]);
     expect(
       deriveSeriesNamesFromEvidence({
         title: "完全版パッケージ",
         labels: [],
       }),
-    ).toContain("完全版");
+    ).toEqual([]);
+    expect(
+      deriveSeriesNamesFromEvidence({
+        title: "作品",
+        labels: [{ type: "series", name: "やっぱり女" }],
+      }),
+    ).toEqual(["やっぱり女"]);
+  });
+
+  it("infers 単体作品 instead of 作品紹介 when genre is missing", () => {
+    const d = deriveWordPressTaxonomyFromEvidence({
+      title: "ある作品の紹介",
+      labels: [{ type: "actress", name: "奥田咲" }],
+    });
+    expect(d.categories).toEqual(["単体作品"]);
+    expect(d.categories).not.toContain(PRODUCT_ARTICLE_CATEGORY_FALLBACK);
+    expect(d.notes.some((n) => n.includes("category_inferred_単体作品"))).toBe(true);
+  });
+
+  it("infers 企画 for multi-cast titles without format genre", () => {
+    const d = deriveWordPressTaxonomyFromEvidence({
+      title: "厳選！街角シロウト娘 激エロ美女を大放出！20人300分",
+      labels: [
+        { type: "actress", name: "A" },
+        { type: "actress", name: "B" },
+      ],
+    });
+    expect(d.categories).toEqual(["企画"]);
+    expect(d.categories).not.toContain(PRODUCT_ARTICLE_CATEGORY_FALLBACK);
   });
 
   it("prefers official genre labels for categories over title-only fallback", () => {
@@ -116,7 +145,7 @@ describe("wordpress-seo-attach multi-series", () => {
       tags: ["奥田咲", "ベスト"],
       productCanonicalId: "fanza:ofje00230",
     });
-    expect(attach.seriesList.map((s) => s.name)).toEqual(["エスワン", "ベスト・総集編"]);
+    expect(attach.seriesList.map((s) => s.name)).toEqual(["エスワン"]);
     expect(attach.series?.name).toBe("エスワン");
     expect(attach.productCanonicalId).toBe("ofje00230");
   });

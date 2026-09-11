@@ -1455,6 +1455,9 @@ async function resolveSeoTermIds(
         taxonomyRestBase: "performer",
         name: p.name,
         slug: p.stableSlug,
+        meta: p.reading
+          ? { otonaselect_reading_kana: p.reading }
+          : undefined,
       });
       if (id) performerIds.push(id);
     } catch {

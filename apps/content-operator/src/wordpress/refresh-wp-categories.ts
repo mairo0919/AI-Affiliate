@@ -1,5 +1,6 @@
 /**
- * Re-evaluate WordPress categories from Research Evidence genres.
+ * Re-evaluate WordPress categories + official series from Research Evidence.
+ * Syncs performer readings from FANZA ruby in rawData when present.
  * Does not rewrite body text, titles, dates, tags, or rights.
  */
 
@@ -14,6 +15,11 @@ import {
   PRODUCT_ARTICLE_CATEGORY_FALLBACK,
   type EvidenceTaxonomyLabel,
 } from "./evidence-taxonomy.js";
+import {
+  CATEGORY_READING_MAP,
+  extractPerformerReadingsFromRawData,
+} from "./performer-readings.js";
+import { stableTermSlug } from "./wordpress-seo-attach.js";
 
 export type CategoryRefreshRow = {
   postId: string;
@@ -23,17 +29,24 @@ export type CategoryRefreshRow = {
   reason?: string;
   before: string[];
   after: string[];
+  seriesBefore?: string[];
+  seriesAfter?: string[];
   changed: boolean;
   dateUnchanged: boolean;
   bodyUnchanged: boolean;
   fallbackUsed: boolean;
 };
 
-async function loadEvidenceLabels(
+type EvidenceBundle = {
+  labels: EvidenceTaxonomyLabel[];
+  rawData: unknown;
+};
+
+async function loadEvidenceBundle(
   prisma: DatabaseClient["prisma"],
   productCanonicalId: string | null,
-): Promise<EvidenceTaxonomyLabel[]> {
-  if (!productCanonicalId?.trim()) return [];
+): Promise<EvidenceBundle> {
+  if (!productCanonicalId?.trim()) return { labels: [], rawData: null };
   const cid = productCanonicalId.trim().toLowerCase();
   try {
     const item = await prisma.researchItem.findFirst({
@@ -46,13 +59,14 @@ async function loadEvidenceLabels(
       orderBy: { collectedAt: "desc" },
       include: { tags: { include: { researchTag: true } } },
     });
-    if (!item?.tags?.length) return [];
-    return item.tags.map((t) => ({
+    if (!item) return { labels: [], rawData: null };
+    const labels = (item.tags ?? []).map((t) => ({
       type: t.researchTag.type,
       name: t.researchTag.name,
     }));
+    return { labels, rawData: item.rawData ?? null };
   } catch {
-    return [];
+    return { labels: [], rawData: null };
   }
 }
 
@@ -85,10 +99,15 @@ async function listProductPostIds(config: AppConfig): Promise<string[]> {
   return [...new Set(ids)];
 }
 
-async function fetchCategoryNames(
+async function fetchPostTaxonomySnapshot(
   config: AppConfig,
   postId: string,
-): Promise<{ categories: string[]; date: string | null; content: string } | null> {
+): Promise<{
+  categories: string[];
+  series: string[];
+  date: string | null;
+  content: string;
+} | null> {
   const base = String(config.wordpressBaseUrl ?? "").replace(/\/$/, "");
   const user = config.wordpressUsername;
   const pass = String(config.wordpressApplicationPassword ?? "").replace(/\s+/g, "");
@@ -103,6 +122,7 @@ async function fetchCategoryNames(
     date?: string;
     content?: { raw?: string };
     categories?: number[];
+    series?: number[];
   };
   const catIds = j.categories ?? [];
   let categories: string[] = [];
@@ -116,11 +136,28 @@ async function fetchCategoryNames(
       categories = rows.map((x) => x.name ?? "").filter(Boolean);
     }
   }
+  const seriesIds = j.series ?? [];
+  let series: string[] = [];
+  if (seriesIds.length > 0) {
+    const r = await fetch(
+      `${base}/wp-json/${ns}/series?include=${seriesIds.join(",")}&per_page=100&_fields=id,name`,
+      { headers: { Authorization: `Basic ${auth}` } },
+    );
+    if (r.ok) {
+      const rows = (await r.json()) as Array<{ name?: string }>;
+      series = rows.map((x) => x.name ?? "").filter(Boolean);
+    }
+  }
   return {
     categories,
+    series,
     date: j.date ?? null,
     content: j.content?.raw || "",
   };
+}
+
+function sameNameSet(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((c) => b.includes(c)) && b.every((c) => a.includes(c));
 }
 
 export async function refreshWordPressCategories(deps: {
@@ -134,6 +171,8 @@ export async function refreshWordPressCategories(deps: {
   scanned: number;
   changed: number;
   stillFallback: number;
+  readingsSynced: number;
+  categoryReadingsSeeded: number;
 }> {
   const publisher = createWordPressPublisherFromConfig(deps.config) as WordPressApiPublisher;
   const ids =
@@ -144,6 +183,25 @@ export async function refreshWordPressCategories(deps: {
   const rows: CategoryRefreshRow[] = [];
   let changed = 0;
   let stillFallback = 0;
+  let readingsSynced = 0;
+  const readingDone = new Set<string>();
+
+  // Seed policy category readings once (apply mode).
+  let categoryReadingsSeeded = 0;
+  if (deps.apply) {
+    for (const [name, reading] of Object.entries(CATEGORY_READING_MAP)) {
+      try {
+        const id = await publisher.ensureTerm({
+          taxonomyRestBase: "categories",
+          name,
+          meta: { otonaselect_reading_kana: reading },
+        });
+        if (id) categoryReadingsSeeded += 1;
+      } catch {
+        /* ignore */
+      }
+    }
+  }
 
   for (const postId of ids) {
     const target = await deps.database.prisma.publicationTarget.findFirst({
@@ -194,9 +252,9 @@ export async function refreshWordPressCategories(deps: {
       (typeof structured.productCanonicalId === "string" && structured.productCanonicalId) ||
       (typeof structured.productKey === "string" && structured.productKey) ||
       null;
-    const evidenceLabels = await loadEvidenceLabels(deps.database.prisma, productCanonicalId);
+    const evidence = await loadEvidenceBundle(deps.database.prisma, productCanonicalId);
     const derived = deriveWordPressTaxonomyFromEvidence({
-      labels: evidenceLabels,
+      labels: evidence.labels,
       title: version.title,
       subtitle: typeof structured.subtitle === "string" ? structured.subtitle : null,
       officialDescription:
@@ -204,17 +262,40 @@ export async function refreshWordPressCategories(deps: {
       allowCategoryFallback: true,
     });
 
-    const snap = await fetchCategoryNames(deps.config, postId);
+    const snap = await fetchPostTaxonomySnapshot(deps.config, postId);
     const before = snap?.categories ?? [];
     const after = derived.categories;
-    const same =
-      before.length === after.length &&
-      before.every((c) => after.includes(c)) &&
-      after.every((c) => before.includes(c));
+    const seriesBefore = snap?.series ?? [];
+    const seriesAfter = derived.seriesNames;
+    const catsSame = sameNameSet(before, after);
+    const seriesSame = sameNameSet(seriesBefore, seriesAfter);
 
     if (after.includes(PRODUCT_ARTICLE_CATEGORY_FALLBACK)) stillFallback += 1;
 
-    if (same) {
+    // Sync performer readings from official ruby whenever we have them.
+    const readings = extractPerformerReadingsFromRawData(evidence.rawData);
+    if (deps.apply) {
+      for (const p of readings) {
+        const key = p.name.replace(/\s+/g, "").toLowerCase();
+        if (readingDone.has(key)) continue;
+        try {
+          const id = await publisher.ensureTerm({
+            taxonomyRestBase: "performer",
+            name: p.name,
+            slug: stableTermSlug(p.name, "p"),
+            meta: { otonaselect_reading_kana: p.reading },
+          });
+          if (id) {
+            readingDone.add(key);
+            readingsSynced += 1;
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+
+    if (catsSame && seriesSame) {
       rows.push({
         postId,
         productId: productCanonicalId,
@@ -223,6 +304,8 @@ export async function refreshWordPressCategories(deps: {
         reason: "UNCHANGED",
         before,
         after,
+        seriesBefore,
+        seriesAfter,
         changed: false,
         dateUnchanged: true,
         bodyUnchanged: true,
@@ -239,6 +322,8 @@ export async function refreshWordPressCategories(deps: {
         reason: "DRY_RUN",
         before,
         after,
+        seriesBefore,
+        seriesAfter,
         changed: true,
         dateUnchanged: true,
         bodyUnchanged: true,
@@ -251,7 +336,12 @@ export async function refreshWordPressCategories(deps: {
     try {
       const categoryIds: number[] = [];
       for (const name of after) {
-        const id = await publisher.ensureTerm({ taxonomyRestBase: "categories", name });
+        const reading = CATEGORY_READING_MAP[name];
+        const id = await publisher.ensureTerm({
+          taxonomyRestBase: "categories",
+          name,
+          meta: reading ? { otonaselect_reading_kana: reading } : undefined,
+        });
         if (id) categoryIds.push(id);
       }
       if (categoryIds.length === 0) {
@@ -262,6 +352,8 @@ export async function refreshWordPressCategories(deps: {
           reason: "NO_CATEGORY_IDS",
           before,
           after,
+          seriesBefore,
+          seriesAfter,
           changed: false,
           dateUnchanged: true,
           bodyUnchanged: true,
@@ -269,17 +361,32 @@ export async function refreshWordPressCategories(deps: {
         });
         continue;
       }
+
+      const seriesIds: number[] = [];
+      for (const name of seriesAfter) {
+        const id = await publisher.ensureTerm({
+          taxonomyRestBase: "series",
+          name,
+          slug: stableTermSlug(name, "s"),
+        });
+        if (id) seriesIds.push(id);
+      }
+
       await publisher.updateMetadataOnly({
         externalId: postId,
         categoryIds,
+        // Always set series list (may be empty) to detach attribute series.
+        seriesIds,
       });
-      const afterSnap = await fetchCategoryNames(deps.config, postId);
+      const afterSnap = await fetchPostTaxonomySnapshot(deps.config, postId);
       rows.push({
         postId,
         productId: productCanonicalId,
         ok: true,
         before,
         after: afterSnap?.categories ?? after,
+        seriesBefore,
+        seriesAfter: afterSnap?.series ?? seriesAfter,
         changed: true,
         dateUnchanged: !snap?.date || !afterSnap?.date || snap.date === afterSnap.date,
         bodyUnchanged: !snap?.content || snap.content === (afterSnap?.content ?? snap.content),
@@ -294,6 +401,8 @@ export async function refreshWordPressCategories(deps: {
         reason: error instanceof Error ? error.message.slice(0, 200) : "UPDATE_FAILED",
         before,
         after,
+        seriesBefore,
+        seriesAfter,
         changed: false,
         dateUnchanged: true,
         bodyUnchanged: true,
@@ -302,5 +411,12 @@ export async function refreshWordPressCategories(deps: {
     }
   }
 
-  return { rows, scanned: ids.length, changed, stillFallback };
+  return {
+    rows,
+    scanned: ids.length,
+    changed,
+    stillFallback,
+    readingsSynced,
+    categoryReadingsSeeded,
+  };
 }

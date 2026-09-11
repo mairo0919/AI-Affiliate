@@ -46,7 +46,7 @@ function buildSyncPluginZip(): { zipPath: string; workDir: string } {
 /**
  * Plugin Name: OtonaSelect Theme Sync
  * Description: One-shot sync of otonaselect block theme files (v1.6). Safe to deactivate after sync.
- * Version: 1.6.6
+ * Version: 1.6.7
  */
 declare(strict_types=1);
 if (!defined('ABSPATH')) { exit; }
@@ -79,8 +79,14 @@ register_activation_hook(__FILE__, static function (): void {
       copy($item->getPathname(), $target);
     }
   }
+  // Ensure hub foundation pages exist after theme files land.
+  $functions = $dest . '/functions.php';
+  if (is_readable($functions)) {
+    // Theme may not be active yet; call ensure via REST after activation if available.
+  }
+  update_option('otonaselect_theme_sync_version', '1.6.7', true);
+  update_option('otonaselect_tax_rewrite_version', 'otonaselect-tax-rewrite-1.6.7', true);
   flush_rewrite_rules(false);
-  update_option('otonaselect_tax_rewrite_version', 'otonaselect-tax-rewrite-1.6.4', true);
 });
 `;
   writeFileSync(join(pluginDir, "otonaselect-theme-sync.php"), pluginPhp, "utf8");
@@ -180,14 +186,22 @@ async function activateAndVerify(base: string, auth: string): Promise<Record<str
 
   // Best-effort: push critical HTML templates into FSE customizations if theme files lagged.
   const templatePush: Record<string, unknown> = {};
-  for (const slug of ["single", "front-page"] as const) {
+  for (const slug of [
+    "single",
+    "front-page",
+    "archive",
+    "taxonomy-performer",
+    "taxonomy-series",
+    "page-performers",
+    "page-categories",
+    "page-series-list",
+  ] as const) {
     const file = join(THEME_SRC, "templates", `${slug}.html`);
     if (!existsSync(file)) continue;
     const content = readFileSync(file, "utf8");
     const existing = await fetch(`${base}/wp-json/wp/v2/templates/otonaselect//${slug}?context=edit`, {
       headers: { Authorization: `Basic ${auth}` },
     });
-    const method = existing.status === 200 ? "POST" : "POST";
     const endpoint =
       existing.status === 200
         ? `${base}/wp-json/wp/v2/templates/otonaselect//${slug}`
@@ -203,7 +217,7 @@ async function activateAndVerify(base: string, auth: string): Promise<Record<str
             content,
           };
     const res = await fetch(endpoint, {
-      method,
+      method: "POST",
       headers: {
         Authorization: `Basic ${auth}`,
         "Content-Type": "application/json",
@@ -213,6 +227,45 @@ async function activateAndVerify(base: string, auth: string): Promise<Record<str
     templatePush[slug] = { status: res.status, ok: res.ok };
   }
 
+  // Header part (nav links to hubs)
+  const headerFile = join(THEME_SRC, "parts", "header.html");
+  let headerPush: Record<string, unknown> | null = null;
+  if (existsSync(headerFile)) {
+    const content = readFileSync(headerFile, "utf8");
+    const existing = await fetch(`${base}/wp-json/wp/v2/template-parts/otonaselect//header?context=edit`, {
+      headers: { Authorization: `Basic ${auth}` },
+    });
+    const endpoint =
+      existing.status === 200
+        ? `${base}/wp-json/wp/v2/template-parts/otonaselect//header`
+        : `${base}/wp-json/wp/v2/template-parts`;
+    const body =
+      existing.status === 200
+        ? { content, status: "publish" }
+        : {
+            slug: "header",
+            theme: "otonaselect",
+            type: "wp_template_part",
+            area: "header",
+            status: "publish",
+            content,
+          };
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${auth}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    headerPush = { status: res.status, ok: res.ok };
+  }
+
+  const ensurePages = await fetch(`${base}/wp-json/otonaselect/v1/ensure-foundation-pages`, {
+    method: "POST",
+    headers: { Authorization: `Basic ${auth}` },
+  }).then(async (r) => ({ status: r.status, body: await r.json().catch(() => null) }));
+
   return {
     activateStatus: activate.status,
     activate: activateJson,
@@ -220,6 +273,8 @@ async function activateAndVerify(base: string, auth: string): Promise<Record<str
     themeVersion: (theme.body as { version?: string } | null)?.version ?? null,
     themeStatus: theme.status,
     templatePush,
+    headerPush,
+    ensurePages,
   };
 }
 
@@ -229,9 +284,9 @@ export async function runWpDeployOtonaselectThemeCli(argv: string[]): Promise<vo
   const { zipPath, workDir } = buildSyncPluginZip();
   const outDir = resolve(HERE, "../../tmp-artifacts");
   mkdirSync(outDir, { recursive: true });
-  const savedZip = join(outDir, "otonaselect-theme-sync-1.6.6.zip");
+  const savedZip = join(outDir, "otonaselect-theme-sync-1.6.7.zip");
   writeFileSync(savedZip, readFileSync(zipPath));
-  const themeZip = join(outDir, "otonaselect-theme-1.6.6.zip");
+  const themeZip = join(outDir, "otonaselect-theme-1.6.7.zip");
   execFileSync("zip", ["-r", "-q", themeZip, "otonaselect", "-x", "*.DS_Store"], {
     cwd: resolve(THEME_SRC, ".."),
   });

@@ -19,6 +19,10 @@ const OTONASELECT_SYSTEM_SERIES_NAMES = [
 	'デビュー作',
 	'完全版',
 	'周年記念',
+	'VR',
+	'単体作品',
+	'企画',
+	'作品紹介',
 ];
 
 /**

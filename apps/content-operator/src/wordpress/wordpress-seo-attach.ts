@@ -1,4 +1,8 @@
 import { createHash } from "node:crypto";
+import {
+  isAttributeSeriesName,
+  PRODUCT_ARTICLE_CATEGORY_FALLBACK,
+} from "./evidence-taxonomy.js";
 
 /**
  * WordPress SEO / taxonomy attach payload — does NOT rewrite article body or Writer output.
@@ -21,6 +25,8 @@ export type WordPressSeoPerformer = {
   name: string;
   /** Optional ASCII hint for stable pretty slug (e.g. okuda-saki). */
   ascii?: string | null;
+  /** Official kana reading (FANZA ruby / Evidence). Never AI-invented. */
+  reading?: string | null;
 };
 
 export type WordPressSeoAttachInput = {
@@ -56,7 +62,12 @@ export type WordPressSeoAttach = {
   siteOrigin: string;
   excerpt: string;
   meta: Record<string, string>;
-  performers: Array<{ name: string; ascii: string | null; stableSlug: string }>;
+  performers: Array<{
+    name: string;
+    ascii: string | null;
+    stableSlug: string;
+    reading: string | null;
+  }>;
   /** @deprecated Prefer seriesList — first series for meta/backward compat. */
   series: { name: string; ascii: string | null; stableSlug: string } | null;
   seriesList: Array<{ name: string; ascii: string | null; stableSlug: string }>;
@@ -129,7 +140,8 @@ function normalizePerformers(
     if (seen.has(key)) continue;
     seen.add(key);
     const ascii = typeof row === "string" ? null : row.ascii?.trim() || null;
-    out.push({ name, ascii });
+    const reading = typeof row === "string" ? null : row.reading?.trim() || null;
+    out.push({ name, ascii, reading });
   }
   return out;
 }
@@ -182,6 +194,7 @@ export function buildWordPressSeoAttach(input: WordPressSeoAttachInput): WordPre
     name: p.name,
     ascii: p.ascii ?? null,
     stableSlug: stableTermSlug(p.name, "p", p.ascii),
+    reading: p.reading?.trim() || null,
   }));
 
   const seriesNameSet: string[] = [];
@@ -190,7 +203,12 @@ export function buildWordPressSeoAttach(input: WordPressSeoAttachInput): WordPre
     ...(input.seriesName?.trim() ? [input.seriesName.trim()] : []),
   ]) {
     const t = n.trim();
-    if (t) seriesNameSet.push(t);
+    if (!t) continue;
+    if (isAttributeSeriesName(t)) {
+      notes.push(`series_attribute_skipped:${t}`);
+      continue;
+    }
+    seriesNameSet.push(t);
   }
   const uniqueSeriesNames: string[] = [];
   const seenSeries = new Set<string>();
@@ -208,7 +226,13 @@ export function buildWordPressSeoAttach(input: WordPressSeoAttachInput): WordPre
   }));
   const series = seriesList[0] ?? null;
 
-  const categories = [...new Set((input.categories ?? []).map((c) => c.trim()).filter(Boolean))];
+  const categories = [
+    ...new Set(
+      (input.categories ?? [])
+        .map((c) => c.trim())
+        .filter((c) => Boolean(c) && c !== PRODUCT_ARTICLE_CATEGORY_FALLBACK),
+    ),
+  ];
   const tags = [...new Set((input.tags ?? []).map((t) => t.trim()).filter(Boolean))];
 
   const productCanonicalId = normalizeProductCanonicalId(input.productCanonicalId);

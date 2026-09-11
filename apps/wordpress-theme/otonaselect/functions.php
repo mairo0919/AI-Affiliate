@@ -22,6 +22,8 @@ require_once $otonaselect_inc . '/json-ld.php';
 require_once $otonaselect_inc . '/breadcrumbs.php';
 require_once $otonaselect_inc . '/related.php';
 require_once $otonaselect_inc . '/presentation.php';
+require_once $otonaselect_inc . '/reading.php';
+require_once $otonaselect_inc . '/taxonomy-hubs.php';
 require_once $otonaselect_inc . '/home-query.php';
 require_once $otonaselect_inc . '/analytics.php';
 // Age Gate SSOT = plugin. The plugin defines OTONASELECT_AGE_GATE_PLUGIN_ACTIVE
@@ -40,7 +42,7 @@ require_once $otonaselect_inc . '/site-pages.php';
  * Enqueue the theme stylesheet (block themes still benefit from style.css rules).
  */
 add_action('wp_enqueue_scripts', static function (): void {
-	$ver = wp_get_theme()->get('Version') ?: '1.6.6';
+	$ver = wp_get_theme()->get('Version') ?: '1.6.7';
 	wp_enqueue_style(
 		'otonaselect-style',
 		get_stylesheet_uri(),
