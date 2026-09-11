@@ -52,6 +52,14 @@ function otonaselect_canonical_url(): string {
 		return is_string($url) ? otonaselect_replace_legacy_host($url) : otonaselect_public_origin() . '/';
 	}
 	if (is_home() || is_front_page()) {
+		$paged = max(
+			1,
+			(int) get_query_var('paged'),
+			(int) get_query_var('page')
+		);
+		if ($paged > 1) {
+			return otonaselect_public_origin() . '/page/' . $paged . '/';
+		}
 		return otonaselect_public_origin() . '/';
 	}
 	if (is_category() || is_tag() || is_tax()) {

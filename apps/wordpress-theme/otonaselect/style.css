@@ -6,7 +6,7 @@ Description: オトナセレクト専用の軽量ブロックテーマ。note風
 Requires at least: 6.7
 Tested up to: 6.8
 Requires PHP: 8.0
-Version: 1.6.5
+Version: 1.6.6
 License: GNU General Public License v2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 Text Domain: otonaselect
@@ -120,6 +120,54 @@ body {
 
 .otonaselect-card {
 	height: 100%;
+}
+
+.otonaselect-home-pagination {
+	margin-top: var(--wp--preset--spacing--50);
+	gap: 0.5rem 0.75rem;
+	width: 100%;
+}
+
+.otonaselect-home-pagination .wp-block-query-pagination-numbers {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: center;
+	gap: 0.35rem;
+}
+
+.otonaselect-home-pagination a,
+.otonaselect-home-pagination .page-numbers {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 2.25rem;
+	min-height: 2.25rem;
+	padding: 0.25rem 0.55rem;
+	border: 1px solid var(--wp--preset--color--line, #d8d2c8);
+	border-radius: 0.35rem;
+	color: inherit;
+	text-decoration: none;
+	font-size: 0.9rem;
+	line-height: 1.2;
+}
+
+.otonaselect-home-pagination a:hover,
+.otonaselect-home-pagination a:focus-visible {
+	border-color: var(--wp--preset--color--contrast, #1a1a1a);
+}
+
+.otonaselect-home-pagination .page-numbers.current {
+	background: var(--wp--preset--color--contrast, #1a1a1a);
+	border-color: var(--wp--preset--color--contrast, #1a1a1a);
+	color: var(--wp--preset--color--base, #fff);
+	font-weight: 600;
+}
+
+.otonaselect-home-pagination .page-numbers.dots {
+	border: 0;
+	min-width: auto;
+	padding: 0 0.2rem;
 }
 
 /* Hide empty-state text defensively when cards rendered in same query. */

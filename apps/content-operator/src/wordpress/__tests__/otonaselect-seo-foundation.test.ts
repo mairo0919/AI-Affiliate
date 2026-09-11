@@ -11,12 +11,35 @@ function read(rel: string): string {
 }
 
 describe("otonaselect SEO foundation contracts", () => {
-  it("ships theme 1.6.5 with rewrite flush version gate", () => {
-    expect(read("style.css")).toMatch(/Version:\s*1\.6\.5/);
+  it("ships theme 1.6.6 with rewrite flush version gate", () => {
+    expect(read("style.css")).toMatch(/Version:\s*1\.6\.6/);
     const tax = read("inc/taxonomies.php");
     expect(tax).toContain("otonaselect-tax-rewrite-1.6.4");
     expect(tax).toContain("flush_rewrite_rules");
     expect(read("inc/site-pages.php")).toContain("/flush-rewrites");
+  });
+
+  it("lists home latest posts by post_date DESC with 12/page and /page/N/", () => {
+    const front = read("templates/front-page.html");
+    expect(front).toMatch(/"perPage":12/);
+    expect(front).toMatch(/"order":"desc"/);
+    expect(front).toMatch(/"orderBy":"date"/);
+    expect(front).toMatch(/"inherit":true/);
+    expect(front).toMatch(/"sticky":"exclude"/);
+    expect(front).toContain("wp:query-pagination");
+    expect(front).toContain("otonaselect-home-pagination");
+
+    const homeQuery = read("inc/home-query.php");
+    expect(homeQuery).toContain("pre_get_posts");
+    expect(homeQuery).toContain("posts_per_page");
+    expect(homeQuery).toContain("ignore_sticky_posts");
+    expect(homeQuery).toMatch(/orderby['\"]?\s*,\s*['\"]date['\"]/);
+    expect(homeQuery).toMatch(/order['\"]?\s*,\s*['\"]DESC['\"]/);
+    expect(homeQuery).toContain("set_404");
+
+    const seo = read("inc/seo-head.php");
+    expect(seo).toContain("/page/");
+    expect(seo).toContain("get_query_var('paged')");
   });
 
   it("discloses adult rating on HTML only — never on sitemap responses", () => {
