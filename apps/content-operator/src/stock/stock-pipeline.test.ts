@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   listUpcomingPublishSlots,
+  publishSlotKeyFromWpLocalDate,
   resolveWordPressScheduledSlotDates,
 } from "../wordpress/wordpress-datetime.js";
 import { loadStockRuntimeConfig } from "./stock-config.js";
@@ -66,6 +67,16 @@ describe("stock config + publish slots", () => {
     });
     expect(dates.date).toBe("2026-09-09T21:00:00");
     expect(dates.date_gmt).toBe("2026-09-09T12:00:00");
+  });
+
+  it("maps WP local future date to publishSlotKey", () => {
+    expect(publishSlotKeyFromWpLocalDate("2026-09-12T12:00:00")).toBe(
+      "2026-09-12T12:00:00+09:00",
+    );
+    expect(publishSlotKeyFromWpLocalDate("2026-09-17T21:00:00")).toBe(
+      "2026-09-17T21:00:00+09:00",
+    );
+    expect(publishSlotKeyFromWpLocalDate("bad")).toBeNull();
   });
 
   it("keeps product key provider-agnostic", () => {

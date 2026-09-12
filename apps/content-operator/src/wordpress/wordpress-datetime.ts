@@ -155,6 +155,17 @@ export function listUpcomingPublishSlots(input: {
   return out;
 }
 
+/**
+ * Convert WordPress REST `date` (site-local, no offset) into our publishSlotKey.
+ * Example: "2026-09-12T12:00:00" → "2026-09-12T12:00:00+09:00"
+ * Used so DB-less WP futures still block double-booking of JST slots.
+ */
+export function publishSlotKeyFromWpLocalDate(dateLocal: string): string | null {
+  const m = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/.exec(dateLocal.trim());
+  if (!m?.[1]) return null;
+  return `${m[1]}+09:00`;
+}
+
 /** True when WP settings already express Japan local time. */
 export function isWordPressTimezoneTokyo(settings: {
   /** Classic option name (wp_options.timezone_string). */

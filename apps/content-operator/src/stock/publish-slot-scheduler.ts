@@ -14,7 +14,10 @@ import {
   publishContentVersionToWordPress,
   type WordPressPublishOneResult,
 } from "../wordpress/wordpress-publish-path.js";
-import { listUpcomingPublishSlots } from "../wordpress/wordpress-datetime.js";
+import {
+  listUpcomingPublishSlots,
+  publishSlotKeyFromWpLocalDate,
+} from "../wordpress/wordpress-datetime.js";
 import {
   listApprovedStock,
   evaluatePublicEligibilityFromStructured,
@@ -28,6 +31,11 @@ export type PublishSlotScheduleResult = {
   skipped: boolean;
   skipReason: string | null;
   slotsConsidered: Array<{ date: string; hour: number }>;
+  openSlotsBeforeReserve: number;
+  wpFutureFetched: number;
+  wpFutureError: string | null;
+  unusedApprovedConsidered: number;
+  publicEligibleQueued: number;
   reserved: Array<{
     slot: string;
     contentVersionId: string;
@@ -44,7 +52,7 @@ function slotKey(year: number, month: number, day: number, hour: number): string
   return `${year}-${p(month)}-${p(day)}T${p(hour)}:00:00+09:00`;
 }
 
-async function loadReservedSlotKeys(
+async function loadReservedSlotKeysFromDb(
   prisma: DatabaseClient["prisma"],
 ): Promise<Set<string>> {
   const rows = await prisma.publicationTarget.findMany({
@@ -68,6 +76,69 @@ async function loadReservedSlotKeys(
   return keys;
 }
 
+/**
+ * Operator DB may lag WP (e.g. past boost wrote futures without PublicationTarget rows).
+ * Treat live WP `future` dates as reserved so we never double-book 12/21/23 slots.
+ */
+async function loadReservedSlotKeysFromWordPress(config: AppConfig): Promise<{
+  keys: Set<string>;
+  fetched: number;
+  error: string | null;
+}> {
+  const keys = new Set<string>();
+  const base = config.wordpressBaseUrl?.replace(/\/$/, "");
+  const user = config.wordpressUsername;
+  const pass = config.wordpressApplicationPassword;
+  if (!base || !user || !pass || !config.wordpressAllowExternalRequests) {
+    return { keys, fetched: 0, error: null };
+  }
+  const auth = Buffer.from(`${user}:${pass}`).toString("base64");
+  let page = 1;
+  let fetched = 0;
+  try {
+    while (page <= 20) {
+      const url = `${base}/wp-json/wp/v2/posts?status=future&per_page=100&page=${page}&orderby=date&order=asc&_fields=id,date`;
+      const res = await fetch(url, { headers: { Authorization: `Basic ${auth}` } });
+      if (!res.ok) {
+        return { keys, fetched, error: `wp_future_http_${res.status}` };
+      }
+      const rows = (await res.json()) as Array<{ id?: number; date?: string }>;
+      if (!Array.isArray(rows) || rows.length === 0) break;
+      for (const row of rows) {
+        fetched += 1;
+        if (typeof row.date === "string") {
+          const key = publishSlotKeyFromWpLocalDate(row.date);
+          if (key) keys.add(key);
+        }
+      }
+      const totalPages = Number(res.headers.get("x-wp-totalpages") || "1");
+      if (page >= totalPages || rows.length < 100) break;
+      page += 1;
+    }
+    return { keys, fetched, error: null };
+  } catch (e) {
+    return {
+      keys,
+      fetched,
+      error: e instanceof Error ? e.message.slice(0, 160) : String(e).slice(0, 160),
+    };
+  }
+}
+
+async function loadReservedSlotKeys(input: {
+  prisma: DatabaseClient["prisma"];
+  config: AppConfig;
+}): Promise<{ keys: Set<string>; wpFutureFetched: number; wpFutureError: string | null }> {
+  const keys = await loadReservedSlotKeysFromDb(input.prisma);
+  const fromWp = await loadReservedSlotKeysFromWordPress(input.config);
+  for (const k of fromWp.keys) keys.add(k);
+  return {
+    keys,
+    wpFutureFetched: fromWp.fetched,
+    wpFutureError: fromWp.error,
+  };
+}
+
 export async function runPublishSlotScheduler(deps: {
   database: DatabaseClient;
   lifecycle: LifecycleRepository;
@@ -84,6 +155,11 @@ export async function runPublishSlotScheduler(deps: {
       skipped: true,
       skipReason: "STOCK_PUBLISH_SCHEDULER_ENABLED_FALSE",
       slotsConsidered: [],
+      openSlotsBeforeReserve: 0,
+      wpFutureFetched: 0,
+      wpFutureError: null,
+      unusedApprovedConsidered: 0,
+      publicEligibleQueued: 0,
       reserved: [],
       publicBlocked: [],
       otherSkipped: [],
@@ -95,6 +171,11 @@ export async function runPublishSlotScheduler(deps: {
       skipped: true,
       skipReason: "FUTURE_SCHEDULE_DISABLED",
       slotsConsidered: [],
+      openSlotsBeforeReserve: 0,
+      wpFutureFetched: 0,
+      wpFutureError: null,
+      unusedApprovedConsidered: 0,
+      publicEligibleQueued: 0,
       reserved: [],
       publicBlocked: [],
       otherSkipped: [],
@@ -187,8 +268,17 @@ export async function runPublishSlotScheduler(deps: {
   const reserved: PublishSlotScheduleResult["reserved"] = [];
   const otherSkipped: PublishSlotScheduleResult["otherSkipped"] = [];
   let queueIdx = 0;
-  const reservedKeys = await loadReservedSlotKeys(deps.database.prisma);
+  const reservedLoad = await loadReservedSlotKeys({
+    prisma: deps.database.prisma,
+    config: deps.config,
+  });
+  const reservedKeys = reservedLoad.keys;
   const maxPerTick = runtime.scheduleMaxPerTick;
+  let openSlotsBeforeReserve = 0;
+  for (const slot of slots) {
+    const key = slotKey(slot.year, slot.month, slot.day, slot.hour);
+    if (!reservedKeys.has(key)) openSlotsBeforeReserve += 1;
+  }
 
   for (const slot of slots) {
     if (reserved.length >= maxPerTick) {
@@ -271,6 +361,11 @@ export async function runPublishSlotScheduler(deps: {
       date: `${s.year}-${String(s.month).padStart(2, "0")}-${String(s.day).padStart(2, "0")}`,
       hour: s.hour,
     })),
+    openSlotsBeforeReserve,
+    wpFutureFetched: reservedLoad.wpFutureFetched,
+    wpFutureError: reservedLoad.wpFutureError,
+    unusedApprovedConsidered: stock.length,
+    publicEligibleQueued: queue.length,
     reserved,
     publicBlocked,
     otherSkipped,

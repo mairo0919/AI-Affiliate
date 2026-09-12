@@ -41,21 +41,67 @@ async function main(): Promise<void> {
     const started = Date.now();
     try {
       const result = await pipeline.run();
+      const stockGen =
+        "skipped" in result.stockGeneration && result.stockGeneration.skipped
+          ? { skipped: true as const, reason: result.stockGeneration.skipReason }
+          : {
+              skipped: false as const,
+              generated:
+                "generated" in result.stockGeneration ? result.stockGeneration.generated : 0,
+              unusedAfter:
+                "unusedApprovedAfter" in result.stockGeneration
+                  ? result.stockGeneration.unusedApprovedAfter
+                  : null,
+              skipReason:
+                "skipReason" in result.stockGeneration ? result.stockGeneration.skipReason : null,
+            };
+      const publish =
+        "skipped" in result.publishSlots && result.publishSlots.skipped
+          ? { skipped: true as const, reason: result.publishSlots.skipReason }
+          : {
+              skipped: false as const,
+              reserved:
+                "reserved" in result.publishSlots && Array.isArray(result.publishSlots.reserved)
+                  ? result.publishSlots.reserved.length
+                  : 0,
+              openSlots:
+                "openSlotsBeforeReserve" in result.publishSlots
+                  ? result.publishSlots.openSlotsBeforeReserve
+                  : null,
+              eligible:
+                "publicEligibleQueued" in result.publishSlots
+                  ? result.publishSlots.publicEligibleQueued
+                  : null,
+              wpFutures:
+                "wpFutureFetched" in result.publishSlots
+                  ? result.publishSlots.wpFutureFetched
+                  : null,
+            };
+      const providerProbe = (result.providerProbe ?? [])
+        .map((p) => `${p.key}=${p.status}`)
+        .join(",") || "none";
       logger.info(
         `scheduler-worker tick complete schedules=${result.schedules.length} retries=${result.retries.length} analysisSkipped=${
           "skipped" in result.analysis && result.analysis.skipped
         } contentSkipped=${"skipped" in result.content && result.content.skipped} stockResearchSkipped=${
           "skipped" in result.stockResearch && result.stockResearch.skipped
-        } stockSkipped=${
-          "skipped" in result.stockGeneration && result.stockGeneration.skipped
-        } publishSlotsSkipped=${
-          "skipped" in result.publishSlots && result.publishSlots.skipped
-        } reserved=${
-          "reserved" in result.publishSlots && Array.isArray(result.publishSlots.reserved)
-            ? result.publishSlots.reserved.length
-            : 0
-        } xPublishSkipped=${"skipped" in result.xPublish && result.xPublish.skipped}`,
+        } stockSkipped=${stockGen.skipped} stockGenerated=${
+          stockGen.skipped ? 0 : stockGen.generated
+        } unusedApproved=${stockGen.skipped ? "-" : stockGen.unusedAfter} publishSlotsSkipped=${
+          publish.skipped
+        } reserved=${publish.skipped ? 0 : publish.reserved} openSlots=${
+          publish.skipped ? "-" : publish.openSlots
+        } publicEligible=${publish.skipped ? "-" : publish.eligible} wpFutures=${
+          publish.skipped ? "-" : publish.wpFutures
+        } providers=${providerProbe} xPublishSkipped=${
+          "skipped" in result.xPublish && result.xPublish.skipped
+        }`,
       );
+      if (providerProbe.includes("CREDENTIAL_MISSING")) {
+        logger.warn(
+          "research provider credentials missing — ItemList Research cannot replenish; set DMM_API_ID and DMM_AFFILIATE_ID",
+        );
+      }
     } catch (error) {
       logger.error(
         `scheduler-worker tick failed message=${error instanceof Error ? error.message : String(error)}`,
