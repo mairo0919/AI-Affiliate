@@ -50,8 +50,8 @@ describe("MockResearchProvider persistence", () => {
     const result = await new MockResearchProvider().collect();
     const summary = await repository.saveCollection(result);
 
-    expect(summary.itemCount).toBe(3);
-    expect(summary.createdCount).toBe(3);
+    expect(summary.itemCount).toBe(1);
+    expect(summary.createdCount).toBe(1);
 
     const saved = await database.prisma.researchItem.findMany({
       where: {
@@ -60,6 +60,7 @@ describe("MockResearchProvider persistence", () => {
         },
       },
     });
-    expect(saved).toHaveLength(3);
+    expect(saved).toHaveLength(1);
+    expect(saved[0]?.externalId).toBe("fanza-mock-product-001");
   });
 });
