@@ -540,7 +540,7 @@ export async function publishContentVersionToWordPress(
       existingTarget!.status === "PUBLISHED") &&
     Boolean(existingTarget!.publishedExternalId);
 
-  if (sameVersion && sameVersion.status === "PUBLISHED" && !updatingExistingDraft) {
+  if (sameVersion && (sameVersion.status === "PUBLISHED" || !updatingExistingDraft)) {
     return {
       ok: true,
       published: false,
