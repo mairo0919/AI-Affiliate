@@ -139,7 +139,7 @@ export async function ensureOfficialEnrichmentForStockItem(input: {
   rawData: unknown;
 }): Promise<OfficialEnrichmentResult> {
   const existing = await input.lifecycle.findLatestSourceDocumentByUrlContains(input.canonicalId);
-  let pe = existing ? readPageEvidenceFromDocMetadata(existing.metadata) : null;
+  const pe = existing ? readPageEvidenceFromDocMetadata(existing.metadata) : null;
   let hasDescription = Boolean(pe?.description?.text?.trim());
   let actors = [...(pe?.actors ?? [])].map((a) => String(a).trim()).filter(Boolean);
   let genres = (pe?.catalog?.genres ?? [])
