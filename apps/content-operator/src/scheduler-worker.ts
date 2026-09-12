@@ -81,15 +81,22 @@ async function main(): Promise<void> {
                   ? result.publishSlots.futureReserveBudget
                   : null,
             };
+      const stockResearchReason =
+        "skipped" in result.stockResearch && result.stockResearch.skipped
+          ? result.stockResearch.skipReason
+          : null;
+      const scheduleStatuses = result.schedules
+        .map((s) => `${s.scheduleName}:${s.status}`)
+        .join(",") || "none";
       const providerProbe = (result.providerProbe ?? [])
         .map((p) => `${p.key}=${p.status}`)
         .join(",") || "none";
       logger.info(
-        `scheduler-worker tick complete schedules=${result.schedules.length} retries=${result.retries.length} analysisSkipped=${
+        `scheduler-worker tick complete schedules=${result.schedules.length} scheduleStatuses=${scheduleStatuses} retries=${result.retries.length} analysisSkipped=${
           "skipped" in result.analysis && result.analysis.skipped
         } contentSkipped=${"skipped" in result.content && result.content.skipped} stockResearchSkipped=${
           "skipped" in result.stockResearch && result.stockResearch.skipped
-        } stockSkipped=${stockGen.skipped} stockGenerated=${
+        } stockResearchReason=${stockResearchReason ?? "-"} stockSkipped=${stockGen.skipped} stockGenerated=${
           stockGen.skipped ? 0 : stockGen.generated
         } unusedApproved=${stockGen.skipped ? "-" : stockGen.unusedAfter} publishSlotsSkipped=${
           publish.skipped
@@ -105,6 +112,13 @@ async function main(): Promise<void> {
           "skipped" in result.xPublish && result.xPublish.skipped
         }`,
       );
+      if (
+        "skipped" in result.stockResearch &&
+        result.stockResearch.skipped &&
+        result.stockResearch.skipReason === "STOCK_LOCAL_PAGE_RESEARCH_IN_SCHEDULER_FALSE"
+      ) {
+        // Expected on Railway: ItemList uses ResearchSchedule (schedules=N), not local HTML collect.
+      }
       if (providerProbe.includes("CREDENTIAL_MISSING")) {
         logger.warn(
           "research provider credentials missing — ItemList Research cannot replenish; set DMM_API_ID and DMM_AFFILIATE_ID",

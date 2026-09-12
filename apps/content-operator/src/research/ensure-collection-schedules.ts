@@ -103,12 +103,22 @@ export async function ensureResearchCollectionSchedules(input: {
         timezone,
         parameters,
         isActive: true,
-        nextRunAt,
+        // First create: run on the next due tick immediately (not wait for next cron wall clock).
+        nextRunAt: now(),
       });
       result.ensured.push(key);
-      input.logger.info(`research auto-schedule created provider=${key} cron=${cron}`);
+      input.logger.info(`research auto-schedule created provider=${key} cron=${cron} nextRun=now`);
       continue;
     }
+
+    // Never-run schedules must catch up once credentials become AVAILABLE.
+    // Otherwise nextRunAt stays on the next cron wall-clock (e.g. +hours) while Research stays empty.
+    const neverRan = existing.lastRunAt == null;
+    const nextRunAtResolved = neverRan
+      ? now()
+      : existing.nextRunAt && existing.nextRunAt.getTime() > now().getTime()
+        ? existing.nextRunAt
+        : nextRunAt;
 
     await input.schedules.updateSchedule(existing.id, {
       providerName: key,
@@ -117,13 +127,14 @@ export async function ensureResearchCollectionSchedules(input: {
       timezone,
       parameters,
       isActive: true,
-      // Keep existing nextRunAt if still in the future; otherwise refresh.
-      nextRunAt:
-        existing.nextRunAt && existing.nextRunAt.getTime() > now().getTime()
-          ? existing.nextRunAt
-          : nextRunAt,
+      nextRunAt: nextRunAtResolved,
     });
     result.ensured.push(key);
+    if (neverRan) {
+      input.logger.info(
+        `research auto-schedule catch-up provider=${key} reason=never_ran nextRun=now`,
+      );
+    }
   }
 
   return result;

@@ -84,6 +84,37 @@ describe("ensureResearchCollectionSchedules", () => {
     expect(row?.providerName).toBe("fanza");
     expect(row?.isActive).toBe(true);
     expect(row?.cronExpression).toBe("0 */6 * * *");
+    // New schedules are due immediately (catch-up), not deferred to next cron wall-clock.
+    expect(row?.nextRunAt?.toISOString()).toBe("2026-09-09T00:00:00.000Z");
+  });
+
+  it("catch-up sets nextRunAt=now when system schedule never ran", async () => {
+    await schedules.createSchedule({
+      name: systemResearchScheduleName("fanza"),
+      providerName: "fanza",
+      scheduleType: "CRON",
+      cronExpression: "0 */6 * * *",
+      timezone: "UTC",
+      parameters: { maxPages: 1, maxItems: 10, hits: 10, startOffset: 1, continueOnItemError: true },
+      isActive: true,
+      nextRunAt: new Date("2026-09-12T09:00:00.000Z"),
+      // lastRunAt null implied
+    });
+    await ensureResearchCollectionSchedules({
+      schedules,
+      logger,
+      config: {
+        ...baseConfig,
+        researchCollectionEnabled: true,
+        researchEnabledProviders: ["fanza"],
+        researchCollectionCron: "0 */6 * * *",
+        researchCollectionTimezone: "UTC",
+      },
+      now: () => new Date("2026-09-12T06:00:00.000Z"),
+    });
+    const row = await schedules.findScheduleByName(systemResearchScheduleName("fanza"));
+    expect(row?.lastRunAt).toBeNull();
+    expect(row?.nextRunAt?.toISOString()).toBe("2026-09-12T06:00:00.000Z");
   });
 
   it("pauses system schedule when collection disabled", async () => {
