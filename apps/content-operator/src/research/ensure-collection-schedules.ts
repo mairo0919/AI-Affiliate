@@ -111,13 +111,14 @@ export async function ensureResearchCollectionSchedules(input: {
       continue;
     }
 
-    // Never-run OR recent collection failure with empty Research: catch up immediately.
-    // (A failed first ItemList run advances lastRunAt but may save 0 items due to tx timeout.)
+    // Never-run schedules must catch up once credentials become AVAILABLE.
+    // Failed collections also catch up, but only while nextRunAt is still due/past
+    // (do not override a healthy future cron after recovery).
     const neverRan = existing.lastRunAt == null;
-    const failedAndEmpty =
+    const failedPendingRetry =
       existing.consecutiveFailureCount > 0 &&
-      (existing.nextRunAt == null || existing.nextRunAt.getTime() > now().getTime());
-    const needsCatchUp = neverRan || failedAndEmpty;
+      (existing.nextRunAt == null || existing.nextRunAt.getTime() <= now().getTime());
+    const needsCatchUp = neverRan || failedPendingRetry;
     const nextRunAtResolved = needsCatchUp
       ? now()
       : existing.nextRunAt && existing.nextRunAt.getTime() > now().getTime()

@@ -26,6 +26,7 @@ import {
   type ApprovedStockRow,
 } from "./approved-stock.js";
 import { computeFutureReserveBudget, loadStockRuntimeConfig } from "./stock-config.js";
+import { confirmFanzaAffiliateImageTerms } from "./confirm-fanza-image-terms.js";
 
 export type PublishSlotScheduleResult = {
   skipped: boolean;
@@ -188,6 +189,20 @@ export async function runPublishSlotScheduler(deps: {
     days: horizonDays,
     includePastToday: false,
   });
+
+  // Ensure APPROVED stock with trusted DMM images is PUBLIC-capable when terms verified.
+  if (
+    ["1", "true", "yes", "on"].includes(
+      (process.env.FANZA_AFFILIATE_IMAGE_TERMS_VERIFIED ?? "").trim().toLowerCase(),
+    )
+  ) {
+    await confirmFanzaAffiliateImageTerms({
+      prisma: deps.database.prisma,
+      iConfirmChecklist: true,
+      actor: "wp-future-scheduler",
+      contentVersionLimit: 500,
+    });
+  }
 
   const stock = await listApprovedStock(deps.database.prisma, {
     unusedOnly: true,

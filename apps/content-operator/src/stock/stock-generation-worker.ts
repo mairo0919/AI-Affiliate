@@ -37,6 +37,15 @@ import {
   isStockAttemptEligibleNow,
   readStockAttemptLedger,
 } from "./stock-attempt-ledger.js";
+import { confirmFanzaAffiliateImageTerms } from "./confirm-fanza-image-terms.js";
+
+function fanzaImageTermsVerifiedFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return ["1", "true", "yes", "on"].includes(
+    (env.FANZA_AFFILIATE_IMAGE_TERMS_VERIFIED ?? "").trim().toLowerCase(),
+  );
+}
 
 function asStoredJson(value: Record<string, unknown>): object {
   return JSON.parse(JSON.stringify(value)) as object;
@@ -447,11 +456,23 @@ export async function runStockGenerationBatch(deps: {
   }
 
   const unusedAfter = await countUnusedApprovedStock(deps.database.prisma);
+
+  // Operator env flag asserts FANZA_AFFILIATE_IMAGE_TERMS_CHECKLIST completed.
+  // Promote RC→ALLOWED on stock so PUBLIC-capable future scheduling can proceed.
+  if (fanzaImageTermsVerifiedFromEnv() && (generated > 0 || unusedAfter > 0)) {
+    await confirmFanzaAffiliateImageTerms({
+      prisma: deps.database.prisma,
+      iConfirmChecklist: true,
+      actor: "stock-generation-worker",
+      contentVersionLimit: 500,
+    });
+  }
+
   return {
     skipped: false,
     skipReason: null,
     unusedApprovedBefore: unusedBefore,
-    unusedApprovedAfter: unusedAfter,
+    unusedApprovedAfter: await countUnusedApprovedStock(deps.database.prisma),
     minStock: runtime.minApprovedStock,
     batchLimit: runtime.generationBatch,
     analysisOk,
