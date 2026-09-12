@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { imageContentKey, selectArticleImagesWithReport } from "../article-images.js";
 import {
@@ -5,6 +8,31 @@ import {
   proposeMaxOfficialImageUrl,
 } from "../fanza-image-variants.js";
 import { rewriteHtmlImageUrls } from "../../wordpress/upgrade-wp-image-resolution.js";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const GENERATION = resolve(HERE, "..");
+
+describe("proposeMaxOfficialImageUrl SSOT", () => {
+  it("is defined once in fanza-image-variants and imported once in article-images", () => {
+    const variants = readFileSync(resolve(GENERATION, "fanza-image-variants.ts"), "utf8");
+    const articleImages = readFileSync(resolve(GENERATION, "article-images.ts"), "utf8");
+
+    const defMatches = variants.match(/^export function proposeMaxOfficialImageUrl\b/gm) ?? [];
+    expect(defMatches).toHaveLength(1);
+
+    const importMatches =
+      articleImages.match(
+        /^import\s*\{[^}]*\bproposeMaxOfficialImageUrl\b[^}]*\}\s*from\s*["']\.\/fanza-image-variants\.js["']/gm,
+      ) ?? [];
+    expect(importMatches).toHaveLength(1);
+
+    // Guard against mid-file re-import / local redefinition (historical TS2300).
+    expect(articleImages).not.toMatch(
+      /export type ArticleImageCandidate[\s\S]*import\s*\{[^}]*proposeMaxOfficialImageUrl/,
+    );
+    expect(articleImages).not.toMatch(/\bfunction proposeMaxOfficialImageUrl\b/);
+  });
+});
 
 describe("imageContentKey underscore CIDs", () => {
   it("groups package ps/pl for h_1711… ids", () => {
