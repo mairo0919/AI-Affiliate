@@ -353,7 +353,7 @@ export async function repairApiArticleQualityInPlace(input: {
       });
       let finalTitle = generated.version.title;
       const sc = (generated.version.structuredContent ?? {}) as Record<string, unknown>;
-      let bodyText = plainBody(generated.version.body ?? sc.bodyHtml ?? sc.body);
+      const bodyText = plainBody(generated.version.body ?? sc.bodyHtml ?? sc.body);
 
       // If Writer title still genre-lists while synopsis exists, salvage title only (keep body).
       const titleProbe: ArticleSnapshot = {

@@ -81,7 +81,7 @@ export function isBareGenreToken(value: string): boolean {
   if (!k) return false;
   if (BARE_GENRE_TOKENS.has(k)) return true;
   // compound genre lists like 寝取り・寝取られ・NTR
-  const parts = value.split(/[・\/／、,|｜]/u).map((p) => p.trim()).filter(Boolean);
+  const parts = value.split(/[・/／、,|｜]/u).map((p) => p.trim()).filter(Boolean);
   return parts.length >= 2 && parts.every((p) => BARE_GENRE_TOKENS.has(normalizeGenreKey(p)));
 }
 
