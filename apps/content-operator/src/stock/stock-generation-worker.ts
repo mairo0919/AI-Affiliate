@@ -44,6 +44,11 @@ import {
   extractItemListCatalogFacts,
   shouldAvoidSingularPerformerFraming,
 } from "./ensure-official-enrichment.js";
+import {
+  extractSynopsisTheme,
+  isMechanicalTemplateTitle,
+  isPerformerGenreListTitle,
+} from "./repair-quality-guard.js";
 
 function plainTextLength(htmlOrText: unknown): number {
   return String(htmlOrText ?? "")
@@ -113,6 +118,22 @@ export function evaluateStockArticleQualityGate(input: {
     )
   ) {
     return { ok: false, reason: "GENERIC_FORM_TITLE" };
+  }
+
+  if (isPerformerGenreListTitle(title, actors)) {
+    return { ok: false, reason: "PERFORMER_GENRE_LIST_TITLE" };
+  }
+
+  const synopsis = extractSynopsisTheme(input.productTitle, actors);
+  if (synopsis && isMechanicalTemplateTitle(title)) {
+    return { ok: false, reason: "MECHANICAL_TEMPLATE_OVER_SYNOPSIS" };
+  }
+  if (
+    synopsis &&
+    !title.includes(synopsis.slice(0, Math.min(6, synopsis.length))) &&
+    isPerformerGenreListTitle(title, actors)
+  ) {
+    return { ok: false, reason: "SYNOPSIS_IGNORED_FOR_GENRE_TITLE" };
   }
 
   if (body > 0 && body < 420 && (castShape === "BEST_COMPILATION" || actors.length >= 2 || catalog.genres.length >= 3)) {

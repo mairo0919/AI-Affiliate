@@ -7,6 +7,13 @@ import {
 } from "./ensure-official-enrichment.js";
 import { evaluateStockArticleQualityGate } from "./stock-generation-worker.js";
 import { buildDeterministicTitle, selectTitleAxis } from "../wordpress/publication-metadata.js";
+import {
+  buildEvidenceEditorialTitle,
+  decideRepairApply,
+  detectRepairScope,
+  extractSynopsisTheme,
+  isPerformerGenreListTitle,
+} from "./repair-quality-guard.js";
 
 describe("extractFanzaContentIdFromUrl", () => {
   it("reads id from affiliate lurl wrappers", () => {
@@ -70,7 +77,10 @@ describe("stock article quality gate", () => {
       rawData: multiRaw,
       writerTitle: "アリスJAPANが贈る宍戸里帆出演のフェラベスト5時間集",
       structuredContent: {
-        bodyHtml: "<p>魅力を存分に味わえる濃厚な内容です。じっくり楽しみたい方におすすめです。ボリューム感のある刺激的な展開が続きます。</p>".repeat(3),
+        bodyHtml:
+          "<p>魅力を存分に味わえる濃厚な内容です。じっくり楽しみたい方におすすめです。ボリューム感のある刺激的な展開が続きます。</p>".repeat(
+            3,
+          ),
       },
     });
     expect(gate.ok).toBe(false);
@@ -87,17 +97,45 @@ describe("stock article quality gate", () => {
     expect(gate.ok).toBe(false);
     if (!gate.ok) expect(gate.reason).toMatch(/THIN_ARTICLE/);
   });
+
   it("fails bare generic form titles like ベストと総集編", () => {
     const gate = evaluateStockArticleQualityGate({
       productTitle: "フェラBEST5時間",
       rawData: multiRaw,
       writerTitle: "ベストと総集編",
       structuredContent: {
-        bodyHtml: "<p>収録時間と出演構成を整理した紹介です。公式カタログ上のジャンルとメーカーを根拠にします。</p>".repeat(4),
+        bodyHtml:
+          "<p>収録時間と出演構成を整理した紹介です。公式カタログ上のジャンルとメーカーを根拠にします。</p>".repeat(
+            4,
+          ),
       },
     });
     expect(gate.ok).toBe(false);
     if (!gate.ok) expect(gate.reason).toMatch(/GENERIC_FORM_TITLE/);
+  });
+
+  it("fails performer + genre-list titles when synopsis exists", () => {
+    const raw = {
+      title:
+        "夫婦喧嘩で家出してきた元カノと3年ぶりに再会 人妻になってさらにエロくなったケツ肉で誘惑されあの頃と同じ安アパートで朝から晩までひたすら生中出しハメし続けた 幸村泉希",
+      iteminfo: {
+        actress: [{ name: "幸村泉希" }],
+        genre: [{ name: "寝取り・寝取られ・NTR" }, { name: "人妻" }],
+      },
+    };
+    const gate = evaluateStockArticleQualityGate({
+      productTitle: raw.title,
+      rawData: raw,
+      writerTitle: "幸村泉希の寝取り・寝取られ・NTR",
+      structuredContent: {
+        bodyHtml:
+          "<p>元カノとの再会を軸にした作品紹介です。公式タイトルにある家出と再会の流れを根拠にします。</p>".repeat(
+            3,
+          ),
+      },
+    });
+    expect(gate.ok).toBe(false);
+    if (!gate.ok) expect(gate.reason).toMatch(/PERFORMER_GENRE_LIST_TITLE|SYNOPSIS/);
   });
 });
 
@@ -119,6 +157,26 @@ describe("deterministic SEO title multi-performer", () => {
     expect(title).not.toMatch(/宍戸里帆出演/);
     expect(title).not.toMatch(/^注目は.+｜宍戸里帆/);
     expect(title).not.toMatch(/^ベストと総集編$/);
+  });
+
+  it("prefers synopsis theme over genre for single-cast story titles", () => {
+    const official =
+      "夫婦喧嘩で家出してきた元カノと3年ぶりに再会 人妻になってさらにエロくなったケツ肉で誘惑されあの頃と同じ安アパートで朝から晩までひたすら生中出しハメし続けた 幸村泉希";
+    const evidence = {
+      officialTitle: official,
+      writerTitle: "幸村泉希の寝取り・寝取られ・NTR",
+      performers: ["幸村泉希"],
+      genres: ["寝取り・寝取られ・NTR", "人妻"],
+      makers: ["アリスJAPAN"],
+      seriesNames: [],
+      sectionHeadings: [],
+      productCanonicalId: "dvaj00761",
+    };
+    const axis = selectTitleAxis(evidence);
+    const title = buildDeterministicTitle(evidence, axis);
+    expect(isPerformerGenreListTitle(title, ["幸村泉希"])).toBe(false);
+    expect(title).not.toMatch(/寝取り・寝取られ・NTR/);
+    expect(title).toMatch(/再会|元カノ|家出/);
   });
 });
 
@@ -149,5 +207,93 @@ describe("itemlist description synthesis", () => {
     expect(desc).toContain("宍戸里帆");
     expect(desc).toContain("依本しおり");
     expect(desc).toMatch(/約300分/);
+  });
+});
+
+describe("repair quality guard", () => {
+  const official =
+    "夫婦喧嘩で家出してきた元カノと3年ぶりに再会 人妻になってさらにエロくなったケツ肉で誘惑されあの頃と同じ安アパートで朝から晩までひたすら生中出しハメし続けた 幸村泉希";
+  const raw = {
+    title: official,
+    iteminfo: {
+      actress: [{ name: "幸村泉希" }],
+      genre: [{ name: "寝取り・寝取られ・NTR" }, { name: "人妻" }],
+      maker: [{ name: "アリスJAPAN" }],
+    },
+  };
+
+  it("extracts synopsis theme instead of genre list", () => {
+    const theme = extractSynopsisTheme(official, ["幸村泉希"]);
+    expect(theme).toBeTruthy();
+    expect(theme!).toMatch(/再会|元カノ|家出/);
+    expect(theme!).not.toMatch(/NTR/);
+  });
+
+  it("detects title-only scope for genre-list titles with healthy body", () => {
+    const scope = detectRepairScope({
+      title: "幸村泉希の寝取り・寝取られ・NTR",
+      bodyText: "元カノとの再会を軸にした紹介。".repeat(80),
+      productTitle: official,
+      rawData: raw,
+    });
+    expect(scope).toBe("TITLE_ONLY");
+  });
+
+  it("does not apply multi-performer fix that regresses to generic title", () => {
+    const before = {
+      title: "おしゃぶり美女たちのフェラ顔が続く5時間BEST",
+      bodyText: "複数出演のフェラベストを紹介する本文。".repeat(60),
+      productTitle: "おしゃぶり大好き美女たちのフェラ顔がスケベすぎる！5時間BEST",
+      rawData: {
+        title: "おしゃぶり大好き美女たちのフェラ顔がスケベすぎる！5時間BEST",
+        iteminfo: {
+          actress: [{ name: "宍戸里帆" }, { name: "依本しおり" }, { name: "川上奈々美" }],
+          genre: [{ name: "ベスト・総集編" }],
+          maker: [{ name: "アリスJAPAN" }],
+        },
+      },
+    };
+    const after = {
+      ...before,
+      title: "ベストと総集編",
+    };
+    const decision = decideRepairApply({ before, after, scope: "TITLE_ONLY" });
+    expect(decision.apply).toBe(false);
+  });
+
+  it("applies synopsis title salvage over genre-list without touching body score", () => {
+    const body = "元カノとの再会と家出の経緯を軸にした自然な紹介文。".repeat(50);
+    const before = {
+      title: "幸村泉希の寝取り・寝取られ・NTR",
+      bodyText: body,
+      productTitle: official,
+      rawData: raw,
+    };
+    const editorial = buildEvidenceEditorialTitle({
+      officialTitle: official,
+      performers: ["幸村泉希"],
+      genres: ["寝取り・寝取られ・NTR", "人妻"],
+      makers: ["アリスJAPAN"],
+      series: [],
+    });
+    expect(editorial).toMatch(/再会|元カノ|家出/);
+    expect(isPerformerGenreListTitle(editorial, ["幸村泉希"])).toBe(false);
+    const decision = decideRepairApply({
+      before,
+      after: { ...before, title: editorial },
+      scope: "TITLE_ONLY",
+    });
+    expect(decision.apply).toBe(true);
+  });
+
+  it("scopes NONE when article already healthy", () => {
+    const scope = detectRepairScope({
+      title: "元カノと3年ぶりの再会｜幸村泉希",
+      bodyText:
+        "公式タイトルにある再会と家出の設定を軸に、作品の流れを自然な文章で紹介する。".repeat(40),
+      productTitle: official,
+      rawData: raw,
+    });
+    expect(scope).toBe("NONE");
   });
 });

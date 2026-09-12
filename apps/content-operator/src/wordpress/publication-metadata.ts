@@ -12,6 +12,10 @@ import {
   type DerivedWordPressTaxonomy,
 } from "./evidence-taxonomy.js";
 import { truncateMetaDescription } from "./wordpress-seo-attach.js";
+import {
+  extractSynopsisTheme,
+  isBareGenreToken,
+} from "../stock/repair-quality-guard.js";
 
 export type TitleAxis =
   | "feature"
@@ -141,6 +145,8 @@ export function selectTitleAxis(evidence: PublicationMetadataEvidence): TitleAxi
     if (featureHint) return "feature";
     return "work_type";
   }
+  // Synopsis-specific story beats beat bare genre axes.
+  if (extractSynopsisTheme(official, performers)) return "feature";
   if (performers.length === 1 && featureHint) return "feature";
   if (performers.length === 1 && genres.length > 0) return "highlight";
   if (performers.length >= 1 && /向け|初心者|ファン|好き/i.test(blob)) return "audience";
@@ -169,13 +175,20 @@ function primaryPerformer(evidence: PublicationMetadataEvidence): string | null 
 }
 
 function featurePhrase(evidence: PublicationMetadataEvidence): string | null {
+  const performers = evidence.performers ?? [];
+  const synopsis = extractSynopsisTheme(evidence.officialTitle ?? "", performers);
+  if (synopsis) return synopsis;
   const headings = evidence.sectionHeadings ?? [];
   for (const h of headings) {
     const t = h.replace(/\s+/g, " ").trim();
-    if (t.length >= 4 && t.length <= 24 && !/まとめ|CTA|リンク|商品/i.test(t)) return t;
+    if (t.length >= 4 && t.length <= 24 && !/まとめ|CTA|リンク|商品/i.test(t) && !isBareGenreToken(t)) {
+      return t;
+    }
   }
+  // Do not center titles on bare genre tags when a richer official title exists.
   const genres = evidence.genres ?? [];
-  if (genres[0] && genres[0].length <= 20) return genres[0];
+  const nonGenre = genres.find((g) => g && g.length <= 20 && !isBareGenreToken(g));
+  if (nonGenre) return nonGenre;
   return null;
 }
 
@@ -245,19 +258,24 @@ export function buildDeterministicTitle(
   let title = "";
   switch (axis) {
     case "feature":
-      if (performer && feature) {
-        title = `${feature}が伝わる${performer}の一本`;
-      } else if (feature) {
-        title = `${feature}に注目したい一作`;
+      if (feature && !isBareGenreToken(feature)) {
+        // Synopsis/theme first — avoid 「ジャンルが伝わる出演者」機械文.
+        if (feature.length >= 10) {
+          title = performer && feature.length <= 22 ? `${feature}｜${performer}` : feature;
+        } else if (performer && feature) {
+          title = `${feature}が伝わる${performer}の一本`;
+        } else {
+          title = `${feature}に注目したい一作`;
+        }
       } else if (performer) {
         title = `${performer}の魅力が分かる一本`;
       }
       break;
     case "performer":
-      if (performer && workType) {
+      if (performer && workType && !isBareGenreToken(workType)) {
         title = `${performer}で見る${workType}`;
-      } else if (performer && feature) {
-        title = `${performer}｜${feature}の見どころ`;
+      } else if (performer && feature && !isBareGenreToken(feature)) {
+        title = `${performer}｜${feature}`;
       } else if (performer) {
         title = `${performer}の作品ガイド`;
       }
@@ -277,19 +295,18 @@ export function buildDeterministicTitle(
       }
       break;
     case "highlight":
-      if (feature && performer) {
-        title = `注目は${feature}｜${performer}`;
-      } else if (feature) {
-        title = `注目ポイントは${feature}`;
+      // Prefer synopsis over 「注目は{genre}｜{performer}」.
+      if (feature && !isBareGenreToken(feature)) {
+        title = performer && feature.length <= 22 ? `${feature}｜${performer}` : feature;
       } else if (performer) {
         title = `${performer}の見どころを整理`;
       }
       break;
     case "series_maker":
-      if (series && performer) {
-        title = `${series}から｜${performer}の一作`;
-      } else if (series && workType) {
+      if (series && workType) {
         title = `${series}の${workType}`;
+      } else if (series && performer) {
+        title = `${series}から｜${performer}の一作`;
       } else if (series) {
         title = `${series}の作品ガイド`;
       }
