@@ -130,10 +130,14 @@ export async function ensureResearchCollectionSchedules(input: {
       (existing.nextRunAt == null || existing.nextRunAt.getTime() <= now().getTime());
     const needsCatchUp = neverRan || failedPendingRetry;
 
+    // Preserve an already-due nextRunAt (soft-fill / overdue). Never push a past due
+    // timestamp forward to the next cron wall-clock — that skips the queued page.
     let nextRunAtResolved = needsCatchUp
       ? now()
-      : existing.nextRunAt && existing.nextRunAt.getTime() > now().getTime()
-        ? existing.nextRunAt
+      : existing.nextRunAt
+        ? existing.nextRunAt.getTime() <= now().getTime()
+          ? now()
+          : existing.nextRunAt
         : cronNextRunAt;
 
     if (!needsCatchUp && key === "fanza" && input.countFanzaResearchItems) {

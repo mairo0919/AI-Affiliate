@@ -92,4 +92,18 @@ describe("schedule-cursor", () => {
       }),
     ).toBe(false);
   });
+
+  it("does not soft-fill when nextRunAt is already due", () => {
+    const now = new Date("2026-09-12T08:05:00.000Z");
+    expect(
+      shouldSoftFillNow({
+        now,
+        lastRunAt: new Date("2026-09-12T07:49:00.000Z"),
+        nextRunAt: new Date("2026-09-12T08:04:00.000Z"),
+        researchTotal: 101,
+        softTarget: 500,
+        softFillIntervalMs: 15 * 60_000,
+      }),
+    ).toBe(false);
+  });
 });
