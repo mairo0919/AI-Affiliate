@@ -171,6 +171,7 @@ export async function repairApiArticleQualityInPlace(input: {
         strategyId: strategy.id,
         productTitle: item.title,
         ctaUrl,
+        productCanonicalId: cid,
         claimIds,
       });
       const sc = (generated.version.structuredContent ?? {}) as Record<string, unknown>;

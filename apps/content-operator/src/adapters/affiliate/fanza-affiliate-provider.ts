@@ -39,6 +39,34 @@ export function buildFanzaCanonicalProductUrl(contentId: string): string {
   return `https://video.dmm.co.jp/av/content/?id=${encodeURIComponent(cid)}`;
 }
 
+/**
+ * Extract FANZA content_id from canonical, detail, or affiliate wrapper URLs.
+ * Affiliate links encode the product URL inside `lurl` — plain `id=` regex misses those.
+ */
+export function extractFanzaContentIdFromUrl(url: string | null | undefined): string | null {
+  if (!url?.trim()) return null;
+  const raw = url.trim();
+  const fromQuery =
+    raw.match(/[?&]id=([a-zA-Z0-9_-]+)/i)?.[1] ||
+    raw.match(/\/(?:cid|content_id)=([a-zA-Z0-9_-]+)/i)?.[1] ||
+    raw.match(/[=/]cid=([a-zA-Z0-9_-]+)/i)?.[1];
+  if (fromQuery) return fromQuery.toLowerCase();
+  try {
+    const u = new URL(raw);
+    for (const key of ["id", "cid", "content_id"]) {
+      const v = u.searchParams.get(key);
+      if (v?.trim()) return v.trim().toLowerCase();
+    }
+    const lurl = u.searchParams.get("lurl");
+    if (lurl) {
+      return extractFanzaContentIdFromUrl(decodeURIComponent(lurl));
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
 export class FanzaAffiliateProvider implements AffiliateProvider {
   readonly providerKey = FANZA_PROVIDER_KEY;
   readonly capabilities = FANZA_CAPABILITIES;

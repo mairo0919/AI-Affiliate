@@ -491,6 +491,7 @@ export async function runStockGenerationBatch(deps: {
         strategyId: boot.strategyId,
         productTitle: item.title,
         ctaUrl,
+        productCanonicalId: selected.canonicalId,
         claimIds: boot.claimIds,
       });
       generated += 1;

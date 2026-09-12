@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { extractFanzaContentIdFromUrl } from "../adapters/affiliate/fanza-affiliate-provider.js";
 import {
   classifyCastShape,
   extractItemListCatalogFacts,
@@ -6,6 +7,17 @@ import {
 } from "./ensure-official-enrichment.js";
 import { evaluateStockArticleQualityGate } from "./stock-generation-worker.js";
 import { buildDeterministicTitle, selectTitleAxis } from "../wordpress/publication-metadata.js";
+
+describe("extractFanzaContentIdFromUrl", () => {
+  it("reads id from affiliate lurl wrappers", () => {
+    const aff =
+      "https://al.fanza.co.jp/?lurl=https%3A%2F%2Fvideo.dmm.co.jp%2Fav%2Fcontent%2F%3Fid%3Ddvaj00760&af_id=example-990&ch=api";
+    expect(extractFanzaContentIdFromUrl(aff)).toBe("dvaj00760");
+    expect(extractFanzaContentIdFromUrl("https://video.dmm.co.jp/av/content/?id=dvaj00761")).toBe(
+      "dvaj00761",
+    );
+  });
+});
 
 describe("ensure-official-enrichment cast shaping", () => {
   it("extracts multi actress list from ItemList rawData", () => {

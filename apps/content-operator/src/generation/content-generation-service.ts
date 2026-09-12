@@ -145,6 +145,8 @@ export interface GenerateBloggerInput {
   contentId?: string;
   productTitle: string;
   ctaUrl?: string | null;
+  /** Explicit product CID — preferred over parsing ctaUrl (affiliate wrappers hide id=). */
+  productCanonicalId?: string | null;
   articleFormat?: string;
   productLinkIds?: string[];
   claimIds?: string[];
@@ -646,7 +648,10 @@ export class ContentGenerationService {
     // Reference Blueprint → Writing Skeleton + Evidence Pack (OPTION B Generator SSOT)
     const prisma = (this.repo as unknown as { prisma: ConstructorParameters<typeof ArticlePatternRepository>[0] })
       .prisma;
-    const pageEvidenceMeta = await this.loadOfficialPageEvidenceMeta(input.ctaUrl);
+    const pageEvidenceMeta = await this.loadOfficialPageEvidenceMeta(
+      input.ctaUrl,
+      input.productCanonicalId,
+    );
     const referenceGuided = await buildReferenceGuidedLayer({
       prisma,
       productTitle: input.productTitle,
@@ -2635,10 +2640,20 @@ export class ContentGenerationService {
   /** Load official pageEvidence from SourceDocument when product CTA URL is known. */
   private async loadOfficialPageEvidenceMeta(
     ctaUrl: string | null | undefined,
+    productCanonicalId?: string | null,
   ): Promise<import("../article-pattern/official-page-evidence-atoms.js").PageEvidenceMetaShape | null> {
-    if (!ctaUrl?.trim()) return null;
-    const m = ctaUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/i);
-    const frag = m?.[1] ?? ctaUrl.trim();
+    const { extractFanzaContentIdFromUrl } = await import(
+      "../adapters/affiliate/fanza-affiliate-provider.js"
+    );
+    const frag =
+      productCanonicalId?.trim() ||
+      extractFanzaContentIdFromUrl(ctaUrl) ||
+      (() => {
+        if (!ctaUrl?.trim()) return null;
+        const m = ctaUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/i);
+        return m?.[1] ?? null;
+      })();
+    if (!frag) return null;
     const doc = await this.repo.findLatestSourceDocumentByUrlContains(frag);
     if (!doc?.metadata || typeof doc.metadata !== "object" || Array.isArray(doc.metadata)) {
       return null;
