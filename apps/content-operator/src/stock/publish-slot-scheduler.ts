@@ -25,7 +25,7 @@ import {
   extractProviderHint,
   type ApprovedStockRow,
 } from "./approved-stock.js";
-import { loadStockRuntimeConfig } from "./stock-config.js";
+import { computeFutureReserveBudget, loadStockRuntimeConfig } from "./stock-config.js";
 
 export type PublishSlotScheduleResult = {
   skipped: boolean;
@@ -34,6 +34,10 @@ export type PublishSlotScheduleResult = {
   openSlotsBeforeReserve: number;
   wpFutureFetched: number;
   wpFutureError: string | null;
+  futureInventoryCount: number;
+  futureTargetPosts: number;
+  futureMinPosts: number;
+  futureReserveBudget: number;
   unusedApprovedConsidered: number;
   publicEligibleQueued: number;
   reserved: Array<{
@@ -150,36 +154,30 @@ export async function runPublishSlotScheduler(deps: {
   const runtime = loadStockRuntimeConfig();
   const now = deps.now ?? new Date();
 
+  const emptySkip = (skipReason: string): PublishSlotScheduleResult => ({
+    skipped: true,
+    skipReason,
+    slotsConsidered: [],
+    openSlotsBeforeReserve: 0,
+    wpFutureFetched: 0,
+    wpFutureError: null,
+    futureInventoryCount: 0,
+    futureTargetPosts: runtime.futureTargetPosts,
+    futureMinPosts: runtime.futureMinPosts,
+    futureReserveBudget: 0,
+    unusedApprovedConsidered: 0,
+    publicEligibleQueued: 0,
+    reserved: [],
+    publicBlocked: [],
+    otherSkipped: [],
+  });
+
   if (!runtime.stockPublishSchedulerEnabled) {
-    return {
-      skipped: true,
-      skipReason: "STOCK_PUBLISH_SCHEDULER_ENABLED_FALSE",
-      slotsConsidered: [],
-      openSlotsBeforeReserve: 0,
-      wpFutureFetched: 0,
-      wpFutureError: null,
-      unusedApprovedConsidered: 0,
-      publicEligibleQueued: 0,
-      reserved: [],
-      publicBlocked: [],
-      otherSkipped: [],
-    };
+    return emptySkip("STOCK_PUBLISH_SCHEDULER_ENABLED_FALSE");
   }
 
   if (!deps.config.wordpressAllowFutureSchedule && !deps.config.wordpressAllowDirectPublish) {
-    return {
-      skipped: true,
-      skipReason: "FUTURE_SCHEDULE_DISABLED",
-      slotsConsidered: [],
-      openSlotsBeforeReserve: 0,
-      wpFutureFetched: 0,
-      wpFutureError: null,
-      unusedApprovedConsidered: 0,
-      publicEligibleQueued: 0,
-      reserved: [],
-      publicBlocked: [],
-      otherSkipped: [],
-    };
+    return emptySkip("FUTURE_SCHEDULE_DISABLED");
   }
 
   const horizonDays = deps.days ?? runtime.scheduleHorizonDays;
@@ -273,7 +271,58 @@ export async function runPublishSlotScheduler(deps: {
     config: deps.config,
   });
   const reservedKeys = reservedLoad.keys;
-  const maxPerTick = runtime.scheduleMaxPerTick;
+  if (reservedLoad.wpFutureError) {
+    return {
+      skipped: true,
+      skipReason: `WP_FUTURE_COUNT_UNAVAILABLE:${reservedLoad.wpFutureError}`,
+      slotsConsidered: slots.map((s) => ({
+        date: `${s.year}-${String(s.month).padStart(2, "0")}-${String(s.day).padStart(2, "0")}`,
+        hour: s.hour,
+      })),
+      openSlotsBeforeReserve: 0,
+      wpFutureFetched: reservedLoad.wpFutureFetched,
+      wpFutureError: reservedLoad.wpFutureError,
+      futureInventoryCount: reservedLoad.wpFutureFetched,
+      futureTargetPosts: runtime.futureTargetPosts,
+      futureMinPosts: runtime.futureMinPosts,
+      futureReserveBudget: 0,
+      unusedApprovedConsidered: stock.length,
+      publicEligibleQueued: queue.length,
+      reserved: [],
+      publicBlocked,
+      otherSkipped: [],
+    };
+  }
+  const futureInventoryCount = reservedLoad.wpFutureFetched;
+  const inventoryBudget = computeFutureReserveBudget({
+    currentFutureCount: futureInventoryCount,
+    futureMinPosts: runtime.futureMinPosts,
+    futureTargetPosts: runtime.futureTargetPosts,
+    scheduleMaxPerTick: runtime.scheduleMaxPerTick,
+  });
+  if (!inventoryBudget.allow) {
+    return {
+      skipped: true,
+      skipReason: inventoryBudget.reason ?? "FUTURE_AT_OR_ABOVE_TARGET",
+      slotsConsidered: slots.map((s) => ({
+        date: `${s.year}-${String(s.month).padStart(2, "0")}-${String(s.day).padStart(2, "0")}`,
+        hour: s.hour,
+      })),
+      openSlotsBeforeReserve: 0,
+      wpFutureFetched: reservedLoad.wpFutureFetched,
+      wpFutureError: reservedLoad.wpFutureError,
+      futureInventoryCount,
+      futureTargetPosts: runtime.futureTargetPosts,
+      futureMinPosts: runtime.futureMinPosts,
+      futureReserveBudget: 0,
+      unusedApprovedConsidered: stock.length,
+      publicEligibleQueued: queue.length,
+      reserved: [],
+      publicBlocked,
+      otherSkipped: [],
+    };
+  }
+  const maxPerTick = inventoryBudget.budget;
   let openSlotsBeforeReserve = 0;
   for (const slot of slots) {
     const key = slotKey(slot.year, slot.month, slot.day, slot.hour);
@@ -364,6 +413,10 @@ export async function runPublishSlotScheduler(deps: {
     openSlotsBeforeReserve,
     wpFutureFetched: reservedLoad.wpFutureFetched,
     wpFutureError: reservedLoad.wpFutureError,
+    futureInventoryCount,
+    futureTargetPosts: runtime.futureTargetPosts,
+    futureMinPosts: runtime.futureMinPosts,
+    futureReserveBudget: maxPerTick,
     unusedApprovedConsidered: stock.length,
     publicEligibleQueued: queue.length,
     reserved,

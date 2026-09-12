@@ -76,6 +76,10 @@ async function main(): Promise<void> {
                 "wpFutureFetched" in result.publishSlots
                   ? result.publishSlots.wpFutureFetched
                   : null,
+              futureReserveBudget:
+                "futureReserveBudget" in result.publishSlots
+                  ? result.publishSlots.futureReserveBudget
+                  : null,
             };
       const providerProbe = (result.providerProbe ?? [])
         .map((p) => `${p.key}=${p.status}`)
@@ -93,6 +97,10 @@ async function main(): Promise<void> {
           publish.skipped ? "-" : publish.openSlots
         } publicEligible=${publish.skipped ? "-" : publish.eligible} wpFutures=${
           publish.skipped ? "-" : publish.wpFutures
+        } futureBudget=${
+          !publish.skipped && "futureReserveBudget" in result.publishSlots
+            ? result.publishSlots.futureReserveBudget
+            : "-"
         } providers=${providerProbe} xPublishSkipped=${
           "skipped" in result.xPublish && result.xPublish.skipped
         }`,

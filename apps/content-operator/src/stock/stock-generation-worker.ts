@@ -31,6 +31,16 @@ import {
   loadArticledProductKeys,
 } from "./approved-stock.js";
 import { loadStockRuntimeConfig } from "./stock-config.js";
+import {
+  buildRawDataAfterStockFailure,
+  buildRawDataAfterStockSuccess,
+  isStockAttemptEligibleNow,
+  readStockAttemptLedger,
+} from "./stock-attempt-ledger.js";
+
+function asStoredJson(value: Record<string, unknown>): object {
+  return JSON.parse(JSON.stringify(value)) as object;
+}
 
 /** Count ContentVersions stamped with stockRoute on a Tokyo calendar day. */
 async function countStockGenerationsOnTokyoDay(
@@ -229,7 +239,9 @@ export async function runStockGenerationBatch(deps: {
     releaseAge: daily.releaseAge,
     now,
   });
-  const articled = await loadArticledProductKeys(deps.database.prisma);
+  const articled = await loadArticledProductKeys(deps.database.prisma, {
+    config: deps.config,
+  });
   let excludedAsDuplicate = 0;
   const filteredPool = pool.filter((c) => {
     const key = normalizeProductKey(c.canonicalId);
@@ -238,6 +250,24 @@ export async function runStockGenerationBatch(deps: {
       return false;
     }
     return true;
+  });
+
+  // Load ResearchItem attempt ledgers — never delete; only defer retries.
+  const researchIds = [...new Set(filteredPool.map((c) => c.researchItemId).filter(Boolean))];
+  const researchRows =
+    researchIds.length > 0
+      ? await deps.database.prisma.researchItem.findMany({
+          where: { id: { in: researchIds } },
+          select: { id: true, rawData: true },
+        })
+      : [];
+  const ledgerByResearchId = new Map(
+    researchRows.map((r) => [r.id, readStockAttemptLedger(r.rawData)] as const),
+  );
+  const retryEligiblePool = filteredPool.filter((c) => {
+    const ledger = ledgerByResearchId.get(c.researchItemId);
+    if (!ledger) return true;
+    return isStockAttemptEligibleNow(ledger, now);
   });
 
   const channelHistory = await loadChannelPublicationHistory(deps.database.prisma);
@@ -267,7 +297,7 @@ export async function runStockGenerationBatch(deps: {
     let produced = false;
     // Try several candidates per batch slot so DEFER does not burn the whole batch.
     for (let attempt = 0; attempt < 8 && !produced; attempt++) {
-    const remaining = filteredPool.filter((c) => {
+    const remaining = retryEligiblePool.filter((c) => {
       const key = normalizeProductKey(c.canonicalId);
       return !key || !usedThisBatch.has(key);
     });
@@ -352,6 +382,14 @@ export async function runStockGenerationBatch(deps: {
         });
       }
 
+      // ResearchItem retained — only stamp attempt ledger as COMPLETED.
+      const success = buildRawDataAfterStockSuccess({ rawData: item.rawData, now });
+      await deps.database.prisma.researchItem.update({
+        where: { id: item.id },
+        data: { rawData: asStoredJson(success.rawData) },
+      });
+      ledgerByResearchId.set(item.id, success.ledger);
+
       try {
         await contentReview.decide({
           contentVersionId: generatedArticle.version.id,
@@ -363,19 +401,47 @@ export async function runStockGenerationBatch(deps: {
         reviewPassed += 1;
         approvedVersionIds.push(generatedArticle.version.id);
       } catch (reviewErr) {
-        held.push({
-          canonicalId: selected.canonicalId,
-          reason:
-            reviewErr instanceof Error
-              ? `AUTO_REVIEW_FAILED:${reviewErr.message.slice(0, 120)}`
-              : "AUTO_REVIEW_FAILED",
+        const reason =
+          reviewErr instanceof Error
+            ? `AUTO_REVIEW_FAILED:${reviewErr.message.slice(0, 120)}`
+            : "AUTO_REVIEW_FAILED";
+        held.push({ canonicalId: selected.canonicalId, reason });
+        const failed = buildRawDataAfterStockFailure({
+          rawData: success.rawData,
+          reason,
+          now,
+          maxAttempts: runtime.stockMaxAttemptsBeforeDefer,
         });
+        await deps.database.prisma.researchItem.update({
+          where: { id: item.id },
+          data: { rawData: asStoredJson(failed.rawData) },
+        });
+        ledgerByResearchId.set(item.id, failed.ledger);
       }
     } catch (e) {
-      held.push({
-        canonicalId: selected.canonicalId,
-        reason: e instanceof Error ? e.message.slice(0, 160) : String(e),
-      });
+      const reason = e instanceof Error ? e.message.slice(0, 160) : String(e);
+      held.push({ canonicalId: selected.canonicalId, reason });
+      try {
+        const item = await deps.database.prisma.researchItem.findUnique({
+          where: { id: selected.researchItemId },
+          select: { id: true, rawData: true },
+        });
+        if (item) {
+          const failed = buildRawDataAfterStockFailure({
+            rawData: item.rawData,
+            reason,
+            now,
+            maxAttempts: runtime.stockMaxAttemptsBeforeDefer,
+          });
+          await deps.database.prisma.researchItem.update({
+            where: { id: item.id },
+            data: { rawData: asStoredJson(failed.rawData) },
+          });
+          ledgerByResearchId.set(item.id, failed.ledger);
+        }
+      } catch {
+        // Ledger update must never cause ResearchItem deletion or abort the batch.
+      }
     }
     }
   }

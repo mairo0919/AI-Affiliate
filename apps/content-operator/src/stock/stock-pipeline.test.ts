@@ -9,17 +9,27 @@ import { normalizeProductKey } from "../daily-ops/blog-product-exclusion.js";
 import { isLikelyFanzaContentId, extractContentIdsFromHtml } from "./local-page-collector.js";
 
 describe("stock config + publish slots", () => {
-  it("defaults continuous gen + 90d horizon (no hard 9/101 caps)", () => {
+  it("defaults continuous gen + 90d horizon with future inventory band", () => {
     const cfg = loadStockRuntimeConfig({});
     expect(cfg.minApprovedStock).toBe(0);
     expect(cfg.generationBatch).toBe(3);
     expect(cfg.maxGenerationsPerDay).toBe(48);
     expect(cfg.scheduleHorizonDays).toBe(90);
-    expect(cfg.scheduleMaxPerTick).toBe(15);
+    expect(cfg.scheduleMaxPerTick).toBe(3);
+    expect(cfg.futureTargetPosts).toBe(45);
+    expect(cfg.futureMinPosts).toBe(30);
     expect(cfg.researchSoftTarget).toBe(500);
     expect(cfg.localPageResearchInScheduler).toBe(false);
     expect(cfg.publishSlotHoursJst).toEqual([12, 21, 23]);
     expect(cfg.protectedWpPostIds).toEqual([43, 46]);
+  });
+
+  it("clamps scheduleMaxPerTick to generationBatch even if env is higher", () => {
+    const cfg = loadStockRuntimeConfig({
+      WORDPRESS_SCHEDULE_MAX_PER_TICK: "15",
+      STOCK_GENERATION_BATCH: "3",
+    });
+    expect(cfg.scheduleMaxPerTick).toBe(3);
   });
 
   it("lists slots across 90-day horizon", () => {

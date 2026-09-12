@@ -76,7 +76,10 @@ model ResearchMetric {
 model ResearchTag {
   id        String   @id @default(cuid())
   name      String
+  /// actress | genre | maker | series | ...
   type      String
+  /// Future DMM SSOT: optional official ID (actress/series). Name/ruby remain attributes.
+  /// Not required for product IDs — those use ResearchItem.externalId.
   createdAt DateTime @default(now())
 
   items ResearchItemTag[]
