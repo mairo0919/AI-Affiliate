@@ -135,6 +135,12 @@ export function selectTitleAxis(evidence: PublicationMetadataEvidence): TitleAxi
 
   if (isVr) return "work_type";
   if (isBest || isDebut) return series.length || makers.length ? "series_maker" : "work_type";
+  // Multi-performer: prefer work/series framing — never default to singular performer axis.
+  if (performers.length >= 2) {
+    if (series.length || makers.length) return "series_maker";
+    if (featureHint) return "feature";
+    return "work_type";
+  }
   if (performers.length === 1 && featureHint) return "feature";
   if (performers.length === 1 && genres.length > 0) return "highlight";
   if (performers.length >= 1 && /向け|初心者|ファン|好き/i.test(blob)) return "audience";
@@ -145,7 +151,21 @@ export function selectTitleAxis(evidence: PublicationMetadataEvidence): TitleAxi
 }
 
 function primaryPerformer(evidence: PublicationMetadataEvidence): string | null {
-  return evidence.performers?.[0]?.trim() || null;
+  const performers = (evidence.performers ?? []).map((p) => p.trim()).filter(Boolean);
+  if (performers.length === 0) return null;
+  const blob = [evidence.officialTitle, evidence.writerTitle].filter(Boolean).join("\n");
+  const isBest = /ベスト|総集編|\bBEST\b/i.test(blob);
+  // Multi-cast / BEST: never treat performers[0] as the sole star for SEO titles.
+  if (performers.length >= 2 || isBest) {
+    const attested = performers.filter((p) => blob.includes(p));
+    // Only allow a singular name when the official title centers exactly one cast member
+    // and does not present the work as a multi-star omnibus.
+    if (attested.length === 1 && !isBest && performers.length === 1) {
+      return attested[0]!;
+    }
+    return null;
+  }
+  return performers[0] ?? null;
 }
 
 function featurePhrase(evidence: PublicationMetadataEvidence): string | null {

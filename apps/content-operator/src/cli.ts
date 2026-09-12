@@ -148,6 +148,7 @@ import {
   runStockStatusCli,
   runStockPipelineCli,
   runConfirmFanzaImageTermsCli,
+  runStockRepairApiQualityCli,
 } from "./stock/cli-handlers.js";
 import { runInitialPublishBoostCli } from "./stock/cli-initial-publish-boost.js";
 import { runWpRefreshMetadataCli } from "./wordpress/cli-refresh-metadata.js";
@@ -2501,6 +2502,9 @@ async function main(): Promise<void> {
       break;
     case "confirm-fanza-image-terms":
       await runConfirmFanzaImageTermsCli(rest);
+      break;
+    case "stock-repair-api-quality":
+      await runStockRepairApiQualityCli(rest);
       break;
     case "wp-refresh-metadata":
       await runWpRefreshMetadataCli(rest);

@@ -304,6 +304,8 @@ export interface UpdatePublicationTargetInput {
   publishedUrl?: string | null;
   approvedAt?: Date | null;
   publishedAt?: Date | null;
+  /** Quality repair: retarget an existing WP future/publish to a new ContentVersion. */
+  contentVersionId?: string;
 }
 
 export interface CreatePublicationRecordInput {
@@ -882,6 +884,9 @@ export class LifecycleRepository {
         ...(input.publishedUrl !== undefined ? { publishedUrl: input.publishedUrl } : {}),
         ...(input.approvedAt !== undefined ? { approvedAt: input.approvedAt } : {}),
         ...(input.publishedAt !== undefined ? { publishedAt: input.publishedAt } : {}),
+        ...(input.contentVersionId !== undefined
+          ? { contentVersionId: input.contentVersionId }
+          : {}),
       },
     });
   }

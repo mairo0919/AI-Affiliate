@@ -17,6 +17,7 @@ import {
   loadStockRuntimeConfig,
   confirmFanzaAffiliateImageTerms,
 } from "./index.js";
+import { repairApiArticleQualityInPlace } from "./repair-api-article-quality.js";
 
 function parseFlags(argv: string[]): Record<string, string> {
   const flags: Record<string, string> = {};
@@ -151,6 +152,38 @@ export async function runConfirmFanzaImageTermsCli(argv: string[]): Promise<void
     });
     printJson(result);
     if (!result.ok) process.exitCode = 1;
+  } finally {
+    await database.disconnect();
+  }
+}
+
+/**
+ * Repair API-era thin/misframed WP futures in place.
+ * Usage: stock-repair-api-quality --cids=dvaj00761,mght00402,cmc00346,dvaj00760 [--dry-run]
+ */
+export async function runStockRepairApiQualityCli(argv: string[]): Promise<void> {
+  const flags = parseFlags(argv);
+  const config = loadConfig({ requireDatabaseUrl: true });
+  const database = createDatabaseClient();
+  await database.connect();
+  try {
+    const lifecycle = new LifecycleRepository(database.prisma);
+    const cids = (flags.cids ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (cids.length === 0) {
+      throw new Error("Usage: stock-repair-api-quality --cids=cid1,cid2");
+    }
+    const result = await repairApiArticleQualityInPlace({
+      database,
+      lifecycle,
+      config,
+      productCanonicalIds: cids,
+      dryRun: flags["dry-run"] === "true",
+    });
+    printJson({ ok: result.failed.length === 0, ...result });
+    if (result.failed.length > 0) process.exitCode = 1;
   } finally {
     await database.disconnect();
   }

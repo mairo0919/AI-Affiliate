@@ -513,13 +513,34 @@ export async function publishContentVersionToWordPress(
       Boolean(t.publishedExternalId) &&
       (t.status === "PUBLISHED" || t.status === "DRAFT" || t.status === "SCHEDULED"),
   );
+  const sameProduct =
+    !sameVersion &&
+    Boolean(input.updateExistingDraft) &&
+    Boolean(canonicalId)
+      ? existing.find((t) => {
+          if (!t.publishedExternalId) return false;
+          if (t.status !== "PUBLISHED" && t.status !== "DRAFT" && t.status !== "SCHEDULED") {
+            return false;
+          }
+          const meta = (t.platformMetadata ?? {}) as Record<string, unknown>;
+          const key = String(
+            meta.productCanonicalId ?? meta.productKey ?? meta.canonicalId ?? "",
+          )
+            .trim()
+            .toLowerCase();
+          return Boolean(key) && Boolean(canonicalId) && key === canonicalId!.toLowerCase();
+        })
+      : undefined;
+  const existingTarget = sameVersion ?? sameProduct;
   const updatingExistingDraft =
     Boolean(input.updateExistingDraft) &&
-    Boolean(sameVersion) &&
-    (sameVersion!.status === "DRAFT" || sameVersion!.status === "SCHEDULED") &&
-    Boolean(sameVersion!.publishedExternalId);
+    Boolean(existingTarget) &&
+    (existingTarget!.status === "DRAFT" ||
+      existingTarget!.status === "SCHEDULED" ||
+      existingTarget!.status === "PUBLISHED") &&
+    Boolean(existingTarget!.publishedExternalId);
 
-  if (sameVersion && (sameVersion.status === "PUBLISHED" || !updatingExistingDraft)) {
+  if (sameVersion && sameVersion.status === "PUBLISHED" && !updatingExistingDraft) {
     return {
       ok: true,
       published: false,
@@ -537,15 +558,15 @@ export async function publishContentVersionToWordPress(
   // Future promotion of the *same* linked ContentVersion is allowed.
   {
     const protectedIds = new Set([43, 46]);
-    const extNum = sameVersion?.publishedExternalId
-      ? Number(sameVersion.publishedExternalId)
+    const extNum = existingTarget?.publishedExternalId
+      ? Number(existingTarget.publishedExternalId)
       : NaN;
     if (
       Number.isFinite(extNum) &&
       protectedIds.has(extNum) &&
       updatingExistingDraft &&
-      sameVersion &&
-      sameVersion.contentVersionId !== version.id
+      existingTarget &&
+      existingTarget.contentVersionId !== version.id
     ) {
       return {
         ok: true,
@@ -554,8 +575,8 @@ export async function publishContentVersionToWordPress(
         reason: "PROTECTED_WORDPRESS_POST",
         contentVersionId: version.id,
         contentId: version.contentId,
-        priorExternalId: sameVersion.publishedExternalId,
-        priorTargetId: sameVersion.id,
+        priorExternalId: existingTarget.publishedExternalId,
+        priorTargetId: existingTarget.id,
         duplicate: true,
       };
     }
@@ -601,7 +622,7 @@ export async function publishContentVersionToWordPress(
     structured,
     explicit: input.productCanonicalId,
     fallbackCanonicalId: canonicalId,
-    platformMetadata: sameVersion?.platformMetadata ?? input.platformMetadata,
+    platformMetadata: existingTarget?.platformMetadata ?? input.platformMetadata,
   });
 
   const offer = resolvePublicationOffer({
@@ -891,21 +912,21 @@ export async function publishContentVersionToWordPress(
 
   let published;
   try {
-    if (updatingExistingDraft && sameVersion?.publishedExternalId && publisher.update) {
+    if (updatingExistingDraft && existingTarget?.publishedExternalId && publisher.update) {
       published = await publisher.update({
-        externalId: sameVersion.publishedExternalId,
+        externalId: existingTarget.publishedExternalId,
         prepared,
       });
       published = {
         ...published,
-        externalId: sameVersion.publishedExternalId,
+        externalId: existingTarget.publishedExternalId,
         status:
           effectiveMode === "future"
             ? "SCHEDULED"
             : effectiveMode === "draft"
               ? "DRAFT"
               : "PUBLISHED",
-        url: published.url ?? sameVersion.publishedUrl ?? "",
+        url: published.url ?? existingTarget.publishedUrl ?? "",
       };
     } else {
       published =
@@ -921,7 +942,7 @@ export async function publishContentVersionToWordPress(
       /rest_invalid|未知|invalid_param|performer|series|otonaselect_/i.test(msg) ||
       msg.includes("UPDATE_FAILED") ||
       msg.includes("CREATE_FAILED");
-    if (canRetrySeo && publisher.update && updatingExistingDraft && sameVersion?.publishedExternalId) {
+    if (canRetrySeo && publisher.update && updatingExistingDraft && existingTarget?.publishedExternalId) {
       try {
         const fallbackPrepared = await publisher.prepare({
           contentVersionId: version.id,
@@ -946,14 +967,14 @@ export async function publishContentVersionToWordPress(
           },
         });
         published = await publisher.update({
-          externalId: sameVersion.publishedExternalId,
+          externalId: existingTarget.publishedExternalId,
           prepared: fallbackPrepared,
         });
         published = {
           ...published,
-          externalId: sameVersion.publishedExternalId,
+          externalId: existingTarget.publishedExternalId,
           status: "DRAFT",
-          url: published.url ?? sameVersion.publishedUrl ?? "",
+          url: published.url ?? existingTarget.publishedUrl ?? "",
         };
       } catch (e2) {
         return {
@@ -1013,27 +1034,31 @@ export async function publishContentVersionToWordPress(
     ...(input.platformMetadata ?? {}),
   };
 
-  if (updatingExistingDraft && sameVersion) {
+  if (updatingExistingDraft && existingTarget) {
     if (typeof deps.lifecycle.updatePublicationTarget === "function") {
-      await deps.lifecycle.updatePublicationTarget(sameVersion.id, {
+      await deps.lifecycle.updatePublicationTarget(existingTarget.id, {
         status: targetStatus,
-        scheduledAt: scheduleInstant ?? undefined,
+        contentVersionId: version.id,
+        scheduledAt:
+          scheduleInstant ??
+          (existingTarget as { scheduledAt?: Date | null }).scheduledAt ??
+          undefined,
         platformMetadata: {
-          ...((sameVersion.platformMetadata as Record<string, unknown> | null) ?? {}),
+          ...((existingTarget.platformMetadata as Record<string, unknown> | null) ?? {}),
           ...platformMetadata,
           updatedVia: "updateExistingDraft",
           updatedAt: now.toISOString(),
         },
-        publishedUrl: published.url || sameVersion.publishedUrl,
+        publishedUrl: published.url || existingTarget.publishedUrl,
         publishedAt: effectivePublishedAt,
       });
     }
     const record: PublicationRecord = await deps.lifecycle.createPublicationRecord({
-      publicationTargetId: sameVersion.id,
+      publicationTargetId: existingTarget.id,
       platform: "WORDPRESS",
       status: targetStatus,
-      externalId: sameVersion.publishedExternalId!,
-      url: published.url || sameVersion.publishedUrl,
+      externalId: existingTarget.publishedExternalId!,
+      url: published.url || existingTarget.publishedUrl,
       responseSummary: {
         ...((published.responseSummary as Record<string, unknown>) ?? {}),
         action: effectiveMode === "future" ? "scheduleExistingDraft" : "updateExistingDraft",
@@ -1047,10 +1072,10 @@ export async function publishContentVersionToWordPress(
       contentVersionId: version.id,
       contentId: version.contentId,
       canonicalId,
-      publicationTargetId: sameVersion.id,
+      publicationTargetId: existingTarget.id,
       publicationRecordId: record.id,
-      externalId: sameVersion.publishedExternalId!,
-      url: published.url || sameVersion.publishedUrl || "",
+      externalId: existingTarget.publishedExternalId!,
+      url: published.url || existingTarget.publishedUrl || "",
       status: targetStatus,
       publishedAt: effectivePublishedAt.toISOString(),
       duplicate: false,

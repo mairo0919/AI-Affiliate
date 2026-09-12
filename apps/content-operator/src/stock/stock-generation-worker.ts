@@ -38,6 +38,88 @@ import {
   readStockAttemptLedger,
 } from "./stock-attempt-ledger.js";
 import { confirmFanzaAffiliateImageTerms } from "./confirm-fanza-image-terms.js";
+import {
+  classifyCastShape,
+  ensureOfficialEnrichmentForStockItem,
+  extractItemListCatalogFacts,
+  shouldAvoidSingularPerformerFraming,
+} from "./ensure-official-enrichment.js";
+
+function plainTextLength(htmlOrText: unknown): number {
+  return String(htmlOrText ?? "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim().length;
+}
+
+const GENERIC_PROSE_RE =
+  /魅力を存分に味わえる|濃厚な内容|おすすめです|じっくり楽しみたい方|ボリューム感|刺激的な展開/g;
+
+/**
+ * Stock auto-approve quality gate — thin/generic/multi-performer misframe → NEEDS_ENRICHMENT.
+ */
+export function evaluateStockArticleQualityGate(input: {
+  productTitle: string;
+  rawData: unknown;
+  structuredContent: Record<string, unknown>;
+  writerTitle?: string | null;
+}): { ok: true } | { ok: false; reason: string } {
+  const catalog = extractItemListCatalogFacts(input.rawData);
+  const actors = catalog.actors;
+  const castShape = classifyCastShape({ actors, productTitle: input.productTitle });
+  const title =
+    input.writerTitle?.trim() ||
+    String(input.structuredContent.title ?? input.structuredContent.seoTitle ?? "").trim() ||
+    "";
+  const body = plainTextLength(
+    input.structuredContent.bodyHtml ??
+      input.structuredContent.body ??
+      input.structuredContent.html ??
+      input.structuredContent.contentHtml,
+  );
+  const bodyText = String(
+    input.structuredContent.bodyHtml ??
+      input.structuredContent.body ??
+      input.structuredContent.html ??
+      "",
+  ).replace(/<[^>]+>/g, " ");
+  const genericHits = bodyText.match(GENERIC_PROSE_RE)?.length ?? 0;
+  const sentences = Math.max(1, bodyText.split(/[。．.!?！？\n]/).filter((s) => s.trim().length > 8).length);
+  const genericRatio = genericHits / sentences;
+
+  if (shouldAvoidSingularPerformerFraming({ actors, productTitle: input.productTitle })) {
+    const singularHit = actors.find(
+      (a) =>
+        a.length >= 2 &&
+        (title.includes(`${a}出演`) ||
+          title.includes(`${a}が魅せる`) ||
+          title.includes(`${a}が贈る`) ||
+          /^注目は.+｜/.test(title) && title.includes(a)),
+    );
+    // Title names exactly one cast member as the star while many exist.
+    const namedInTitle = actors.filter((a) => a.length >= 2 && title.includes(a));
+    if (singularHit || (namedInTitle.length === 1 && actors.length >= 3 && /出演|が魅せる|が贈る/.test(title))) {
+      return {
+        ok: false,
+        reason: `MULTI_PERFORMER_SINGULAR_TITLE:${castShape}`,
+      };
+    }
+  }
+
+  if (body > 0 && body < 420 && (castShape === "BEST_COMPILATION" || actors.length >= 2 || catalog.genres.length >= 3)) {
+    return { ok: false, reason: `THIN_ARTICLE_FOR_RICH_CAST:body=${body}` };
+  }
+
+  if (body > 0 && body < 280) {
+    return { ok: false, reason: `THIN_ARTICLE:body=${body}` };
+  }
+
+  if (genericRatio >= 0.35 && genericHits >= 2) {
+    return { ok: false, reason: `GENERIC_PROSE_RATIO:${genericRatio.toFixed(2)}` };
+  }
+
+  return { ok: true };
+}
 
 function fanzaImageTermsVerifiedFromEnv(
   env: NodeJS.ProcessEnv = process.env,
@@ -360,6 +442,34 @@ export async function runStockGenerationBatch(deps: {
         continue;
       }
 
+      const enrichment = await ensureOfficialEnrichmentForStockItem({
+        lifecycle: deps.lifecycle,
+        research: researchRepo,
+        config: deps.config,
+        logger: createLogger("info"),
+        canonicalId: selected.canonicalId,
+        productUrl: ctaUrl,
+        researchItemId: item.id,
+        productTitle: item.title,
+        rawData: item.rawData,
+      });
+      if (enrichment.status === "NEEDS_ENRICHMENT") {
+        const reason = "NEEDS_ENRICHMENT:official_evidence_missing";
+        held.push({ canonicalId: selected.canonicalId, reason });
+        const failed = buildRawDataAfterStockFailure({
+          rawData: item.rawData,
+          reason,
+          now,
+          maxAttempts: runtime.stockMaxAttemptsBeforeDefer,
+        });
+        await deps.database.prisma.researchItem.update({
+          where: { id: item.id },
+          data: { rawData: asStoredJson(failed.rawData) },
+        });
+        ledgerByResearchId.set(item.id, failed.ledger);
+        continue;
+      }
+
       const boot = await bootstrapLifecycleForResearchItem({
         lifecycle: deps.lifecycle,
         researchItemId: item.id,
@@ -380,6 +490,12 @@ export async function runStockGenerationBatch(deps: {
 
       // Persist product key on structuredContent for stock exclusion / PUBLIC eval.
       const sc = (generatedArticle.version.structuredContent ?? {}) as Record<string, unknown>;
+      const quality = evaluateStockArticleQualityGate({
+        productTitle: item.title,
+        rawData: item.rawData,
+        structuredContent: sc,
+        writerTitle: generatedArticle.version.title,
+      });
       if (!sc.productCanonicalId && !sc.canonicalId) {
         await deps.lifecycle.updateContentVersionStructuredContent(generatedArticle.version.id, {
           ...sc,
@@ -388,7 +504,33 @@ export async function runStockGenerationBatch(deps: {
           sourceProvider: "research",
           analysisRunId,
           stockRoute: "STOCK_GENERATION",
+          officialEnrichmentStatus: enrichment.status,
+          officialActorCount: enrichment.actorCount,
         });
+      } else {
+        await deps.lifecycle.updateContentVersionStructuredContent(generatedArticle.version.id, {
+          ...sc,
+          officialEnrichmentStatus: enrichment.status,
+          officialActorCount: enrichment.actorCount,
+        });
+      }
+
+      if (!quality.ok) {
+        const reason = quality.reason;
+        held.push({ canonicalId: selected.canonicalId, reason });
+        const failed = buildRawDataAfterStockFailure({
+          rawData: item.rawData,
+          reason,
+          now,
+          maxAttempts: runtime.stockMaxAttemptsBeforeDefer,
+        });
+        await deps.database.prisma.researchItem.update({
+          where: { id: item.id },
+          data: { rawData: asStoredJson(failed.rawData) },
+        });
+        ledgerByResearchId.set(item.id, failed.ledger);
+        // Do not auto-approve thin/misframed articles.
+        continue;
       }
 
       // ResearchItem retained — only stamp attempt ledger as COMPLETED.

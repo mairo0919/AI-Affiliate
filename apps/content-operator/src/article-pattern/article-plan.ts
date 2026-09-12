@@ -1149,6 +1149,22 @@ function refineTitleExecutionFacts(input: {
   const titleIsPerformerOnly = isPerformerOnlyTitleFacts(titleFacts, performerNames);
   const titleIsQtyOnly =
     titleFacts.length > 0 && titleFacts.every(isQuantityOrRuntimeOnlyFact);
+  const repMode = input.rep?.mode;
+  const avoidSingularPerformerTitle =
+    performers.length >= 2 ||
+    repMode === "collection" ||
+    repMode === "ensemble" ||
+    repMode === "unknown_multi" ||
+    repMode === "dual_host";
+  const preferredTitlePerformer = (() => {
+    if (avoidSingularPerformerTitle) {
+      // Only title-attested names may appear; never invent a "primary" from performers[0].
+      const attested = performers.filter((p) => titleAttested.has(p.fact.trim()));
+      if (attested.length === 1 && titleAttested.size === 1) return attested[0]!;
+      return null;
+    }
+    return performers[0] ?? null;
+  })();
 
   const needsTitleEnrichment =
     unsafe.length > 0 ||
@@ -1196,7 +1212,7 @@ function refineTitleExecutionFacts(input: {
       composed.push(f);
     };
 
-    if (performers[0]) pushUnique(performers[0].fact, { allowSparse: true });
+    if (preferredTitlePerformer) pushUnique(preferredTitlePerformer.fact, { allowSparse: true });
     // Prefer specific identity/form/collection before bare theme tags.
     const facetPool = nonQtyWork.length > 0 ? nonQtyWork : workFacets;
     const identityFacets = facetPool
@@ -1248,7 +1264,9 @@ function refineTitleExecutionFacts(input: {
     if (!hasFormIdentity) {
       let otherAdded = 0;
       const otherCap =
-        performers[0] && composed.some((c) => c === performers[0]!.fact) ? 1 : 2;
+        preferredTitlePerformer && composed.some((c) => c === preferredTitlePerformer.fact)
+          ? 1
+          : 2;
       for (const w of otherFacets) {
         if (composed.length >= input.maxTitle) break;
         if (w.isQty) continue;
@@ -1285,8 +1303,8 @@ function refineTitleExecutionFacts(input: {
     if (composed.length === 0 && workFacets[0]) {
       pushUnique(workFacets[0].fact, { allowQty: true, allowSparse: true });
     }
-    if (composed.length === 0 && performers[0]) {
-      pushUnique(performers[0].fact, { allowSparse: true });
+    if (composed.length === 0 && preferredTitlePerformer) {
+      pushUnique(preferredTitlePerformer.fact, { allowSparse: true });
     }
 
     if (composed.length > 0) {
@@ -1356,7 +1374,7 @@ function refineTitleExecutionFacts(input: {
       }
       composed.push(f);
     };
-    if (performers[0]) push(performers[0].fact);
+    if (preferredTitlePerformer) push(preferredTitlePerformer.fact);
     const pool = nonQtyWork.length > 0 ? nonQtyWork : workFacets;
     for (const w of pool
       .filter(
