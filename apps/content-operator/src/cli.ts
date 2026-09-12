@@ -149,6 +149,8 @@ import {
   runStockPipelineCli,
   runConfirmFanzaImageTermsCli,
   runStockRepairApiQualityCli,
+  runStockAuditApiEraCli,
+  runStockRepairApiEraCampaignCli,
 } from "./stock/cli-handlers.js";
 import { runInitialPublishBoostCli } from "./stock/cli-initial-publish-boost.js";
 import { runWpRefreshMetadataCli } from "./wordpress/cli-refresh-metadata.js";
@@ -2505,6 +2507,12 @@ async function main(): Promise<void> {
       break;
     case "stock-repair-api-quality":
       await runStockRepairApiQualityCli(rest);
+      break;
+    case "stock-audit-api-era":
+      await runStockAuditApiEraCli(rest);
+      break;
+    case "stock-repair-api-era-campaign":
+      await runStockRepairApiEraCampaignCli(rest);
       break;
     case "wp-refresh-metadata":
       await runWpRefreshMetadataCli(rest);

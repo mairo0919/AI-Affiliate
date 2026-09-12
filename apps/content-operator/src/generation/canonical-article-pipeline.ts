@@ -71,7 +71,10 @@ export type CanonicalPipelineResult =
 function isSynthesizedPageEvidence(meta: unknown): boolean {
   const pe = readPageEvidenceFromDocMetadata(meta);
   const raw = pe as Record<string, unknown> | null;
-  return raw?.synthesizedFrom === "itemlist";
+  if (raw?.synthesizedFrom !== "itemlist") return false;
+  // Real page fetch stamps fetchMode — treat as official Evidence.
+  if (typeof raw.fetchMode === "string" && raw.fetchMode.trim()) return false;
+  return true;
 }
 
 function readPageEvidence(

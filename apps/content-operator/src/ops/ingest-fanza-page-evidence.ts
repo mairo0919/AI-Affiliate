@@ -101,6 +101,8 @@ export async function ingestFanzaPageEvidence(input: {
   const metaPatch = {
     pageEvidence: {
       ...pageEvidenceMeta,
+      // Clear ItemList synthesis stigma when official page Evidence is persisted.
+      synthesizedFrom: null,
       fetchedAt: new Date().toISOString(),
       fetchMode: fetch.fetchMode,
       browserFallbackUsed: fetch.browserFallbackUsed,

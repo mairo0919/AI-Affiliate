@@ -256,6 +256,24 @@ describe("repair quality guard", () => {
     expect(decision.apply).toBe(true);
   });
 
+  it("detects BODY_ONLY when title is healthy and body is thin", () => {
+    const scope = detectRepairScope({
+      title: "元カノと3年ぶりの再会｜幸村泉希",
+      bodyText: "短い。",
+      productTitle:
+        "夫婦喧嘩で家出してきた元カノと3年ぶりに再会 人妻になってさらにエロくなったケツ肉で誘惑されあの頃と同じ安アパートで朝から晩までひたすら生中出しハメし続けた 幸村泉希",
+      rawData: {
+        title:
+          "夫婦喧嘩で家出してきた元カノと3年ぶりに再会 人妻になってさらにエロくなったケツ肉で誘惑されあの頃と同じ安アパートで朝から晩までひたすら生中出しハメし続けた 幸村泉希",
+        iteminfo: {
+          actress: [{ name: "幸村泉希" }],
+          genre: [{ name: "人妻" }],
+        },
+      },
+    });
+    expect(scope).toBe("BODY_ONLY");
+  });
+
   it("scopes NONE when article already healthy", () => {
     const scope = detectRepairScope({
       title: "元カノと3年ぶりの再会｜幸村泉希",

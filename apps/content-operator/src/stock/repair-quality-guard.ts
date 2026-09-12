@@ -38,7 +38,7 @@ const BARE_GENRE_TOKENS = new Set([
 const STORY_MARKERS =
   /再会|家出|元カノ|夫婦|喧嘩|アパート|誘惑|同居|同窓会|初|記念|記録|流出|スマホ|教え子|部下|上司|隣人|同棲|結婚|離婚|旅行|温泉|合宿|寮|オフィス|教室|夜勤|残業/;
 
-export type RepairScope = "NONE" | "TITLE_ONLY" | "FULL";
+export type RepairScope = "NONE" | "TITLE_ONLY" | "BODY_ONLY" | "FULL";
 
 export type QualityAxes = {
   factual: number;
@@ -332,6 +332,7 @@ export function detectRepairScope(snap: ArticleSnapshot): RepairScope {
 
   if (!titleBad && !bodyBad && axes.factual >= 70 && axes.titleQuality >= 55) return "NONE";
   if (titleBad && !bodyBad) return "TITLE_ONLY";
+  if (!titleBad && bodyBad) return "BODY_ONLY";
   if (titleBad || bodyBad) return "FULL";
   return "NONE";
 }
@@ -367,6 +368,22 @@ export function decideRepairApply(input: {
       return {
         apply: false,
         reason: "TITLE_ONLY_TOUCHED_BODY_QUALITY",
+        scope: input.scope,
+        axesBefore,
+        axesAfter,
+        overallDelta,
+      };
+    }
+  }
+  // Body-only: title axes should stay ~equal
+  if (input.scope === "BODY_ONLY") {
+    if (
+      axesAfter.titleQuality < axesBefore.titleQuality - 5 ||
+      axesAfter.factual < axesBefore.factual - 5
+    ) {
+      return {
+        apply: false,
+        reason: "BODY_ONLY_TOUCHED_TITLE_QUALITY",
         scope: input.scope,
         axesBefore,
         axesAfter,

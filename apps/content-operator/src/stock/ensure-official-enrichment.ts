@@ -126,8 +126,13 @@ export function shouldAvoidSingularPerformerFraming(input: {
 
 function isUsableOfficialPageEvidence(pe: PageEvidenceShape | null): boolean {
   if (!pe) return false;
-  if (pe.synthesizedFrom === "itemlist") return false;
-  return Boolean(pe.description?.text?.trim());
+  if (!pe.description?.text?.trim()) return false;
+  // Reject ItemList-only synth unless a real page fetch stamped fetchMode.
+  if (pe.synthesizedFrom === "itemlist") {
+    const peRec = pe as PageEvidenceShape & { fetchMode?: string };
+    if (!peRec.fetchMode) return false;
+  }
+  return true;
 }
 
 /**
@@ -172,7 +177,8 @@ export async function ensureOfficialEnrichmentForStockItem(input: {
       const ingested = await ingestFanzaPageEvidence({
         lifecycle: input.lifecycle,
         research: input.research,
-        productUrl: input.productUrl || buildFanzaCanonicalProductUrl(input.canonicalId),
+        // Always fetch the official product page — affiliate wrappers do not yield pageEvidence.
+        productUrl: buildFanzaCanonicalProductUrl(input.canonicalId),
         contentId: input.canonicalId,
         fetchOptions: {
           confirmExternal: true,

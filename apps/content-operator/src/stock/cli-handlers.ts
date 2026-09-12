@@ -162,6 +162,8 @@ export async function runConfirmFanzaImageTermsCli(argv: string[]): Promise<void
  * Usage:
  *   stock-repair-api-quality --cids=dvaj00761,mght00402
  *   stock-repair-api-quality --all-api-era=true [--dry-run]
+ *   stock-audit-api-era [--dry-run]  (audit only)
+ *   stock-repair-api-era-campaign [--dry-run]  (audit → enrich → canonical repair)
  */
 export async function runStockRepairApiQualityCli(argv: string[]): Promise<void> {
   const flags = parseFlags(argv);
@@ -194,6 +196,88 @@ export async function runStockRepairApiQualityCli(argv: string[]): Promise<void>
       ...result,
     });
     if (result.failed.length > 0) process.exitCode = 1;
+  } finally {
+    await database.disconnect();
+  }
+}
+
+export async function runStockAuditApiEraCli(argv: string[]): Promise<void> {
+  const flags = parseFlags(argv);
+  const config = loadConfig({ requireDatabaseUrl: true });
+  const database = createDatabaseClient();
+  await database.connect();
+  try {
+    const lifecycle = new LifecycleRepository(database.prisma);
+    const { auditApiEraArticlesBatch, listApiEraUniverseCids } = await import(
+      "./audit-api-era-articles.js"
+    );
+    const cids = (flags.cids ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const result = await auditApiEraArticlesBatch({
+      database,
+      lifecycle,
+      config,
+      cids: cids.length ? cids : await listApiEraUniverseCids({ database }),
+    });
+    printJson({ ok: true, ...result });
+  } finally {
+    await database.disconnect();
+  }
+}
+
+export async function runStockRepairApiEraCampaignCli(argv: string[]): Promise<void> {
+  const flags = parseFlags(argv);
+  const config = loadConfig({ requireDatabaseUrl: true });
+  const database = createDatabaseClient();
+  await database.connect();
+  try {
+    const lifecycle = new LifecycleRepository(database.prisma);
+    const { runApiEraRepairCampaign } = await import("./api-era-repair-campaign.js");
+    const cids = (flags.cids ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const result = await runApiEraRepairCampaign({
+      database,
+      lifecycle,
+      config,
+      dryRun: flags["dry-run"] === "true",
+      cids: cids.length ? cids : undefined,
+    });
+    printJson({
+      ok: true,
+      universeSize: result.universeSize,
+      initialCounts: result.initialCounts,
+      enrichment: result.enrichment,
+      repairStats: result.repair?.stats ?? null,
+      repaired: result.repair?.repaired?.length ?? 0,
+      applyRejected: result.repair?.applyRejected?.length ?? 0,
+      failed: result.repair?.failed?.length ?? 0,
+      failedDetails: result.repair?.failed ?? [],
+      applyRejectedDetails: result.repair?.applyRejected ?? [],
+      repairedDetails: (result.repair?.repaired ?? []).map((r) => ({
+        cid: r.cid,
+        wpId: r.wpId,
+        scope: r.scope,
+        title: r.title,
+        beforeTitle: r.beforeTitle,
+        wpBucket: r.wpBucket,
+      })),
+      finalCounts: result.finalCounts,
+      residual: result.residual,
+      dryRun: result.dryRun,
+      finalByCid: result.finalByCid,
+      repairRequiredSample: result.initialRows
+        .filter((r) => r.classification === "REPAIR_REQUIRED")
+        .slice(0, 40)
+        .map((r) => ({ cid: r.cid, wpId: r.wpId, scope: r.scope, reasons: r.reasons, title: r.title })),
+      needsEnrichmentSample: result.initialRows
+        .filter((r) => r.classification === "NEEDS_ENRICHMENT")
+        .slice(0, 40)
+        .map((r) => ({ cid: r.cid, wpId: r.wpId, reasons: r.reasons })),
+    });
   } finally {
     await database.disconnect();
   }

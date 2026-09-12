@@ -1,7 +1,7 @@
 /**
  * Repair API-era WordPress articles via canonical pipeline only.
- * No TITLE_ONLY mechanical title engine. No thin Claims bootstrap.
  * Preserves post ID + scheduledAt. Apply only when after improves before.
+ * TITLE_ONLY / BODY_ONLY scopes protect the healthy half.
  */
 
 import type { AppConfig } from "@ai-affiliate/config";
@@ -23,6 +23,7 @@ import {
   decideRepairApply,
   detectRepairScope,
   type ArticleSnapshot,
+  type RepairScope,
 } from "./repair-quality-guard.js";
 
 function plainBody(body: unknown): string {
@@ -68,6 +69,30 @@ export async function listApiEraWordPressProductCids(input: {
   return [...cids];
 }
 
+function mergeByScope(input: {
+  scope: RepairScope;
+  before: ArticleSnapshot;
+  after: ArticleSnapshot;
+}): ArticleSnapshot {
+  if (input.scope === "TITLE_ONLY") {
+    return {
+      title: input.after.title,
+      bodyText: input.before.bodyText,
+      productTitle: input.before.productTitle,
+      rawData: input.before.rawData,
+    };
+  }
+  if (input.scope === "BODY_ONLY") {
+    return {
+      title: input.before.title,
+      bodyText: input.after.bodyText,
+      productTitle: input.before.productTitle,
+      rawData: input.before.rawData,
+    };
+  }
+  return input.after;
+}
+
 export async function repairApiArticleQualityInPlace(input: {
   database: DatabaseClient;
   lifecycle: LifecycleRepository;
@@ -78,11 +103,17 @@ export async function repairApiArticleQualityInPlace(input: {
   repaired: Array<Record<string, unknown>>;
   skipped: Array<Record<string, unknown>>;
   failed: Array<Record<string, unknown>>;
+  applyRejected: Array<Record<string, unknown>>;
+  needsEnrichment: Array<Record<string, unknown>>;
   stats: {
     titleOnly: number;
+    bodyOnly: number;
     fullRegen: number;
     skippedNoIssue: number;
     skippedNoImprovement: number;
+    publishUpdated: number;
+    futureUpdated: number;
+    approvedUnscheduledUpdated: number;
   };
 }> {
   const logger = createLogger("info");
@@ -102,11 +133,17 @@ export async function repairApiArticleQualityInPlace(input: {
   const repaired: Array<Record<string, unknown>> = [];
   const skipped: Array<Record<string, unknown>> = [];
   const failed: Array<Record<string, unknown>> = [];
+  const applyRejected: Array<Record<string, unknown>> = [];
+  const needsEnrichment: Array<Record<string, unknown>> = [];
   const stats = {
     titleOnly: 0,
+    bodyOnly: 0,
     fullRegen: 0,
     skippedNoIssue: 0,
     skippedNoImprovement: 0,
+    publishUpdated: 0,
+    futureUpdated: 0,
+    approvedUnscheduledUpdated: 0,
   };
 
   for (const cid of input.productCanonicalIds) {
@@ -130,13 +167,37 @@ export async function repairApiArticleQualityInPlace(input: {
         },
         orderBy: { updatedAt: "desc" },
       });
-      if (!target?.publishedExternalId) {
-        failed.push({ cid, reason: "WP_TARGET_MISSING" });
+
+      let contentVersionId = target?.contentVersionId ?? null;
+      let wpBucket: "publish" | "future" | "approved_unscheduled" | "none" = "none";
+      if (target?.publishedExternalId) {
+        wpBucket = target.status === "PUBLISHED" ? "publish" : "future";
+      } else {
+        const approvedCv = await input.database.prisma.contentVersion.findFirst({
+          where: {
+            status: "APPROVED",
+            OR: [
+              { structuredContent: { path: ["productCanonicalId"], equals: cid } },
+              { structuredContent: { path: ["canonicalId"], equals: cid } },
+            ],
+          },
+          orderBy: { updatedAt: "desc" },
+          select: { id: true },
+        });
+        if (approvedCv) {
+          contentVersionId = approvedCv.id;
+          wpBucket = "approved_unscheduled";
+        }
+      }
+
+      if (!contentVersionId && !target?.publishedExternalId) {
+        failed.push({ cid, reason: "CONTENT_OR_WP_TARGET_MISSING" });
         continue;
       }
-      const meta = (target.platformMetadata ?? {}) as Record<string, unknown>;
+
+      const meta = (target?.platformMetadata ?? {}) as Record<string, unknown>;
       const scheduledAtRaw =
-        target.scheduledAt?.toISOString() ??
+        target?.scheduledAt?.toISOString() ??
         (typeof meta.scheduledAt === "string" ? meta.scheduledAt : null) ??
         (typeof meta.publishSlotKey === "string" ? meta.publishSlotKey : null);
       const scheduledAt = scheduledAtRaw ? new Date(scheduledAtRaw) : null;
@@ -155,9 +216,9 @@ export async function repairApiArticleQualityInPlace(input: {
       const ctaUrl =
         validateFanzaAffiliateUrl(ctaCandidate).url || buildFanzaCanonicalProductUrl(cid);
 
-      const beforeCv = target.contentVersionId
+      const beforeCv = contentVersionId
         ? await input.database.prisma.contentVersion.findUnique({
-            where: { id: target.contentVersionId },
+            where: { id: contentVersionId },
             select: { id: true, title: true, body: true, structuredContent: true },
           })
         : null;
@@ -172,9 +233,10 @@ export async function repairApiArticleQualityInPlace(input: {
         stats.skippedNoIssue += 1;
         skipped.push({
           cid,
-          wpId: target.publishedExternalId,
+          wpId: target?.publishedExternalId ?? null,
           reason: "ALREADY_OK",
           title: beforeSnap.title,
+          finalClass: "NORMAL",
         });
         continue;
       }
@@ -185,7 +247,8 @@ export async function repairApiArticleQualityInPlace(input: {
         config: input.config,
         logger,
         canonicalId: cid,
-        productUrl: ctaUrl,
+        // Always enrich from the official product page (never affiliate wrapper).
+        productUrl: buildFanzaCanonicalProductUrl(cid),
         researchItemId: item.id,
         productTitle: item.title,
         rawData: item.rawData,
@@ -194,28 +257,29 @@ export async function repairApiArticleQualityInPlace(input: {
       if (input.dryRun) {
         repaired.push({
           cid,
-          wpId: target.publishedExternalId,
+          wpId: target?.publishedExternalId ?? null,
           dryRun: true,
           scope,
           enrichment: enrichment.status,
           beforeTitle: beforeSnap.title,
           scheduledAt: scheduledAt?.toISOString() ?? null,
           pipeline: "CANONICAL",
+          wpBucket,
         });
         continue;
       }
 
       if (enrichment.status === "NEEDS_ENRICHMENT") {
-        failed.push({
+        needsEnrichment.push({
           cid,
-          wpId: target.publishedExternalId,
+          wpId: target?.publishedExternalId ?? null,
           reason: "NEEDS_ENRICHMENT:official_page_evidence_required",
           enrichment: enrichment.status,
+          finalClass: "NEEDS_ENRICHMENT",
         });
         continue;
       }
 
-      // Always full canonical regen (no mechanical TITLE_ONLY salvage).
       const pipeline = await runCanonicalArticlePipeline({
         lifecycle: input.lifecycle,
         research,
@@ -226,7 +290,7 @@ export async function repairApiArticleQualityInPlace(input: {
         researchItemId: item.id,
         productTitle: item.title,
         productCanonicalId: cid,
-        productUrl: ctaUrl,
+        productUrl: buildFanzaCanonicalProductUrl(cid),
         rawData: item.rawData,
         ctaUrl,
         route: "REPAIR",
@@ -243,18 +307,27 @@ export async function repairApiArticleQualityInPlace(input: {
       });
 
       if (!pipeline.ok) {
-        failed.push({
-          cid,
-          wpId: target.publishedExternalId,
-          reason: pipeline.reason,
-          reviewOverall: pipeline.reviewOverall,
-        });
+        if (pipeline.reason.startsWith("NEEDS_ENRICHMENT")) {
+          needsEnrichment.push({
+            cid,
+            wpId: target?.publishedExternalId ?? null,
+            reason: pipeline.reason,
+            finalClass: "NEEDS_ENRICHMENT",
+          });
+        } else {
+          failed.push({
+            cid,
+            wpId: target?.publishedExternalId ?? null,
+            reason: pipeline.reason,
+            reviewOverall: pipeline.reviewOverall,
+          });
+        }
         continue;
       }
       if (!pipeline.contentVersionId) {
         failed.push({
           cid,
-          wpId: target.publishedExternalId,
+          wpId: target?.publishedExternalId ?? null,
           reason: "CANONICAL_PIPELINE_FAILED",
         });
         continue;
@@ -269,97 +342,137 @@ export async function repairApiArticleQualityInPlace(input: {
         continue;
       }
 
-      const afterSnap: ArticleSnapshot = {
+      const afterRaw: ArticleSnapshot = {
         title: generatedCv.title,
         bodyText: plainBody(generatedCv.body),
         productTitle: item.title,
         rawData: item.rawData,
       };
+      const merged = mergeByScope({ scope, before: beforeSnap, after: afterRaw });
       const decision = decideRepairApply({
         before: beforeSnap,
-        after: afterSnap,
-        scope: "FULL",
+        after: merged,
+        scope,
       });
       if (!decision.apply) {
         stats.skippedNoImprovement += 1;
-        skipped.push({
+        applyRejected.push({
           cid,
-          wpId: target.publishedExternalId,
+          wpId: target?.publishedExternalId ?? null,
           reason: decision.reason,
-          scope: "FULL",
+          scope,
           beforeTitle: beforeSnap.title,
-          afterTitle: afterSnap.title,
+          afterTitle: merged.title,
           overallDelta: decision.overallDelta,
+          finalClass: "APPLY_REJECTED",
         });
         continue;
       }
 
-      const sc = (generatedCv.structuredContent ?? {}) as Record<string, unknown>;
-      await input.lifecycle.updateContentVersionStructuredContent(generatedCv.id, {
-        ...sc,
+      const sc: Record<string, unknown> = {
+        ...((generatedCv.structuredContent ?? {}) as Record<string, unknown>),
+        title: merged.title,
         productCanonicalId: cid,
         canonicalId: cid,
         pipelineRoute: "CANONICAL",
         generationRoute: "REPAIR",
+        repairScope: scope,
         officialEnrichmentStatus: enrichment.status,
         officialActorCount: enrichment.actorCount,
-        repairedWpPostId: target.publishedExternalId,
+        repairedWpPostId: target?.publishedExternalId ?? null,
         repairedFromTitle: beforeSnap.title,
+      };
+      if (scope === "TITLE_ONLY" && beforeCv?.body) {
+        sc.bodyHtml = beforeCv.body;
+      } else if (scope === "BODY_ONLY") {
+        sc.title = beforeSnap.title;
+      }
+
+      await input.lifecycle.updateContentVersionStructuredContent(generatedCv.id, sc);
+      await input.database.prisma.contentVersion.update({
+        where: { id: generatedCv.id },
+        data: {
+          title: merged.title,
+          ...(scope === "TITLE_ONLY" && beforeCv?.body ? { body: beforeCv.body } : {}),
+        },
       });
 
       await contentReview.decide({
         contentVersionId: generatedCv.id,
         decision: "approve",
         actor: "api-quality-repair",
-        reason: "Canonical repair after guarded quality improvement",
+        reason: `Canonical repair (${scope}) after guarded quality improvement`,
         approvalPolicy: "auto",
       });
 
-      const mode = target.status === "PUBLISHED" ? "publish" : "future";
-      const wp = await publishContentVersionToWordPress(
-        {
-          config: input.config,
-          lifecycle: input.lifecycle,
-          prisma: input.database.prisma,
-          publisher,
-        },
-        {
-          contentVersionId: generatedCv.id,
-          canonicalId: cid,
-          productCanonicalId: cid,
-          mode,
-          scheduledAt: mode === "future" ? scheduledAt ?? undefined : undefined,
-          updateExistingDraft: true,
-          route: "API_QUALITY_REPAIR_CANONICAL",
-          idempotencyKey: `api-quality-repair:${cid}:${target.publishedExternalId}:${generatedCv.id}`,
-          platformMetadata: {
-            productKey: cid,
-            productCanonicalId: cid,
-            publishSlotKey: meta.publishSlotKey,
-            scheduledAt: meta.scheduledAt ?? scheduledAt?.toISOString() ?? null,
-            repairedFromContentVersionId: target.contentVersionId,
-            ctaUrl,
-            affiliateLinkReady: /al\.fanza|af_id=/i.test(ctaUrl),
-            pipelineRoute: "CANONICAL",
+      if (wpBucket === "publish" || wpBucket === "future") {
+        const mode = wpBucket === "publish" ? "publish" : "future";
+        const wp = await publishContentVersionToWordPress(
+          {
+            config: input.config,
+            lifecycle: input.lifecycle,
+            prisma: input.database.prisma,
+            publisher,
           },
-        },
-      );
+          {
+            contentVersionId: generatedCv.id,
+            canonicalId: cid,
+            productCanonicalId: cid,
+            mode,
+            scheduledAt: mode === "future" ? scheduledAt ?? undefined : undefined,
+            updateExistingDraft: true,
+            route: "API_QUALITY_REPAIR_CANONICAL",
+            idempotencyKey: `api-quality-repair:${cid}:${target!.publishedExternalId}:${generatedCv.id}`,
+            platformMetadata: {
+              productKey: cid,
+              productCanonicalId: cid,
+              publishSlotKey: meta.publishSlotKey,
+              scheduledAt: meta.scheduledAt ?? scheduledAt?.toISOString() ?? null,
+              repairedFromContentVersionId: target!.contentVersionId,
+              ctaUrl,
+              affiliateLinkReady: /al\.fanza|af_id=/i.test(ctaUrl),
+              pipelineRoute: "CANONICAL",
+              repairScope: scope,
+            },
+          },
+        );
+        if (wpBucket === "publish") stats.publishUpdated += 1;
+        else stats.futureUpdated += 1;
+        repaired.push({
+          cid,
+          wpId: target!.publishedExternalId,
+          scope,
+          beforeTitle: beforeSnap.title,
+          title: merged.title,
+          scheduledAt: scheduledAt?.toISOString() ?? null,
+          wpOk: wp.ok,
+          wpPublished: "published" in wp ? wp.published : false,
+          contentVersionId: generatedCv.id,
+          overallDelta: decision.overallDelta,
+          ctaAffiliate: /al\.fanza|af_id=/i.test(ctaUrl),
+          pipeline: "CANONICAL",
+          finalClass: "REPAIRED",
+          wpBucket,
+        });
+      } else {
+        stats.approvedUnscheduledUpdated += 1;
+        repaired.push({
+          cid,
+          wpId: null,
+          scope,
+          beforeTitle: beforeSnap.title,
+          title: merged.title,
+          contentVersionId: generatedCv.id,
+          overallDelta: decision.overallDelta,
+          pipeline: "CANONICAL",
+          finalClass: "REPAIRED",
+          wpBucket,
+        });
+      }
 
-      stats.fullRegen += 1;
-      repaired.push({
-        cid,
-        wpId: target.publishedExternalId,
-        scope: "FULL",
-        beforeTitle: beforeSnap.title,
-        title: generatedCv.title,
-        scheduledAt: scheduledAt?.toISOString() ?? null,
-        wpOk: wp.ok,
-        wpPublished: "published" in wp ? wp.published : false,
-        contentVersionId: generatedCv.id,
-        overallDelta: decision.overallDelta,
-        ctaAffiliate: /al\.fanza|af_id=/i.test(ctaUrl),
-        pipeline: "CANONICAL",
-      });
+      if (scope === "TITLE_ONLY") stats.titleOnly += 1;
+      else if (scope === "BODY_ONLY") stats.bodyOnly += 1;
+      else stats.fullRegen += 1;
     } catch (error) {
       failed.push({
         cid,
@@ -368,5 +481,5 @@ export async function repairApiArticleQualityInPlace(input: {
     }
   }
 
-  return { repaired, skipped, failed, stats };
+  return { repaired, skipped, failed, applyRejected, needsEnrichment, stats };
 }
