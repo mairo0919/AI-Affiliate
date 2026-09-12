@@ -189,10 +189,35 @@ function workTypePhrase(evidence: PublicationMetadataEvidence): string | null {
     .filter(Boolean)
     .join("\n");
   if (/(?:^|[\s\u3000/／])VR(?:$|[\s\u3000/／])|ＶＲ|\bVR\b/.test(blob)) return "VR作品";
-  if (/ベスト|総集編|\bBEST\b/i.test(blob)) return "ベスト・総集編";
+  if (/ベスト|総集編|\bBEST\b/i.test(blob)) {
+    const theme = extractCollectionTheme(evidence.officialTitle ?? evidence.writerTitle ?? "");
+    return theme ?? "ベスト・総集編";
+  }
   if (/デビュー/i.test(blob)) return "デビュー作";
   if (/単体作品/.test(blob)) return "単体作品";
   if (/企画/.test(blob)) return "企画作品";
+  return null;
+}
+
+/** Prefer theme/runtime from official title over bare 「ベスト・総集編」. */
+export function extractCollectionTheme(officialTitle: string): string | null {
+  const t = officialTitle.replace(/\s+/g, " ").trim();
+  if (!t) return null;
+  const runtime = t.match(/(\d+)\s*時間(?:BEST|ベスト)?/i)?.[0];
+  if (/フェラ|おしゃぶり/.test(t)) {
+    return runtime ? `フェラBEST ${runtime}` : "フェラBEST";
+  }
+  if (/浣腸|羞恥|排泄/.test(t)) return "オフィス浣腸羞恥ベスト";
+  if (runtime) return `${runtime}ベスト`;
+  // Compact mid-title phrase before trailing BEST marker.
+  const beforeBest = t.split(/ベスト|総集編|\bBEST\b/i)[0]?.trim() ?? "";
+  const compact = beforeBest
+    .replace(/^【[^】]*】\s*/, "")
+    .slice(-24)
+    .trim();
+  if (compact.length >= 6 && compact.length <= 28 && !/^[\d\s]+$/.test(compact)) {
+    return compact;
+  }
   return null;
 }
 

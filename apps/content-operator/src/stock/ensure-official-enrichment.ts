@@ -69,8 +69,13 @@ export function extractItemListCatalogFacts(rawData: unknown): {
 } {
   const raw = asRecord(rawData) ?? {};
   const iteminfo = asRecord(raw.iteminfo) ?? {};
-  const volume = typeof raw.volume === "string" ? raw.volume : null;
-  const durationMatch = volume?.match(/(\d+)\s*分/);
+  const volume =
+    typeof raw.volume === "string"
+      ? raw.volume
+      : typeof raw.volume === "number"
+        ? String(raw.volume)
+        : null;
+  const durationMatch = volume?.match(/(\d+)\s*(?:分)?/);
   const durationMinutes = durationMatch ? Number.parseInt(durationMatch[1]!, 10) : null;
   const title =
     typeof raw.title === "string"
@@ -115,16 +120,37 @@ export function shouldAvoidSingularPerformerFraming(input: {
   productTitle: string;
 }): boolean {
   const shape = classifyCastShape(input);
-  if (shape === "MULTI_PERFORMER" || shape === "BEST_COMPILATION") {
-    // Exception: official title clearly centers one attested name and no other cast in title.
-    const attested = input.actors.filter((a) => a && input.productTitle.includes(a));
-    if (attested.length === 1 && input.actors.length >= 2) {
-      // Still multi-cast product — do not singularize unless title exclusivity is extreme.
-      return true;
-    }
-    return true;
+  // Single-cast BEST may name that performer; multi-cast / omnibus must not.
+  if (input.actors.length <= 1) return false;
+  return shape === "MULTI_PERFORMER" || shape === "BEST_COMPILATION";
+}
+
+/** Factual catalog synopsis for Writer when page description is unavailable (SPA / no Playwright). */
+export function synthesizeItemListDescription(input: {
+  productTitle: string;
+  actors: string[];
+  genres: string[];
+  makers: string[];
+  series: string[];
+  durationMinutes: number | null;
+}): string {
+  const lines: string[] = [];
+  const title = input.productTitle.trim();
+  if (title) lines.push(title);
+  if (input.actors.length === 1) {
+    lines.push(`出演: ${input.actors[0]}`);
+  } else if (input.actors.length > 1) {
+    const head = input.actors.slice(0, 12).join("、");
+    const more = input.actors.length > 12 ? ` ほか全${input.actors.length}名` : "";
+    lines.push(`出演: ${head}${more}`);
   }
-  return false;
+  if (input.makers[0]) lines.push(`メーカー: ${input.makers[0]}`);
+  if (input.series[0]) lines.push(`シリーズ: ${input.series[0]}`);
+  if (input.genres.length) lines.push(`ジャンル: ${input.genres.slice(0, 8).join("、")}`);
+  if (input.durationMinutes != null && Number.isFinite(input.durationMinutes)) {
+    lines.push(`収録時間: 約${input.durationMinutes}分`);
+  }
+  return lines.join("\n");
 }
 
 export async function ensureOfficialEnrichmentForStockItem(input: {
@@ -216,11 +242,23 @@ export async function ensureOfficialEnrichmentForStockItem(input: {
     };
   }
 
+  const descriptionText = hasDescription
+    ? pe?.description?.text?.trim() || null
+    : synthesizeItemListDescription({
+        productTitle: catalog.productName ?? input.productTitle,
+        actors,
+        genres,
+        makers: catalog.makers,
+        series: catalog.series,
+        durationMinutes: catalog.durationMinutes,
+      });
+  hasDescription = Boolean(descriptionText?.trim());
+
   // Persist ItemList-derived pageEvidence so Writer/title SSOT sees full cast.
   const synthesized: PageEvidenceShape = {
     productName: catalog.productName ?? input.productTitle,
     actors,
-    description: hasDescription ? pe?.description : null,
+    description: descriptionText ? { text: descriptionText } : null,
     catalog: {
       genres: genres.map((value) => ({ value })),
       maker: catalog.makers[0] ? { value: catalog.makers[0] } : pe?.catalog?.maker ?? null,

@@ -106,6 +106,15 @@ export function evaluateStockArticleQualityGate(input: {
     }
   }
 
+  // Bare form titles with no product theme (e.g. 「ベストと総集編」).
+  if (
+    /^(?:ベストと総集編|ベスト・総集編|女優ベスト・総集編|ベスト|総集編)(?:の見どころ(?:整理)?|ガイド)?$/u.test(
+      title,
+    )
+  ) {
+    return { ok: false, reason: "GENERIC_FORM_TITLE" };
+  }
+
   if (body > 0 && body < 420 && (castShape === "BEST_COMPILATION" || actors.length >= 2 || catalog.genres.length >= 3)) {
     return { ok: false, reason: `THIN_ARTICLE_FOR_RICH_CAST:body=${body}` };
   }

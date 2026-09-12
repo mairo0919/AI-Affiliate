@@ -17,8 +17,12 @@ import { createWordPressPublisherFromConfig } from "../adapters/publisher/wordpr
 import { publishContentVersionToWordPress } from "../wordpress/wordpress-publish-path.js";
 import { claimStatementsFromPageEvidence } from "../article-pattern/evidence-pack.js";
 import type { PageEvidenceMetaShape } from "../article-pattern/official-page-evidence-atoms.js";
-import { ensureOfficialEnrichmentForStockItem } from "./ensure-official-enrichment.js";
+import { ensureOfficialEnrichmentForStockItem, extractItemListCatalogFacts } from "./ensure-official-enrichment.js";
 import { evaluateStockArticleQualityGate } from "./stock-generation-worker.js";
+import {
+  buildDeterministicTitle,
+  selectTitleAxis,
+} from "../wordpress/publication-metadata.js";
 
 export async function repairApiArticleQualityInPlace(input: {
   database: DatabaseClient;
@@ -78,22 +82,21 @@ export async function repairApiArticleQualityInPlace(input: {
         (typeof meta.scheduledAt === "string" ? meta.scheduledAt : null) ??
         (typeof meta.publishSlotKey === "string" ? meta.publishSlotKey : null);
       const scheduledAt = scheduledAtRaw ? new Date(scheduledAtRaw) : null;
-      const ctaUrl =
-        (typeof meta.ctaUrl === "string" && meta.ctaUrl) ||
-        validateFanzaAffiliateUrl(
-          // prefer stored affiliate when present in rawData
-          (() => {
-            const raw = item.rawData as Record<string, unknown> | null;
-            const aff =
-              typeof raw?.affiliateURL === "string"
-                ? raw.affiliateURL
-                : typeof raw?.affiliateUrl === "string"
-                  ? raw.affiliateUrl
-                  : null;
-            return aff || buildFanzaCanonicalProductUrl(cid);
-          })(),
-        ).url ||
+      const raw = item.rawData as Record<string, unknown> | null;
+      const affiliateFromResearch =
+        (typeof raw?.affiliateURL === "string" && raw.affiliateURL) ||
+        (typeof raw?.affiliateUrl === "string" && raw.affiliateUrl) ||
+        (typeof item.url === "string" && item.url.includes("al.fanza") ? item.url : null) ||
+        null;
+      const metaCta = typeof meta.ctaUrl === "string" ? meta.ctaUrl : null;
+      // Prefer live affiliate URL over stale canonical CTA left by earlier publishes.
+      const ctaCandidate =
+        affiliateFromResearch ||
+        (metaCta && /al\.fanza|af_id=|affiliate/i.test(metaCta) ? metaCta : null) ||
+        metaCta ||
         buildFanzaCanonicalProductUrl(cid);
+      const ctaUrl =
+        validateFanzaAffiliateUrl(ctaCandidate).url || buildFanzaCanonicalProductUrl(cid);
 
       const enrichment = await ensureOfficialEnrichmentForStockItem({
         lifecycle: input.lifecycle,
@@ -181,22 +184,61 @@ export async function repairApiArticleQualityInPlace(input: {
         repairedWpPostId: target.publishedExternalId,
       });
 
-      const quality = evaluateStockArticleQualityGate({
+      let finalTitle = generated.version.title;
+      let quality = evaluateStockArticleQualityGate({
         productTitle: item.title,
         rawData: item.rawData,
         structuredContent: {
           ...sc,
-          title: generated.version.title,
+          title: finalTitle,
         },
-        writerTitle: generated.version.title,
+        writerTitle: finalTitle,
       });
+      if (
+        !quality.ok &&
+        (quality.reason.startsWith("GENERIC_FORM_TITLE") ||
+          quality.reason.startsWith("MULTI_PERFORMER_SINGULAR_TITLE"))
+      ) {
+        const catalog = extractItemListCatalogFacts(item.rawData);
+        const evidence = {
+          officialTitle: item.title,
+          writerTitle: finalTitle,
+          performers: catalog.actors,
+          genres: catalog.genres,
+          makers: catalog.makers,
+          seriesNames: catalog.series,
+          productCanonicalId: cid,
+        };
+        const salvaged = buildDeterministicTitle(evidence, selectTitleAxis(evidence));
+        if (salvaged && salvaged !== finalTitle) {
+          finalTitle = salvaged;
+          await input.lifecycle.updateContentVersionStructuredContent(generated.version.id, {
+            ...sc,
+            title: finalTitle,
+            productCanonicalId: cid,
+            canonicalId: cid,
+            stockRoute: "API_QUALITY_REPAIR",
+            titleSalvagedFrom: generated.version.title,
+          });
+          await input.database.prisma.contentVersion.update({
+            where: { id: generated.version.id },
+            data: { title: finalTitle },
+          });
+          quality = evaluateStockArticleQualityGate({
+            productTitle: item.title,
+            rawData: item.rawData,
+            structuredContent: { ...sc, title: finalTitle },
+            writerTitle: finalTitle,
+          });
+        }
+      }
       if (!quality.ok) {
         failed.push({
           cid,
           wpId: target.publishedExternalId,
           reason: quality.reason,
           enrichment: enrichment.status,
-          title: generated.version.title,
+          title: finalTitle,
         });
         continue;
       }
@@ -232,6 +274,8 @@ export async function repairApiArticleQualityInPlace(input: {
             publishSlotKey: meta.publishSlotKey,
             scheduledAt: meta.scheduledAt ?? scheduledAt?.toISOString() ?? null,
             repairedFromContentVersionId: target.contentVersionId,
+            ctaUrl,
+            affiliateLinkReady: /al\.fanza|af_id=/i.test(ctaUrl),
           },
         },
       );
@@ -242,11 +286,12 @@ export async function repairApiArticleQualityInPlace(input: {
         status: target.status,
         enrichment: enrichment.status,
         actorCount: enrichment.actorCount,
-        title: generated.version.title,
+        title: finalTitle,
         scheduledAt: scheduledAt?.toISOString() ?? null,
         wpOk: wp.ok,
         wpPublished: "published" in wp ? wp.published : false,
         contentVersionId: generated.version.id,
+        ctaAffiliate: /al\.fanza|af_id=/i.test(ctaUrl),
       });
     } catch (error) {
       failed.push({

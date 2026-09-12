@@ -75,6 +75,18 @@ describe("stock article quality gate", () => {
     expect(gate.ok).toBe(false);
     if (!gate.ok) expect(gate.reason).toMatch(/THIN_ARTICLE/);
   });
+  it("fails bare generic form titles like ベストと総集編", () => {
+    const gate = evaluateStockArticleQualityGate({
+      productTitle: "フェラBEST5時間",
+      rawData: multiRaw,
+      writerTitle: "ベストと総集編",
+      structuredContent: {
+        bodyHtml: "<p>収録時間と出演構成を整理した紹介です。公式カタログ上のジャンルとメーカーを根拠にします。</p>".repeat(4),
+      },
+    });
+    expect(gate.ok).toBe(false);
+    if (!gate.ok) expect(gate.reason).toMatch(/GENERIC_FORM_TITLE/);
+  });
 });
 
 describe("deterministic SEO title multi-performer", () => {
@@ -94,5 +106,36 @@ describe("deterministic SEO title multi-performer", () => {
     const title = buildDeterministicTitle(evidence, axis);
     expect(title).not.toMatch(/宍戸里帆出演/);
     expect(title).not.toMatch(/^注目は.+｜宍戸里帆/);
+    expect(title).not.toMatch(/^ベストと総集編$/);
+  });
+});
+
+describe("itemlist description synthesis", () => {
+  it("builds factual synopsis from catalog when page description is absent", async () => {
+    const { synthesizeItemListDescription, extractItemListCatalogFacts } = await import(
+      "./ensure-official-enrichment.js"
+    );
+    const facts = extractItemListCatalogFacts({
+      title: "おしゃぶり大好き美女たちのフェラ顔がスケベすぎる！5時間BEST",
+      volume: "300",
+      iteminfo: {
+        actress: [{ name: "宍戸里帆" }, { name: "依本しおり" }],
+        genre: [{ name: "ベスト・総集編" }, { name: "フェラ" }],
+        maker: [{ name: "アリスJAPAN" }],
+      },
+    });
+    expect(facts.durationMinutes).toBe(300);
+    const desc = synthesizeItemListDescription({
+      productTitle: facts.productName!,
+      actors: facts.actors,
+      genres: facts.genres,
+      makers: facts.makers,
+      series: facts.series,
+      durationMinutes: facts.durationMinutes,
+    });
+    expect(desc).toContain("フェラ顔");
+    expect(desc).toContain("宍戸里帆");
+    expect(desc).toContain("依本しおり");
+    expect(desc).toMatch(/約300分/);
   });
 });
