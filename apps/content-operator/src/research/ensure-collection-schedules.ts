@@ -111,10 +111,14 @@ export async function ensureResearchCollectionSchedules(input: {
       continue;
     }
 
-    // Never-run schedules must catch up once credentials become AVAILABLE.
-    // Otherwise nextRunAt stays on the next cron wall-clock (e.g. +hours) while Research stays empty.
+    // Never-run OR recent collection failure with empty Research: catch up immediately.
+    // (A failed first ItemList run advances lastRunAt but may save 0 items due to tx timeout.)
     const neverRan = existing.lastRunAt == null;
-    const nextRunAtResolved = neverRan
+    const failedAndEmpty =
+      existing.consecutiveFailureCount > 0 &&
+      (existing.nextRunAt == null || existing.nextRunAt.getTime() > now().getTime());
+    const needsCatchUp = neverRan || failedAndEmpty;
+    const nextRunAtResolved = needsCatchUp
       ? now()
       : existing.nextRunAt && existing.nextRunAt.getTime() > now().getTime()
         ? existing.nextRunAt
@@ -130,9 +134,9 @@ export async function ensureResearchCollectionSchedules(input: {
       nextRunAt: nextRunAtResolved,
     });
     result.ensured.push(key);
-    if (neverRan) {
+    if (needsCatchUp) {
       input.logger.info(
-        `research auto-schedule catch-up provider=${key} reason=never_ran nextRun=now`,
+        `research auto-schedule catch-up provider=${key} reason=${neverRan ? "never_ran" : "failed_pending"} nextRun=now`,
       );
     }
   }

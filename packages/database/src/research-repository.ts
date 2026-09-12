@@ -59,34 +59,37 @@ export class ResearchRepository {
   constructor(private readonly prisma: PrismaClient) {}
 
   async saveCollection(result: CollectionResult): Promise<SaveCollectionSummary> {
-    return this.prisma.$transaction(async (tx) => {
-      let createdCount = 0;
-      let updatedCount = 0;
-      let metricCount = 0;
-      let tagLinkCount = 0;
-      let imageCount = 0;
+    // Per-item transactions: a 100-item Image/Tag upsert batch exceeded the default
+    // 5s interactive transaction timeout on Railway and rolled everything back.
+    let createdCount = 0;
+    let updatedCount = 0;
+    let metricCount = 0;
+    let tagLinkCount = 0;
+    let imageCount = 0;
 
-      for (const item of result.items) {
-        const outcome = await this.saveItem(tx, item);
-        if (outcome.created) {
-          createdCount += 1;
-        } else {
-          updatedCount += 1;
-        }
-        metricCount += outcome.metricCount;
-        tagLinkCount += outcome.tagLinkCount;
-        imageCount += outcome.imageCount;
+    for (const item of result.items) {
+      const outcome = await this.prisma.$transaction(
+        async (tx) => this.saveItem(tx, item),
+        { maxWait: 10_000, timeout: 30_000 },
+      );
+      if (outcome.created) {
+        createdCount += 1;
+      } else {
+        updatedCount += 1;
       }
+      metricCount += outcome.metricCount;
+      tagLinkCount += outcome.tagLinkCount;
+      imageCount += outcome.imageCount;
+    }
 
-      return {
-        itemCount: result.items.length,
-        createdCount,
-        updatedCount,
-        metricCount,
-        tagLinkCount,
-        imageCount,
-      };
-    });
+    return {
+      itemCount: result.items.length,
+      createdCount,
+      updatedCount,
+      metricCount,
+      tagLinkCount,
+      imageCount,
+    };
   }
 
   private async saveItem(
