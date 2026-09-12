@@ -1,8 +1,14 @@
 import { loadConfig } from "@ai-affiliate/config";
-import { LifecycleRepository, createDatabaseClient } from "@ai-affiliate/database";
+import {
+  LifecycleRepository,
+  P6Repository,
+  createDatabaseClient,
+  type DatabaseClient,
+} from "@ai-affiliate/database";
 import { createP45Stack, seedP45Prompts } from "./p45-service.js";
 import { ContentGenerationService } from "./content-generation-service.js";
 import { MockLLMProvider } from "../adapters/llm/mock-llm-provider.js";
+import { ContentReviewService } from "../admin/content-review-service.js";
 
 function parseFlags(argv: string[]): Record<string, string> {
   const flags: Record<string, string> = {};
@@ -21,7 +27,11 @@ function printJson(value: unknown): void {
 }
 
 async function withP45<T>(
-  run: (ctx: ReturnType<typeof createP45Stack>, repo: LifecycleRepository) => Promise<T>,
+  run: (
+    ctx: ReturnType<typeof createP45Stack>,
+    repo: LifecycleRepository,
+    database: DatabaseClient,
+  ) => Promise<T>,
 ): Promise<T> {
   const config = loadConfig({ requireDatabaseUrl: false });
   const database = createDatabaseClient();
@@ -30,7 +40,7 @@ async function withP45<T>(
     const repo = new LifecycleRepository(database.prisma);
     await seedP45Prompts(repo);
     const ctx = createP45Stack({ repo, config });
-    return await run(ctx, repo);
+    return await run(ctx, repo, database);
   } finally {
     await database.disconnect();
   }
@@ -104,8 +114,16 @@ export async function runP45ApproveContent(argv: string[]): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  await withP45(async (_ctx, repo) => {
-    printJson(await repo.updateContentVersionStatus(flags["content-version-id"]!, "APPROVED"));
+  await withP45(async (_ctx, repo, database) => {
+    const review = new ContentReviewService(repo, new P6Repository(database.prisma));
+    printJson(
+      await review.decide({
+        contentVersionId: flags["content-version-id"]!,
+        decision: "approve",
+        actor: "p45-cli",
+        approvalPolicy: "manual",
+      }),
+    );
   });
 }
 

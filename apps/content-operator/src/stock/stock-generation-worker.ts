@@ -1,5 +1,5 @@
 /**
- * Stock generation worker: Analysis → Selection → Generate → Review → APPROVED stock.
+ * Stock generation worker: Analysis → Selection → Canonical Pipeline → APPROVED stock.
  * Does NOT publish to WordPress. Batch-limited. Provider-agnostic candidate pool.
  */
 
@@ -10,6 +10,7 @@ import { createLogger } from "@ai-affiliate/shared";
 import { AnalysisEngine } from "../analysis/analysis-engine.js";
 import { requireApiLLMProvider } from "../adapters/llm/create-llm-provider.js";
 import { ContentGenerationService } from "../generation/content-generation-service.js";
+import { runCanonicalArticlePipeline } from "../generation/canonical-article-pipeline.js";
 import { seedP45Prompts } from "../generation/p45-service.js";
 import { ContentReviewService } from "../admin/content-review-service.js";
 import { loadDailyCandidatePool } from "../daily-ops/candidate-pool.js";
@@ -24,8 +25,6 @@ import { tokyoDateString } from "../daily-blog/idempotency.js";
 import { validateFanzaAffiliateUrl } from "../daily-blog/affiliate-url.js";
 import { buildFanzaCanonicalProductUrl } from "../adapters/affiliate/fanza-affiliate-provider.js";
 import { normalizeProductKey } from "../daily-ops/blog-product-exclusion.js";
-import { claimStatementsFromPageEvidence } from "../article-pattern/evidence-pack.js";
-import type { PageEvidenceMetaShape } from "../article-pattern/official-page-evidence-atoms.js";
 import {
   countUnusedApprovedStock,
   loadArticledProductKeys,
@@ -38,118 +37,9 @@ import {
   readStockAttemptLedger,
 } from "./stock-attempt-ledger.js";
 import { confirmFanzaAffiliateImageTerms } from "./confirm-fanza-image-terms.js";
-import {
-  classifyCastShape,
-  ensureOfficialEnrichmentForStockItem,
-  extractItemListCatalogFacts,
-  shouldAvoidSingularPerformerFraming,
-} from "./ensure-official-enrichment.js";
-import {
-  extractSynopsisTheme,
-  isMechanicalTemplateTitle,
-  isPerformerGenreListTitle,
-} from "./repair-quality-guard.js";
+import { evaluateStockArticleQualityGate } from "./stock-quality-gate.js";
 
-function plainTextLength(htmlOrText: unknown): number {
-  return String(htmlOrText ?? "")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim().length;
-}
-
-const GENERIC_PROSE_RE =
-  /魅力を存分に味わえる|濃厚な内容|おすすめです|じっくり楽しみたい方|ボリューム感|刺激的な展開/g;
-
-/**
- * Stock auto-approve quality gate — thin/generic/multi-performer misframe → NEEDS_ENRICHMENT.
- */
-export function evaluateStockArticleQualityGate(input: {
-  productTitle: string;
-  rawData: unknown;
-  structuredContent: Record<string, unknown>;
-  writerTitle?: string | null;
-}): { ok: true } | { ok: false; reason: string } {
-  const catalog = extractItemListCatalogFacts(input.rawData);
-  const actors = catalog.actors;
-  const castShape = classifyCastShape({ actors, productTitle: input.productTitle });
-  const title =
-    input.writerTitle?.trim() ||
-    String(input.structuredContent.title ?? input.structuredContent.seoTitle ?? "").trim() ||
-    "";
-  const body = plainTextLength(
-    input.structuredContent.bodyHtml ??
-      input.structuredContent.body ??
-      input.structuredContent.html ??
-      input.structuredContent.contentHtml,
-  );
-  const bodyText = String(
-    input.structuredContent.bodyHtml ??
-      input.structuredContent.body ??
-      input.structuredContent.html ??
-      "",
-  ).replace(/<[^>]+>/g, " ");
-  const genericHits = bodyText.match(GENERIC_PROSE_RE)?.length ?? 0;
-  const sentences = Math.max(1, bodyText.split(/[。．.!?！？\n]/).filter((s) => s.trim().length > 8).length);
-  const genericRatio = genericHits / sentences;
-
-  if (shouldAvoidSingularPerformerFraming({ actors, productTitle: input.productTitle })) {
-    const singularHit = actors.find(
-      (a) =>
-        a.length >= 2 &&
-        (title.includes(`${a}出演`) ||
-          title.includes(`${a}が魅せる`) ||
-          title.includes(`${a}が贈る`) ||
-          /^注目は.+｜/.test(title) && title.includes(a)),
-    );
-    // Title names exactly one cast member as the star while many exist.
-    const namedInTitle = actors.filter((a) => a.length >= 2 && title.includes(a));
-    if (singularHit || (namedInTitle.length === 1 && actors.length >= 3 && /出演|が魅せる|が贈る/.test(title))) {
-      return {
-        ok: false,
-        reason: `MULTI_PERFORMER_SINGULAR_TITLE:${castShape}`,
-      };
-    }
-  }
-
-  // Bare form titles with no product theme (e.g. 「ベストと総集編」).
-  if (
-    /^(?:ベストと総集編|ベスト・総集編|女優ベスト・総集編|ベスト|総集編)(?:の見どころ(?:整理)?|ガイド)?$/u.test(
-      title,
-    )
-  ) {
-    return { ok: false, reason: "GENERIC_FORM_TITLE" };
-  }
-
-  if (isPerformerGenreListTitle(title, actors)) {
-    return { ok: false, reason: "PERFORMER_GENRE_LIST_TITLE" };
-  }
-
-  const synopsis = extractSynopsisTheme(input.productTitle, actors);
-  if (synopsis && isMechanicalTemplateTitle(title)) {
-    return { ok: false, reason: "MECHANICAL_TEMPLATE_OVER_SYNOPSIS" };
-  }
-  if (
-    synopsis &&
-    !title.includes(synopsis.slice(0, Math.min(6, synopsis.length))) &&
-    isPerformerGenreListTitle(title, actors)
-  ) {
-    return { ok: false, reason: "SYNOPSIS_IGNORED_FOR_GENRE_TITLE" };
-  }
-
-  if (body > 0 && body < 420 && (castShape === "BEST_COMPILATION" || actors.length >= 2 || catalog.genres.length >= 3)) {
-    return { ok: false, reason: `THIN_ARTICLE_FOR_RICH_CAST:body=${body}` };
-  }
-
-  if (body > 0 && body < 280) {
-    return { ok: false, reason: `THIN_ARTICLE:body=${body}` };
-  }
-
-  if (genericRatio >= 0.35 && genericHits >= 2) {
-    return { ok: false, reason: `GENERIC_PROSE_RATIO:${genericRatio.toFixed(2)}` };
-  }
-
-  return { ok: true };
-}
+export { evaluateStockArticleQualityGate } from "./stock-quality-gate.js";
 
 function fanzaImageTermsVerifiedFromEnv(
   env: NodeJS.ProcessEnv = process.env,
@@ -197,67 +87,6 @@ export type StockGenerationResult = {
   approvedVersionIds: string[];
 };
 
-async function bootstrapLifecycleForResearchItem(input: {
-  lifecycle: LifecycleRepository;
-  researchItemId: string;
-  title: string;
-  canonicalId: string;
-}): Promise<{ topicId: string; strategyId: string; claimIds: string[] }> {
-  const topic = await input.lifecycle.createTopicCandidate({
-    title: input.title,
-    status: "READY",
-    metadata: {
-      source: "stock-generation",
-      researchItemId: input.researchItemId,
-      canonicalId: input.canonicalId,
-    },
-  });
-  const strategy = await input.lifecycle.createStrategy({
-    topicCandidateId: topic.id,
-    objective: "stock_blog_option_b",
-    targetAudience: "readers",
-    userIntent: "product_intro",
-    formatCategory: "ARTICLE",
-    formatKey: "NEW_RELEASE_SINGLE",
-    angle: "single_product",
-    primaryChannel: "WORDPRESS",
-    candidateChannels: ["WORDPRESS"],
-    status: "READY",
-  });
-
-  const doc = await input.lifecycle.findLatestSourceDocumentByUrlContains(input.canonicalId);
-  const pageEvidenceMeta =
-    doc?.metadata && typeof doc.metadata === "object" && !Array.isArray(doc.metadata)
-      ? ((doc.metadata as Record<string, unknown>).pageEvidence as PageEvidenceMetaShape | undefined)
-      : undefined;
-
-  const statements =
-    pageEvidenceMeta?.description?.text
-      ? claimStatementsFromPageEvidence({
-          pageEvidenceMeta,
-          productTitle: input.title,
-          actors: pageEvidenceMeta.actors,
-        })
-      : input.title.trim()
-        ? [`${input.title.trim()} は公開カタログ上で確認できる。`]
-        : [`${input.canonicalId} の公開ページが存在する。`];
-
-  const claimIds: string[] = [];
-  for (const statement of statements.slice(0, 4)) {
-    const claim = await input.lifecycle.createClaim({
-      statement,
-      claimType: "FACT",
-      status: "SUPPORTED",
-      confidence: 0.8,
-      strategyId: strategy.id,
-      metadata: { researchItemId: input.researchItemId, source: "stock-generation" },
-    });
-    claimIds.push(claim.id);
-  }
-
-  return { topicId: topic.id, strategyId: strategy.id, claimIds };
-}
-
 export async function runStockGenerationBatch(deps: {
   database: DatabaseClient;
   lifecycle: LifecycleRepository;
@@ -288,8 +117,6 @@ export async function runStockGenerationBatch(deps: {
     };
   }
 
-  // Continuous generation: never stop solely because APPROVED >= 9.
-  // Cap per tick = generationBatch; optional soft daily cap for LLM cost.
   const generatedToday = await countStockGenerationsOnTokyoDay(
     deps.database.prisma,
     tokyoDateString(now, daily.timezone),
@@ -313,7 +140,6 @@ export async function runStockGenerationBatch(deps: {
   }
 
   const remainingDaily = Math.max(0, runtime.maxGenerationsPerDay - generatedToday);
-  // --batch / forceBatch overrides the default tick size (still capped by daily soft budget).
   const requested =
     deps.forceBatch != null && Number.isFinite(deps.forceBatch)
       ? Math.max(0, Math.floor(deps.forceBatch))
@@ -349,7 +175,7 @@ export async function runStockGenerationBatch(deps: {
   let analysisOk = false;
   let analysisCandidates = 0;
   try {
-    const ar = await analysis.run({ limit: 80, source: "all" });
+    const ar = await analysis.run({ limit: 80 });
     analysisOk = true;
     analysisCandidates = ar.selectedItemCount ?? 0;
   } catch {
@@ -373,7 +199,6 @@ export async function runStockGenerationBatch(deps: {
     return true;
   });
 
-  // Load ResearchItem attempt ledgers — never delete; only defer retries.
   const researchIds = [...new Set(filteredPool.map((c) => c.researchItemId).filter(Boolean))];
   const researchRows =
     researchIds.length > 0
@@ -413,202 +238,97 @@ export async function runStockGenerationBatch(deps: {
     deps.lifecycle,
     new P6Repository(deps.database.prisma),
   );
+  const logger = createLogger("info");
 
   for (let i = 0; i < toGenerate; i++) {
     let produced = false;
-    // Try several candidates per batch slot so DEFER does not burn the whole batch.
     for (let attempt = 0; attempt < 8 && !produced; attempt++) {
-    const remaining = retryEligiblePool.filter((c) => {
-      const key = normalizeProductKey(c.canonicalId);
-      return !key || !usedThisBatch.has(key);
-    });
-    if (remaining.length === 0) {
-      held.push({ canonicalId: "-", reason: "EMPTY_ELIGIBLE_POOL" });
-      break;
-    }
-
-    const plan = planDailyChannels({
-      pool: remaining,
-      mixWeights: daily.mixWeights,
-      releaseAge: daily.releaseAge,
-      recentBlogMix: recentMix,
-      channelHistory,
-      channelDuplicate: daily.channelDuplicate,
-      dayKey: `${dayKey}-stock-${i}-${attempt}`,
-      blogRecentActressKeys,
-      minTotalScore: 20,
-      minSampleImages: 3,
-      minEvidenceRichness: 0.25,
-      now,
-    });
-
-    const selected = plan.blog.selection.selected;
-    if (!selected || plan.blog.blocked) {
-      held.push({
-        canonicalId: selected?.canonicalId ?? "-",
-        reason: plan.blog.blockReason ?? "BLOG_BLOCKED",
+      const remaining = retryEligiblePool.filter((c) => {
+        const key = normalizeProductKey(c.canonicalId);
+        return !key || !usedThisBatch.has(key);
       });
-      break;
-    }
+      if (remaining.length === 0) {
+        held.push({ canonicalId: "-", reason: "EMPTY_ELIGIBLE_POOL" });
+        break;
+      }
 
-    const productKey = normalizeProductKey(selected.canonicalId) ?? selected.canonicalId;
-    usedThisBatch.add(productKey);
-
-    const ctaUrl =
-      selected.affiliateUrl?.trim() ||
-      buildFanzaCanonicalProductUrl(selected.canonicalId);
-    const affiliateCheck = validateFanzaAffiliateUrl(ctaUrl);
-    if (!affiliateCheck.ok) {
-      held.push({ canonicalId: selected.canonicalId, reason: "AFFILIATE_URL_INVALID" });
-      continue;
-    }
-
-    try {
-      const item = await deps.database.prisma.researchItem.findUnique({
-        where: { id: selected.researchItemId },
+      const plan = planDailyChannels({
+        pool: remaining,
+        mixWeights: daily.mixWeights,
+        releaseAge: daily.releaseAge,
+        recentBlogMix: recentMix,
+        channelHistory,
+        channelDuplicate: daily.channelDuplicate,
+        dayKey: `${dayKey}-stock-${i}-${attempt}`,
+        blogRecentActressKeys,
+        minTotalScore: 20,
+        minSampleImages: 3,
+        minEvidenceRichness: 0.25,
+        now,
       });
-      if (!item) {
-        held.push({ canonicalId: selected.canonicalId, reason: "RESEARCH_ITEM_MISSING" });
+
+      const selected = plan.blog.selection.selected;
+      if (!selected || plan.blog.blocked) {
+        held.push({
+          canonicalId: selected?.canonicalId ?? "-",
+          reason: plan.blog.blockReason ?? "BLOG_BLOCKED",
+        });
+        break;
+      }
+
+      const productKey = normalizeProductKey(selected.canonicalId) ?? selected.canonicalId;
+      usedThisBatch.add(productKey);
+
+      const ctaUrl =
+        selected.affiliateUrl?.trim() ||
+        buildFanzaCanonicalProductUrl(selected.canonicalId);
+      const affiliateCheck = validateFanzaAffiliateUrl(ctaUrl);
+      if (!affiliateCheck.ok) {
+        held.push({ canonicalId: selected.canonicalId, reason: "AFFILIATE_URL_INVALID" });
         continue;
       }
 
-      const enrichment = await ensureOfficialEnrichmentForStockItem({
-        lifecycle: deps.lifecycle,
-        research: researchRepo,
-        config: deps.config,
-        logger: createLogger("info"),
-        canonicalId: selected.canonicalId,
-        productUrl: ctaUrl,
-        researchItemId: item.id,
-        productTitle: item.title,
-        rawData: item.rawData,
-      });
-      if (enrichment.status === "NEEDS_ENRICHMENT") {
-        const reason = "NEEDS_ENRICHMENT:official_evidence_missing";
-        held.push({ canonicalId: selected.canonicalId, reason });
-        const failed = buildRawDataAfterStockFailure({
-          rawData: item.rawData,
-          reason,
-          now,
-          maxAttempts: runtime.stockMaxAttemptsBeforeDefer,
-        });
-        await deps.database.prisma.researchItem.update({
-          where: { id: item.id },
-          data: { rawData: asStoredJson(failed.rawData) },
-        });
-        ledgerByResearchId.set(item.id, failed.ledger);
-        continue;
-      }
-
-      const boot = await bootstrapLifecycleForResearchItem({
-        lifecycle: deps.lifecycle,
-        researchItemId: item.id,
-        title: item.title,
-        canonicalId: selected.canonicalId,
-      });
-
-      const generatedArticle = await generation.generateBloggerArticle({
-        topicId: boot.topicId,
-        strategyId: boot.strategyId,
-        productTitle: item.title,
-        ctaUrl,
-        productCanonicalId: selected.canonicalId,
-        claimIds: boot.claimIds,
-      });
-      generated += 1;
-      articled.add(productKey);
-      produced = true;
-
-      // Persist product key on structuredContent for stock exclusion / PUBLIC eval.
-      const sc = (generatedArticle.version.structuredContent ?? {}) as Record<string, unknown>;
-      const quality = evaluateStockArticleQualityGate({
-        productTitle: item.title,
-        rawData: item.rawData,
-        structuredContent: sc,
-        writerTitle: generatedArticle.version.title,
-      });
-      if (!sc.productCanonicalId && !sc.canonicalId) {
-        await deps.lifecycle.updateContentVersionStructuredContent(generatedArticle.version.id, {
-          ...sc,
-          productCanonicalId: selected.canonicalId,
-          canonicalId: selected.canonicalId,
-          sourceProvider: "research",
-          analysisRunId,
-          stockRoute: "STOCK_GENERATION",
-          officialEnrichmentStatus: enrichment.status,
-          officialActorCount: enrichment.actorCount,
-        });
-      } else {
-        await deps.lifecycle.updateContentVersionStructuredContent(generatedArticle.version.id, {
-          ...sc,
-          officialEnrichmentStatus: enrichment.status,
-          officialActorCount: enrichment.actorCount,
-        });
-      }
-
-      if (!quality.ok) {
-        const reason = quality.reason;
-        held.push({ canonicalId: selected.canonicalId, reason });
-        const failed = buildRawDataAfterStockFailure({
-          rawData: item.rawData,
-          reason,
-          now,
-          maxAttempts: runtime.stockMaxAttemptsBeforeDefer,
-        });
-        await deps.database.prisma.researchItem.update({
-          where: { id: item.id },
-          data: { rawData: asStoredJson(failed.rawData) },
-        });
-        ledgerByResearchId.set(item.id, failed.ledger);
-        // Do not auto-approve thin/misframed articles.
-        continue;
-      }
-
-      // ResearchItem retained — only stamp attempt ledger as COMPLETED.
-      const success = buildRawDataAfterStockSuccess({ rawData: item.rawData, now });
-      await deps.database.prisma.researchItem.update({
-        where: { id: item.id },
-        data: { rawData: asStoredJson(success.rawData) },
-      });
-      ledgerByResearchId.set(item.id, success.ledger);
-
-      try {
-        await contentReview.decide({
-          contentVersionId: generatedArticle.version.id,
-          decision: "approve",
-          actor: "stock-auto-review",
-          reason: "Stock pipeline auto review after generation gates",
-          approvalPolicy: "auto",
-        });
-        reviewPassed += 1;
-        approvedVersionIds.push(generatedArticle.version.id);
-      } catch (reviewErr) {
-        const reason =
-          reviewErr instanceof Error
-            ? `AUTO_REVIEW_FAILED:${reviewErr.message.slice(0, 120)}`
-            : "AUTO_REVIEW_FAILED";
-        held.push({ canonicalId: selected.canonicalId, reason });
-        const failed = buildRawDataAfterStockFailure({
-          rawData: success.rawData,
-          reason,
-          now,
-          maxAttempts: runtime.stockMaxAttemptsBeforeDefer,
-        });
-        await deps.database.prisma.researchItem.update({
-          where: { id: item.id },
-          data: { rawData: asStoredJson(failed.rawData) },
-        });
-        ledgerByResearchId.set(item.id, failed.ledger);
-      }
-    } catch (e) {
-      const reason = e instanceof Error ? e.message.slice(0, 160) : String(e);
-      held.push({ canonicalId: selected.canonicalId, reason });
       try {
         const item = await deps.database.prisma.researchItem.findUnique({
           where: { id: selected.researchItemId },
-          select: { id: true, rawData: true },
         });
-        if (item) {
+        if (!item) {
+          held.push({ canonicalId: selected.canonicalId, reason: "RESEARCH_ITEM_MISSING" });
+          continue;
+        }
+
+        const result = await runCanonicalArticlePipeline({
+          lifecycle: deps.lifecycle,
+          research: researchRepo,
+          generation,
+          contentReview,
+          config: deps.config,
+          logger,
+          researchItemId: item.id,
+          productTitle: item.title,
+          productCanonicalId: selected.canonicalId,
+          productUrl: ctaUrl,
+          rawData: item.rawData,
+          ctaUrl,
+          route: "STOCK_GENERATION",
+          objective: "stock_blog_option_b",
+          autoApprove: true,
+          approveActor: "stock-auto-review",
+          auxiliarySafetyOk: ({ title, structuredContent }) =>
+            evaluateStockArticleQualityGate({
+              productTitle: item.title,
+              rawData: item.rawData,
+              structuredContent: {
+                ...structuredContent,
+                title,
+              },
+              writerTitle: title,
+            }),
+        });
+
+        if (!result.ok) {
+          const reason = result.reason;
+          held.push({ canonicalId: selected.canonicalId, reason });
           const failed = buildRawDataAfterStockFailure({
             rawData: item.rawData,
             reason,
@@ -620,18 +340,73 @@ export async function runStockGenerationBatch(deps: {
             data: { rawData: asStoredJson(failed.rawData) },
           });
           ledgerByResearchId.set(item.id, failed.ledger);
+          continue;
         }
-      } catch {
-        // Ledger update must never cause ResearchItem deletion or abort the batch.
+
+        generated += 1;
+        articled.add(productKey);
+        produced = true;
+
+        // Stamp analysis run id (canonical pipeline already set stockRoute / enrichment).
+        if (result.contentVersionId && analysisRunId) {
+          const cv = await deps.database.prisma.contentVersion.findUnique({
+            where: { id: result.contentVersionId },
+            select: { structuredContent: true },
+          });
+          const sc = (cv?.structuredContent ?? {}) as Record<string, unknown>;
+          await deps.lifecycle.updateContentVersionStructuredContent(result.contentVersionId, {
+            ...sc,
+            sourceProvider: "research",
+            analysisRunId,
+          });
+        }
+
+        const success = buildRawDataAfterStockSuccess({ rawData: item.rawData, now });
+        await deps.database.prisma.researchItem.update({
+          where: { id: item.id },
+          data: { rawData: asStoredJson(success.rawData) },
+        });
+        ledgerByResearchId.set(item.id, success.ledger);
+
+        if (result.approved) {
+          reviewPassed += 1;
+          approvedVersionIds.push(result.contentVersionId);
+        } else {
+          held.push({
+            canonicalId: selected.canonicalId,
+            reason: "CANONICAL_GENERATED_NOT_APPROVED",
+          });
+        }
+      } catch (e) {
+        const reason = e instanceof Error ? e.message.slice(0, 160) : String(e);
+        held.push({ canonicalId: selected.canonicalId, reason });
+        try {
+          const item = await deps.database.prisma.researchItem.findUnique({
+            where: { id: selected.researchItemId },
+            select: { id: true, rawData: true },
+          });
+          if (item) {
+            const failed = buildRawDataAfterStockFailure({
+              rawData: item.rawData,
+              reason,
+              now,
+              maxAttempts: runtime.stockMaxAttemptsBeforeDefer,
+            });
+            await deps.database.prisma.researchItem.update({
+              where: { id: item.id },
+              data: { rawData: asStoredJson(failed.rawData) },
+            });
+            ledgerByResearchId.set(item.id, failed.ledger);
+          }
+        } catch {
+          // Ledger update must never cause ResearchItem deletion or abort the batch.
+        }
       }
-    }
     }
   }
 
   const unusedAfter = await countUnusedApprovedStock(deps.database.prisma);
 
-  // Operator env flag asserts FANZA_AFFILIATE_IMAGE_TERMS_CHECKLIST completed.
-  // Promote RC→ALLOWED on stock so PUBLIC-capable future scheduling can proceed.
   if (fanzaImageTermsVerifiedFromEnv() && (generated > 0 || unusedAfter > 0)) {
     await confirmFanzaAffiliateImageTerms({
       prisma: deps.database.prisma,

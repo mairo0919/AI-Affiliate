@@ -5,10 +5,9 @@ import {
   extractItemListCatalogFacts,
   shouldAvoidSingularPerformerFraming,
 } from "./ensure-official-enrichment.js";
-import { evaluateStockArticleQualityGate } from "./stock-generation-worker.js";
+import { evaluateStockArticleQualityGate } from "./stock-quality-gate.js";
 import { buildDeterministicTitle, selectTitleAxis } from "../wordpress/publication-metadata.js";
 import {
-  buildEvidenceEditorialTitle,
   decideRepairApply,
   detectRepairScope,
   extractSynopsisTheme,
@@ -180,33 +179,11 @@ describe("deterministic SEO title multi-performer", () => {
   });
 });
 
-describe("itemlist description synthesis", () => {
-  it("builds factual synopsis from catalog when page description is absent", async () => {
-    const { synthesizeItemListDescription, extractItemListCatalogFacts } = await import(
-      "./ensure-official-enrichment.js"
-    );
-    const facts = extractItemListCatalogFacts({
-      title: "おしゃぶり大好き美女たちのフェラ顔がスケベすぎる！5時間BEST",
-      volume: "300",
-      iteminfo: {
-        actress: [{ name: "宍戸里帆" }, { name: "依本しおり" }],
-        genre: [{ name: "ベスト・総集編" }, { name: "フェラ" }],
-        maker: [{ name: "アリスJAPAN" }],
-      },
-    });
-    expect(facts.durationMinutes).toBe(300);
-    const desc = synthesizeItemListDescription({
-      productTitle: facts.productName!,
-      actors: facts.actors,
-      genres: facts.genres,
-      makers: facts.makers,
-      series: facts.series,
-      durationMinutes: facts.durationMinutes,
-    });
-    expect(desc).toContain("フェラ顔");
-    expect(desc).toContain("宍戸里帆");
-    expect(desc).toContain("依本しおり");
-    expect(desc).toMatch(/約300分/);
+describe("itemlist is discovery-only (no Writer Evidence synthesis)", () => {
+  it("does not export synthesizeItemListDescription", async () => {
+    const mod = await import("./ensure-official-enrichment.js");
+    expect("synthesizeItemListDescription" in mod).toBe(false);
+    expect(mod.extractItemListCatalogFacts).toBeTypeOf("function");
   });
 });
 
@@ -261,7 +238,7 @@ describe("repair quality guard", () => {
     expect(decision.apply).toBe(false);
   });
 
-  it("applies synopsis title salvage over genre-list without touching body score", () => {
+  it("applies synopsis title improvement over genre-list without body regression", () => {
     const body = "元カノとの再会と家出の経緯を軸にした自然な紹介文。".repeat(50);
     const before = {
       title: "幸村泉希の寝取り・寝取られ・NTR",
@@ -269,14 +246,7 @@ describe("repair quality guard", () => {
       productTitle: official,
       rawData: raw,
     };
-    const editorial = buildEvidenceEditorialTitle({
-      officialTitle: official,
-      performers: ["幸村泉希"],
-      genres: ["寝取り・寝取られ・NTR", "人妻"],
-      makers: ["アリスJAPAN"],
-      series: [],
-    });
-    expect(editorial).toMatch(/再会|元カノ|家出/);
+    const editorial = "元カノと3年ぶりの再会｜幸村泉希";
     expect(isPerformerGenreListTitle(editorial, ["幸村泉希"])).toBe(false);
     const decision = decideRepairApply({
       before,
@@ -295,5 +265,10 @@ describe("repair quality guard", () => {
       rawData: raw,
     });
     expect(scope).toBe("NONE");
+  });
+
+  it("does not export mechanical title salvage builder", async () => {
+    const mod = await import("./repair-quality-guard.js");
+    expect("buildEvidenceEditorialTitle" in mod).toBe(false);
   });
 });

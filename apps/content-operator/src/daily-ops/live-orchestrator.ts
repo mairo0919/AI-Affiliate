@@ -8,6 +8,7 @@ import type { AppConfig } from "@ai-affiliate/config";
 import {
   ContentRepository,
   P6Repository,
+  ResearchRepository,
   type DatabaseClient,
   type LifecycleRepository,
 } from "@ai-affiliate/database";
@@ -26,9 +27,8 @@ import {
   type KnownPublication,
 } from "../daily-blog/duplicate-gate.js";
 import { dailyRunIdempotencyKey, tokyoDateString } from "../daily-blog/idempotency.js";
-import { claimStatementsFromPageEvidence } from "../article-pattern/evidence-pack.js";
-import type { PageEvidenceMetaShape } from "../article-pattern/official-page-evidence-atoms.js";
 import { formatBloggerHtml } from "../generation/blogger-formatter.js";
+import { runCanonicalArticlePipeline } from "../generation/canonical-article-pipeline.js";
 import { ContentGenerationService } from "../generation/content-generation-service.js";
 import { seedP45Prompts } from "../generation/p45-service.js";
 import {
@@ -111,69 +111,6 @@ export interface DailyLiveDeps {
   wordpressPublisher?: PublisherAdapter;
   /** Inject review authority (tests). Default: ContentReviewService + P6Repository. */
   contentReview?: ContentReviewService;
-}
-
-async function bootstrapLifecycleForResearchItem(input: {
-  lifecycle: LifecycleRepository;
-  researchItemId: string;
-  title: string;
-  description: string | null;
-  affiliateUrl: string;
-  canonicalId: string;
-}): Promise<{ topicId: string; strategyId: string; claimIds: string[] }> {
-  const topic = await input.lifecycle.createTopicCandidate({
-    title: input.title,
-    status: "READY",
-    metadata: {
-      source: "daily-ops",
-      researchItemId: input.researchItemId,
-      canonicalId: input.canonicalId,
-    },
-  });
-  const strategy = await input.lifecycle.createStrategy({
-    topicCandidateId: topic.id,
-    objective: "daily_blog_option_b",
-    targetAudience: "readers",
-    userIntent: "product_intro",
-    formatCategory: "ARTICLE",
-    formatKey: "NEW_RELEASE_SINGLE",
-    angle: "single_product",
-    primaryChannel: "WORDPRESS",
-    candidateChannels: ["WORDPRESS", "X"],
-    status: "READY",
-  });
-
-  const doc = await input.lifecycle.findLatestSourceDocumentByUrlContains(input.canonicalId);
-  const pageEvidenceMeta =
-    doc?.metadata && typeof doc.metadata === "object" && !Array.isArray(doc.metadata)
-      ? ((doc.metadata as Record<string, unknown>).pageEvidence as PageEvidenceMetaShape | undefined)
-      : undefined;
-
-  const statements =
-    pageEvidenceMeta?.description?.text
-      ? claimStatementsFromPageEvidence({
-          pageEvidenceMeta,
-          productTitle: input.title,
-          actors: pageEvidenceMeta.actors,
-        })
-      : input.title.trim()
-        ? [`${input.title.trim()} は公開カタログ上で確認できる。`]
-        : [`${input.canonicalId} の公開ページが存在する。`];
-
-  const claimIds: string[] = [];
-  for (const statement of statements.slice(0, 4)) {
-    const claim = await input.lifecycle.createClaim({
-      statement,
-      claimType: "FACT",
-      status: "SUPPORTED",
-      confidence: 0.8,
-      strategyId: strategy.id,
-      metadata: { researchItemId: input.researchItemId },
-    });
-    claimIds.push(claim.id);
-  }
-
-  return { topicId: topic.id, strategyId: strategy.id, claimIds };
 }
 
 export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<DailyLiveResult> {
@@ -372,55 +309,79 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
         if (!item) throw new Error(`researchItem missing: ${selected.researchItemId}`);
 
         await seedP45Prompts(deps.lifecycle);
-        const boot = await bootstrapLifecycleForResearchItem({
-          lifecycle: deps.lifecycle,
-          researchItemId: item.id,
-          title: item.title,
-          description: item.description,
-          affiliateUrl: ctaUrl,
-          canonicalId: selected.canonicalId,
-        });
-
         const llm = requireApiLLMProvider(deps.config);
         const generation = new ContentGenerationService(deps.lifecycle, llm, {
           generation: deps.config.llmModelGeneration,
           review: deps.config.llmModelReview,
           revision: deps.config.llmModelRevision,
         });
+        const contentReview =
+          deps.contentReview ??
+          new ContentReviewService(
+            deps.lifecycle,
+            new P6Repository(deps.database.prisma),
+          );
+        const research = new ResearchRepository(deps.database.prisma);
 
-        let generated: Awaited<ReturnType<ContentGenerationService["generateBloggerArticle"]>>;
-        try {
-          generated = await generation.generateBloggerArticle({
-            topicId: boot.topicId,
-            strategyId: boot.strategyId,
-            productTitle: item.title,
-            ctaUrl,
-            claimIds: boot.claimIds,
-          });
-          llmCalls += 1;
-        } catch (genErr) {
-          const msg = genErr instanceof Error ? genErr.message : String(genErr);
+        // Canonical: Evidence → Claims → Writer → runQualityReviews (approve deferred to readiness).
+        const pipeline = await runCanonicalArticlePipeline({
+          lifecycle: deps.lifecycle,
+          research,
+          generation,
+          contentReview,
+          config: deps.config,
+          logger: deps.logger,
+          researchItemId: item.id,
+          productTitle: item.title,
+          productCanonicalId: selected.canonicalId,
+          productUrl: ctaUrl,
+          rawData: item.rawData,
+          ctaUrl,
+          route: "DAILY_OPS",
+          objective: "daily_blog_option_b",
+          autoApprove: false,
+          approveActor: "daily-ops-auto-review",
+        });
+        llmCalls += 1;
+
+        if (!pipeline.ok) {
           blog.held = true;
-          blog.failureCodes = msg.includes("DEFER") || msg.includes("insufficient")
-            ? ["DEFER"]
-            : ["GENERATION_ERROR"];
-          blog.note = msg.slice(0, 240);
+          const reason = pipeline.reason;
+          blog.failureCodes = reason.startsWith("NEEDS_ENRICHMENT")
+            ? ["NEEDS_ENRICHMENT"]
+            : reason.includes("REVIEW")
+              ? ["CANONICAL_REVIEW_FAILED"]
+              : ["GENERATION_ERROR"];
+          blog.note = reason.slice(0, 240);
+          blog.contentVersionId = pipeline.contentVersionId ?? null;
           throw Object.assign(new Error("BLOG_GEN_HELD"), { held: true });
         }
-        blog.contentVersionId = generated.version.id;
 
-        // ——— Generation complete: ContentVersion remains REVIEWING ———
+        blog.contentVersionId = pipeline.contentVersionId;
+        const version = await deps.lifecycle.findContentVersion(pipeline.contentVersionId);
+        if (!version) throw new Error(`contentVersion missing: ${pipeline.contentVersionId}`);
+        const sc = (version.structuredContent ?? {}) as Record<string, unknown>;
+        const article = sc.article as
+          | {
+              title: string;
+              lead?: string;
+              sections: Array<{ heading?: string | null; paragraphs: string[]; lists?: string[] }>;
+              cta: { label: string; url?: string | null };
+            }
+          | undefined;
+
+        // ——— Generation + canonical Review complete: ContentVersion remains REVIEWING ———
         let formatterPass = true;
-        let html = "";
         try {
-          const article = generated.article;
-          html = formatBloggerHtml({
+          if (!article) throw new Error("missing article");
+          const html = formatBloggerHtml({
             title: article.title,
             lead: article.lead,
             sections: article.sections,
-            cta: article.cta.url
-              ? article.cta
-              : { label: article.cta.label, url: ctaUrl },
+            cta: {
+              label: article.cta.label,
+              url: article.cta.url ?? ctaUrl,
+            },
           });
           sanitizePublicBody(html);
           assertPublicBodyClean(html);
@@ -428,8 +389,6 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
           formatterPass = false;
         }
 
-        // Match publishContentVersionToWordPress default: never promote to publish
-        // solely from WORDPRESS_DEFAULT_PUBLISH_MODE without allowDirectPublish.
         const wpMode: "draft" | "publish" =
           deps.config.wordpressAllowDirectPublish &&
           deps.config.wordpressDefaultPublishMode === "publish"
@@ -441,23 +400,16 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
             deps.config.wordpressAllowExternalRequests);
 
         const reviewFailureCodes: string[] = [];
-        if (!generated.article) reviewFailureCodes.push("SCHEMA_FAIL");
-        if (!generated.publishValidation.claimValidationPass) {
-          reviewFailureCodes.push("CLAIM_VALIDATION_FAIL");
-        }
-        if (!generated.publishValidation.integrityPass) {
-          reviewFailureCodes.push("INTEGRITY_FAIL");
-        }
-        if (!generated.publishValidation.articlePlanCompliancePass) {
-          reviewFailureCodes.push("COMPLIANCE_FAIL");
-        }
+        if (!article) reviewFailureCodes.push("SCHEMA_FAIL");
         if (!formatterPass) reviewFailureCodes.push("FORMATTER_FAIL");
         if (!affiliateCheck.ok) reviewFailureCodes.push("AFFILIATE_URL_INVALID");
         if (!authPass) reviewFailureCodes.push("CHANNEL_AUTH_FAIL");
+        if (pipeline.reviewOverall === "failed") {
+          reviewFailureCodes.push("CANONICAL_REVIEW_FAILED");
+        }
 
-        // Image gate for intended WordPress mode (never hardcode imagePipelinePass).
         const imageEval = evaluateStructuredContentImagesForWordPress({
-          structuredContent: generated.version.structuredContent,
+          structuredContent: version.structuredContent,
           mode: wpMode,
         });
         if (!imageEval.imagePipelinePass) {
@@ -469,10 +421,9 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
           blog.failureCodes = reviewFailureCodes;
           blog.note = "review_readiness_hold";
         } else if (daily.reviewPolicy === "manual") {
-          // Soft-lock daily slot; APPROVED only via ContentReviewService (human/admin).
           await deps.lifecycle.createPublicationTarget({
-            contentId: generated.content.id,
-            contentVersionId: generated.version.id,
+            contentId: pipeline.contentId,
+            contentVersionId: pipeline.contentVersionId,
             platform: "WORDPRESS",
             destinationRef: deps.config.wordpressBaseUrl ?? null,
             targetFormat: "article",
@@ -489,26 +440,20 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
               route: "DAILY_OPS_LIVE",
               reviewPolicy: "manual",
               awaitingContentReview: true,
+              pipelineRoute: "CANONICAL",
             },
           });
           blog.held = true;
           blog.failureCodes = ["REVIEW_POLICY_MANUAL"];
           blog.note = "AWAITING_MANUAL_REVIEW";
         } else {
-          // ——— Review phase (auto policy): ContentReviewService is sole APPROVED authority ———
-          const contentReview =
-            deps.contentReview ??
-            new ContentReviewService(
-              deps.lifecycle,
-              new P6Repository(deps.database.prisma),
-            );
+          // Auto approve only after canonical Review PASS + publication readiness.
           try {
             await contentReview.decide({
-              contentVersionId: generated.version.id,
+              contentVersionId: pipeline.contentVersionId,
               decision: "approve",
               actor: "daily-ops-auto-review",
-              reason:
-                "Auto review: generation integrity/compliance/claim/image readiness passed",
+              reason: `Canonical Review ${pipeline.reviewOverall} + publication readiness`,
               correlationId: idempotencyKey,
               approvalPolicy: "auto",
             });
@@ -522,8 +467,6 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
             throw Object.assign(new Error("BLOG_REVIEW_HELD"), { held: true });
           }
 
-          // ——— Publication phase: APPROVED only (shared WordPress path) ———
-          // Public publish also requires allowDirectPublish; draft is default-safe.
           if (
             wpMode === "publish" &&
             !deps.config.wordpressAllowDirectPublish
@@ -542,12 +485,12 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
                 publisher,
               },
               {
-                contentVersionId: generated.version.id,
+                contentVersionId: pipeline.contentVersionId,
                 canonicalId: selected.canonicalId,
                 ctaUrl,
                 mode: wpMode,
                 route: "DAILY_OPS_LIVE",
-                idempotencyKey: `wordpress:${generated.version.id}:${wpMode}`,
+                idempotencyKey: `wordpress:${pipeline.contentVersionId}:${wpMode}`,
                 platformMetadata: {
                   dailyIdempotencyKey: idempotencyKey,
                   canonicalId: selected.canonicalId,
@@ -557,6 +500,7 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
                   analysisRunId,
                   route: "DAILY_OPS_LIVE",
                   reviewPolicy: "auto",
+                  pipelineRoute: "CANONICAL",
                 },
               },
             );

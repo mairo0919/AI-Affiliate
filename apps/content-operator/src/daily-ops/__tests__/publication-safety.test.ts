@@ -93,16 +93,18 @@ function mockLifecycle() {
 }
 
 describe("publication safety — review authority wiring", () => {
-  it("live-orchestrator does not directly APPROVE via updateContentVersionStatus", () => {
+  it("live-orchestrator routes blog generation through canonical pipeline + ContentReviewService", () => {
     const src = readLiveSource();
     expect(src).not.toMatch(
-      /updateContentVersionStatus\(\s*generated\.version\.id\s*,\s*["']APPROVED["']\s*\)/,
+      /updateContentVersionStatus\(\s*[^,]+,\s*["']APPROVED["']\s*\)/,
     );
+    expect(src).toContain("runCanonicalArticlePipeline");
     expect(src).toContain("ContentReviewService");
     expect(src).toContain('decision: "approve"');
     expect(src).toContain('approvalPolicy: "auto"');
     expect(src).toContain("AWAITING_MANUAL_REVIEW");
     expect(src).not.toMatch(/imagePipelinePass:\s*true/);
+    expect(src).not.toContain("公開カタログ上で確認できる");
   });
 
   it("default review policy is manual (safe)", () => {

@@ -110,9 +110,24 @@ export class ContentReviewService {
     const detail = await this.repo.inspectContentLifecycle(version.contentId);
     const full = detail?.versions.find((v) => v.id === version.id);
     const reviews = (full?.reviews ?? []) as QualityReviewRecord[];
+    if (reviews.length === 0) {
+      throw new ContentReviewError(
+        "Cannot approve ContentVersion without canonical quality reviews (Review not executed)",
+        "review_failed",
+      );
+    }
     if (reviews.some((r) => r.result === "FAILED")) {
       throw new ContentReviewError(
         "Cannot approve ContentVersion with FAILED quality review",
+        "review_failed",
+      );
+    }
+    const hasPassSignal = reviews.some(
+      (r) => r.result === "PASSED" || r.result === "WARNING",
+    );
+    if (!hasPassSignal) {
+      throw new ContentReviewError(
+        "Cannot approve ContentVersion without PASSED/WARNING quality review result",
         "review_failed",
       );
     }

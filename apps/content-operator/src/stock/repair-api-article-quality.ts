@@ -1,7 +1,7 @@
 /**
- * Repair thin/misframed API-era WordPress futures/publishes in place.
- * Preserves post ID + scheduledAt.
- * Applies AFTER only when multi-axis quality clearly improves BEFORE.
+ * Repair API-era WordPress articles via canonical pipeline only.
+ * No TITLE_ONLY mechanical title engine. No thin Claims bootstrap.
+ * Preserves post ID + scheduledAt. Apply only when after improves before.
  */
 
 import type { AppConfig } from "@ai-affiliate/config";
@@ -12,23 +12,17 @@ import { requireApiLLMProvider } from "../adapters/llm/create-llm-provider.js";
 import { ContentReviewService } from "../admin/content-review-service.js";
 import { buildFanzaCanonicalProductUrl } from "../adapters/affiliate/fanza-affiliate-provider.js";
 import { validateFanzaAffiliateUrl } from "../daily-blog/affiliate-url.js";
+import { runCanonicalArticlePipeline } from "../generation/canonical-article-pipeline.js";
 import { ContentGenerationService } from "../generation/content-generation-service.js";
 import { seedP45Prompts } from "../generation/p45-service.js";
 import { createWordPressPublisherFromConfig } from "../adapters/publisher/wordpress-api-publisher.js";
 import { publishContentVersionToWordPress } from "../wordpress/wordpress-publish-path.js";
-import { claimStatementsFromPageEvidence } from "../article-pattern/evidence-pack.js";
-import type { PageEvidenceMetaShape } from "../article-pattern/official-page-evidence-atoms.js";
+import { ensureOfficialEnrichmentForStockItem } from "./ensure-official-enrichment.js";
+import { evaluateStockArticleQualityGate } from "./stock-quality-gate.js";
 import {
-  ensureOfficialEnrichmentForStockItem,
-  extractItemListCatalogFacts,
-} from "./ensure-official-enrichment.js";
-import { evaluateStockArticleQualityGate } from "./stock-generation-worker.js";
-import {
-  buildEvidenceEditorialTitle,
   decideRepairApply,
   detectRepairScope,
   type ArticleSnapshot,
-  type RepairScope,
 } from "./repair-quality-guard.js";
 
 function plainBody(body: unknown): string {
@@ -59,7 +53,6 @@ export async function listApiEraWordPressProductCids(input: {
       null;
     if (!cid) continue;
     const wpId = Number(t.publishedExternalId);
-    // API-era futures cluster around 200+; also include any FANZA ItemList row.
     if (Number.isFinite(wpId) && wpId >= 200) {
       cids.add(cid);
       continue;
@@ -207,196 +200,85 @@ export async function repairApiArticleQualityInPlace(input: {
           enrichment: enrichment.status,
           beforeTitle: beforeSnap.title,
           scheduledAt: scheduledAt?.toISOString() ?? null,
+          pipeline: "CANONICAL",
         });
         continue;
       }
 
-      const catalog = extractItemListCatalogFacts(item.rawData);
-
-      if (scope === "TITLE_ONLY" && beforeCv) {
-        const editorialTitle = buildEvidenceEditorialTitle({
-          officialTitle: item.title,
-          performers: catalog.actors,
-          genres: catalog.genres,
-          makers: catalog.makers,
-          series: catalog.series,
-        });
-        const afterSnap: ArticleSnapshot = {
-          title: editorialTitle,
-          bodyText: beforeSnap.bodyText,
-          productTitle: item.title,
-          rawData: item.rawData,
-        };
-        const decision = decideRepairApply({ before: beforeSnap, after: afterSnap, scope });
-        if (!decision.apply) {
-          stats.skippedNoImprovement += 1;
-          skipped.push({
-            cid,
-            wpId: target.publishedExternalId,
-            reason: decision.reason,
-            scope,
-            beforeTitle: beforeSnap.title,
-            candidateTitle: editorialTitle,
-          });
-          continue;
-        }
-
-        const sc = {
-          ...((beforeCv.structuredContent ?? {}) as Record<string, unknown>),
-          title: editorialTitle,
-          productCanonicalId: cid,
-          canonicalId: cid,
-          stockRoute: "API_QUALITY_REPAIR_TITLE_ONLY",
-          repairedFromTitle: beforeSnap.title,
-        };
-        await input.lifecycle.updateContentVersionStructuredContent(beforeCv.id, sc);
-        await input.database.prisma.contentVersion.update({
-          where: { id: beforeCv.id },
-          data: { title: editorialTitle },
-        });
-
-        const mode = target.status === "PUBLISHED" ? "publish" : "future";
-        const wp = await publishContentVersionToWordPress(
-          {
-            config: input.config,
-            lifecycle: input.lifecycle,
-            prisma: input.database.prisma,
-            publisher,
-          },
-          {
-            contentVersionId: beforeCv.id,
-            canonicalId: cid,
-            productCanonicalId: cid,
-            mode,
-            scheduledAt: mode === "future" ? scheduledAt ?? undefined : undefined,
-            updateExistingDraft: true,
-            route: "API_QUALITY_REPAIR_TITLE_ONLY",
-            idempotencyKey: `api-quality-repair-title:${cid}:${target.publishedExternalId}`,
-            platformMetadata: {
-              productKey: cid,
-              productCanonicalId: cid,
-              publishSlotKey: meta.publishSlotKey,
-              scheduledAt: meta.scheduledAt ?? scheduledAt?.toISOString() ?? null,
-              ctaUrl,
-              affiliateLinkReady: /al\.fanza|af_id=/i.test(ctaUrl),
-            },
-          },
-        );
-        stats.titleOnly += 1;
-        repaired.push({
+      if (enrichment.status === "NEEDS_ENRICHMENT") {
+        failed.push({
           cid,
           wpId: target.publishedExternalId,
-          scope: "TITLE_ONLY",
-          beforeTitle: beforeSnap.title,
-          title: editorialTitle,
-          scheduledAt: scheduledAt?.toISOString() ?? null,
-          wpOk: wp.ok,
-          overallDelta: decision.overallDelta,
-          ctaAffiliate: /al\.fanza|af_id=/i.test(ctaUrl),
-          contentVersionId: beforeCv.id,
+          reason: "NEEDS_ENRICHMENT:official_page_evidence_required",
+          enrichment: enrichment.status,
         });
         continue;
       }
 
-      // FULL regeneration
-      const doc = await input.lifecycle.findLatestSourceDocumentByUrlContains(cid);
-      const pageEvidenceMeta =
-        doc?.metadata && typeof doc.metadata === "object" && !Array.isArray(doc.metadata)
-          ? ((doc.metadata as Record<string, unknown>).pageEvidence as
-              | PageEvidenceMetaShape
-              | undefined)
-          : undefined;
-      const topic = await input.lifecycle.createTopicCandidate({
-        title: item.title,
-        status: "READY",
-        metadata: { source: "api-quality-repair", researchItemId: item.id, canonicalId: cid },
-      });
-      const strategy = await input.lifecycle.createStrategy({
-        topicCandidateId: topic.id,
+      // Always full canonical regen (no mechanical TITLE_ONLY salvage).
+      const pipeline = await runCanonicalArticlePipeline({
+        lifecycle: input.lifecycle,
+        research,
+        generation,
+        contentReview,
+        config: input.config,
+        logger,
+        researchItemId: item.id,
+        productTitle: item.title,
+        productCanonicalId: cid,
+        productUrl: ctaUrl,
+        rawData: item.rawData,
+        ctaUrl,
+        route: "REPAIR",
         objective: "stock_blog_option_b",
-        targetAudience: "readers",
-        userIntent: "product_intro",
-        formatCategory: "ARTICLE",
-        formatKey: "NEW_RELEASE_SINGLE",
-        angle: "single_product",
-        primaryChannel: "WORDPRESS",
-        candidateChannels: ["WORDPRESS"],
-        status: "READY",
-      });
-      const statements = pageEvidenceMeta?.description?.text
-        ? claimStatementsFromPageEvidence({
-            pageEvidenceMeta,
+        autoApprove: false,
+        approveActor: "api-quality-repair",
+        auxiliarySafetyOk: ({ title, structuredContent }) =>
+          evaluateStockArticleQualityGate({
             productTitle: item.title,
-            actors: pageEvidenceMeta.actors,
-          })
-        : [`${item.title} は公開カタログ上で確認できる。`];
-      const claimIds: string[] = [];
-      for (const statement of statements.slice(0, 4)) {
-        const claim = await input.lifecycle.createClaim({
-          statement,
-          claimType: "FACT",
-          status: "SUPPORTED",
-          confidence: 0.8,
-          strategyId: strategy.id,
-          metadata: { researchItemId: item.id, source: "api-quality-repair" },
+            rawData: item.rawData,
+            structuredContent: { ...structuredContent, title },
+            writerTitle: title,
+          }),
+      });
+
+      if (!pipeline.ok) {
+        failed.push({
+          cid,
+          wpId: target.publishedExternalId,
+          reason: pipeline.reason,
+          reviewOverall: pipeline.reviewOverall,
         });
-        claimIds.push(claim.id);
+        continue;
+      }
+      if (!pipeline.contentVersionId) {
+        failed.push({
+          cid,
+          wpId: target.publishedExternalId,
+          reason: "CANONICAL_PIPELINE_FAILED",
+        });
+        continue;
       }
 
-      const generated = await generation.generateBloggerArticle({
-        topicId: topic.id,
-        strategyId: strategy.id,
-        productTitle: item.title,
-        ctaUrl,
-        productCanonicalId: cid,
-        claimIds,
+      const generatedCv = await input.database.prisma.contentVersion.findUnique({
+        where: { id: pipeline.contentVersionId },
+        select: { id: true, title: true, body: true, structuredContent: true },
       });
-      let finalTitle = generated.version.title;
-      const sc = (generated.version.structuredContent ?? {}) as Record<string, unknown>;
-      const bodyText = plainBody(generated.version.body ?? sc.bodyHtml ?? sc.body);
-
-      // If Writer title still genre-lists while synopsis exists, salvage title only (keep body).
-      const titleProbe: ArticleSnapshot = {
-        title: finalTitle,
-        bodyText,
-        productTitle: item.title,
-        rawData: item.rawData,
-      };
-      const titleScope = detectRepairScope(titleProbe);
-      if (titleScope === "TITLE_ONLY" || titleScope === "FULL") {
-        const editorial = buildEvidenceEditorialTitle({
-          officialTitle: item.title,
-          performers: catalog.actors,
-          genres: catalog.genres,
-          makers: catalog.makers,
-          series: catalog.series,
-        });
-        const salvagedSnap: ArticleSnapshot = {
-          title: editorial,
-          bodyText,
-          productTitle: item.title,
-          rawData: item.rawData,
-        };
-        const salvageDecision = decideRepairApply({
-          before: titleProbe,
-          after: salvagedSnap,
-          scope: "TITLE_ONLY",
-        });
-        if (salvageDecision.apply) {
-          finalTitle = editorial;
-        }
+      if (!generatedCv) {
+        failed.push({ cid, reason: "GENERATED_VERSION_MISSING" });
+        continue;
       }
 
       const afterSnap: ArticleSnapshot = {
-        title: finalTitle,
-        bodyText,
+        title: generatedCv.title,
+        bodyText: plainBody(generatedCv.body),
         productTitle: item.title,
         rawData: item.rawData,
       };
       const decision = decideRepairApply({
         before: beforeSnap,
         after: afterSnap,
-        scope: "FULL" as RepairScope,
+        scope: "FULL",
       });
       if (!decision.apply) {
         stats.skippedNoImprovement += 1;
@@ -406,51 +288,30 @@ export async function repairApiArticleQualityInPlace(input: {
           reason: decision.reason,
           scope: "FULL",
           beforeTitle: beforeSnap.title,
-          afterTitle: finalTitle,
+          afterTitle: afterSnap.title,
           overallDelta: decision.overallDelta,
         });
         continue;
       }
 
-      const quality = evaluateStockArticleQualityGate({
-        productTitle: item.title,
-        rawData: item.rawData,
-        structuredContent: { ...sc, title: finalTitle, bodyHtml: generated.version.body },
-        writerTitle: finalTitle,
-      });
-      if (!quality.ok) {
-        failed.push({
-          cid,
-          wpId: target.publishedExternalId,
-          reason: quality.reason,
-          title: finalTitle,
-        });
-        continue;
-      }
-
-      await input.lifecycle.updateContentVersionStructuredContent(generated.version.id, {
+      const sc = (generatedCv.structuredContent ?? {}) as Record<string, unknown>;
+      await input.lifecycle.updateContentVersionStructuredContent(generatedCv.id, {
         ...sc,
-        title: finalTitle,
         productCanonicalId: cid,
         canonicalId: cid,
-        stockRoute: "API_QUALITY_REPAIR",
+        pipelineRoute: "CANONICAL",
+        generationRoute: "REPAIR",
         officialEnrichmentStatus: enrichment.status,
         officialActorCount: enrichment.actorCount,
         repairedWpPostId: target.publishedExternalId,
         repairedFromTitle: beforeSnap.title,
       });
-      if (finalTitle !== generated.version.title) {
-        await input.database.prisma.contentVersion.update({
-          where: { id: generated.version.id },
-          data: { title: finalTitle },
-        });
-      }
 
       await contentReview.decide({
-        contentVersionId: generated.version.id,
+        contentVersionId: generatedCv.id,
         decision: "approve",
         actor: "api-quality-repair",
-        reason: "Repair API-era article after guarded quality improvement",
+        reason: "Canonical repair after guarded quality improvement",
         approvalPolicy: "auto",
       });
 
@@ -463,14 +324,14 @@ export async function repairApiArticleQualityInPlace(input: {
           publisher,
         },
         {
-          contentVersionId: generated.version.id,
+          contentVersionId: generatedCv.id,
           canonicalId: cid,
           productCanonicalId: cid,
           mode,
           scheduledAt: mode === "future" ? scheduledAt ?? undefined : undefined,
           updateExistingDraft: true,
-          route: "API_QUALITY_REPAIR",
-          idempotencyKey: `api-quality-repair:${cid}:${target.publishedExternalId}:${generated.version.id}`,
+          route: "API_QUALITY_REPAIR_CANONICAL",
+          idempotencyKey: `api-quality-repair:${cid}:${target.publishedExternalId}:${generatedCv.id}`,
           platformMetadata: {
             productKey: cid,
             productCanonicalId: cid,
@@ -479,6 +340,7 @@ export async function repairApiArticleQualityInPlace(input: {
             repairedFromContentVersionId: target.contentVersionId,
             ctaUrl,
             affiliateLinkReady: /al\.fanza|af_id=/i.test(ctaUrl),
+            pipelineRoute: "CANONICAL",
           },
         },
       );
@@ -489,18 +351,19 @@ export async function repairApiArticleQualityInPlace(input: {
         wpId: target.publishedExternalId,
         scope: "FULL",
         beforeTitle: beforeSnap.title,
-        title: finalTitle,
+        title: generatedCv.title,
         scheduledAt: scheduledAt?.toISOString() ?? null,
         wpOk: wp.ok,
         wpPublished: "published" in wp ? wp.published : false,
-        contentVersionId: generated.version.id,
+        contentVersionId: generatedCv.id,
         overallDelta: decision.overallDelta,
         ctaAffiliate: /al\.fanza|af_id=/i.test(ctaUrl),
+        pipeline: "CANONICAL",
       });
     } catch (error) {
       failed.push({
         cid,
-        reason: error instanceof Error ? error.message.slice(0, 200) : String(error),
+        reason: error instanceof Error ? error.message.slice(0, 240) : String(error),
       });
     }
   }

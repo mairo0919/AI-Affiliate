@@ -93,6 +93,17 @@ describe("Admin API authz + P7", () => {
       status: "REVIEWING",
       parentVersionId: old.id,
     });
+    await stack.lifecycleRepo.createReview({
+      reviewType: "claim",
+      reviewerType: "SYSTEM",
+      targetType: "ContentVersion",
+      targetId: latest.id,
+      contentVersionId: latest.id,
+      criteria: { canonical: true },
+      result: "PASSED",
+      findings: [],
+      score: 1,
+    });
     const stale = await app.request(`/content-versions/${old.id}/review`, {
       method: "POST",
       headers: {

@@ -46,11 +46,16 @@ const sampleStructured = {
 describe("wordpress runtime wiring (daily-ops / scheduler)", () => {
   it("live-orchestrator uses WordPress shared path and does not wire Blogger publisher", () => {
     const src = readSource("live-orchestrator.ts");
+    const canonical = readFileSync(
+      join(here, "../../generation/canonical-article-pipeline.ts"),
+      "utf8",
+    );
     expect(src).toContain("publishContentVersionToWordPress");
-    expect(src).toContain('primaryChannel: "WORDPRESS"');
+    expect(src).toContain("runCanonicalArticlePipeline");
+    expect(canonical).toContain('primaryChannel: "WORDPRESS"');
     expect(src).toContain("ContentReviewService");
     expect(src).not.toMatch(
-      /updateContentVersionStatus\(\s*generated\.version\.id\s*,\s*["']APPROVED["']\s*\)/,
+      /updateContentVersionStatus\(\s*[^,]+,\s*["']APPROVED["']\s*\)/,
     );
     expect(src).not.toContain("createBloggerPublisherFromConfig");
     expect(src).not.toContain("blogger-api-publisher");

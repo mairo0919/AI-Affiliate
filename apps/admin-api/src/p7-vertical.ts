@@ -112,6 +112,17 @@ export async function runP7Vertical(): Promise<Record<string, unknown>> {
     claimId: claim.id,
     usageType: "body",
   });
+  await stack.lifecycleRepo.createReview({
+    reviewType: "claim",
+    reviewerType: "SYSTEM",
+    targetType: "ContentVersion",
+    targetId: version.id,
+    contentVersionId: version.id,
+    criteria: { canonical: true },
+    result: "PASSED",
+    findings: [],
+    score: 1,
+  });
   const originalBody = version.body;
 
   // 2-3) Review queue + detail

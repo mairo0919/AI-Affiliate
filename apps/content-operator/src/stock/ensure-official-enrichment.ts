@@ -1,6 +1,6 @@
 /**
- * Ensure ItemList discovery rows get official enrichment before Writer.
- * ItemList alone is DISCOVERY/BASIC METADATA — not complete Evidence.
+ * Ensure ItemList discovery rows get official page Evidence before Writer.
+ * ItemList alone is DISCOVERY/BASIC METADATA — never Writer-complete Evidence.
  */
 
 import type { AppConfig } from "@ai-affiliate/config";
@@ -11,7 +11,6 @@ import { buildFanzaCanonicalProductUrl } from "../adapters/affiliate/fanza-affil
 
 export type OfficialEnrichmentStatus =
   | "PAGE_ENRICHED"
-  | "ITEMLIST_SYNTHESIZED"
   | "ALREADY_PRESENT"
   | "NEEDS_ENRICHMENT";
 
@@ -34,6 +33,7 @@ type PageEvidenceShape = {
     durationMinutes?: { value?: number } | null;
   };
   productName?: string | null;
+  synthesizedFrom?: string;
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -58,7 +58,7 @@ function itemInfoNames(raw: unknown): string[] {
   return [...new Set(out)];
 }
 
-/** Extract actress/genre/maker/series/runtime from FANZA ItemList rawData. */
+/** Extract actress/genre/maker/series/runtime from FANZA ItemList rawData (normalize only). */
 export function extractItemListCatalogFacts(rawData: unknown): {
   actors: string[];
   genres: string[];
@@ -120,39 +120,20 @@ export function shouldAvoidSingularPerformerFraming(input: {
   productTitle: string;
 }): boolean {
   const shape = classifyCastShape(input);
-  // Single-cast BEST may name that performer; multi-cast / omnibus must not.
   if (input.actors.length <= 1) return false;
   return shape === "MULTI_PERFORMER" || shape === "BEST_COMPILATION";
 }
 
-/** Factual catalog synopsis for Writer when page description is unavailable (SPA / no Playwright). */
-export function synthesizeItemListDescription(input: {
-  productTitle: string;
-  actors: string[];
-  genres: string[];
-  makers: string[];
-  series: string[];
-  durationMinutes: number | null;
-}): string {
-  const lines: string[] = [];
-  const title = input.productTitle.trim();
-  if (title) lines.push(title);
-  if (input.actors.length === 1) {
-    lines.push(`出演: ${input.actors[0]}`);
-  } else if (input.actors.length > 1) {
-    const head = input.actors.slice(0, 12).join("、");
-    const more = input.actors.length > 12 ? ` ほか全${input.actors.length}名` : "";
-    lines.push(`出演: ${head}${more}`);
-  }
-  if (input.makers[0]) lines.push(`メーカー: ${input.makers[0]}`);
-  if (input.series[0]) lines.push(`シリーズ: ${input.series[0]}`);
-  if (input.genres.length) lines.push(`ジャンル: ${input.genres.slice(0, 8).join("、")}`);
-  if (input.durationMinutes != null && Number.isFinite(input.durationMinutes)) {
-    lines.push(`収録時間: 約${input.durationMinutes}分`);
-  }
-  return lines.join("\n");
+function isUsableOfficialPageEvidence(pe: PageEvidenceShape | null): boolean {
+  if (!pe) return false;
+  if (pe.synthesizedFrom === "itemlist") return false;
+  return Boolean(pe.description?.text?.trim());
 }
 
+/**
+ * Official page enrichment only. Never synthesizes ItemList into Writer Evidence.
+ * Missing page description → NEEDS_ENRICHMENT (ResearchItem retained).
+ */
 export async function ensureOfficialEnrichmentForStockItem(input: {
   lifecycle: LifecycleRepository;
   research: ResearchRepository;
@@ -166,13 +147,12 @@ export async function ensureOfficialEnrichmentForStockItem(input: {
 }): Promise<OfficialEnrichmentResult> {
   const existing = await input.lifecycle.findLatestSourceDocumentByUrlContains(input.canonicalId);
   const pe = existing ? readPageEvidenceFromDocMetadata(existing.metadata) : null;
-  let hasDescription = Boolean(pe?.description?.text?.trim());
-  let actors = [...(pe?.actors ?? [])].map((a) => String(a).trim()).filter(Boolean);
-  let genres = (pe?.catalog?.genres ?? [])
+  const actors = [...(pe?.actors ?? [])].map((a) => String(a).trim()).filter(Boolean);
+  const genres = (pe?.catalog?.genres ?? [])
     .map((g) => (typeof g?.value === "string" ? g.value.trim() : ""))
     .filter(Boolean);
 
-  if (hasDescription && actors.length > 0) {
+  if (isUsableOfficialPageEvidence(pe) && actors.length > 0) {
     return {
       status: "ALREADY_PRESENT",
       sourceDocumentId: existing?.id ?? null,
@@ -186,7 +166,7 @@ export async function ensureOfficialEnrichmentForStockItem(input: {
   let fetchAttempted = false;
   let sourceDocumentId = existing?.id ?? null;
 
-  if (input.config.researchAllowExternalRequests && !hasDescription) {
+  if (input.config.researchAllowExternalRequests) {
     fetchAttempted = true;
     try {
       const ingested = await ingestFanzaPageEvidence({
@@ -202,9 +182,9 @@ export async function ensureOfficialEnrichmentForStockItem(input: {
       });
       sourceDocumentId = ingested.sourceDocumentId ?? sourceDocumentId;
       if (ingested.evidence) {
-        hasDescription = Boolean(ingested.evidence.description?.text?.trim());
-        actors = [...(ingested.evidence.actors ?? [])].filter(Boolean);
-        genres = (ingested.evidence.catalog?.genres ?? [])
+        const hasDescription = Boolean(ingested.evidence.description?.text?.trim());
+        const pageActors = [...(ingested.evidence.actors ?? [])].filter(Boolean);
+        const pageGenres = (ingested.evidence.catalog?.genres ?? [])
           .map((g) => g.value)
           .filter(Boolean);
         if (hasDescription) {
@@ -212,8 +192,8 @@ export async function ensureOfficialEnrichmentForStockItem(input: {
             status: "PAGE_ENRICHED",
             sourceDocumentId,
             hasDescription: true,
-            actorCount: actors.length,
-            genreCount: genres.length,
+            actorCount: pageActors.length,
+            genreCount: pageGenres.length,
             fetchAttempted,
           };
         }
@@ -227,85 +207,14 @@ export async function ensureOfficialEnrichmentForStockItem(input: {
     }
   }
 
+  // ItemList metadata alone is never enough for Writer.
   const catalog = extractItemListCatalogFacts(input.rawData);
-  if (actors.length === 0) actors = catalog.actors;
-  if (genres.length === 0) genres = catalog.genres;
-
-  if (actors.length === 0 && genres.length === 0 && !hasDescription && !catalog.makers.length) {
-    return {
-      status: "NEEDS_ENRICHMENT",
-      sourceDocumentId,
-      hasDescription: false,
-      actorCount: 0,
-      genreCount: 0,
-      fetchAttempted,
-    };
-  }
-
-  const descriptionText = hasDescription
-    ? pe?.description?.text?.trim() || null
-    : synthesizeItemListDescription({
-        productTitle: catalog.productName ?? input.productTitle,
-        actors,
-        genres,
-        makers: catalog.makers,
-        series: catalog.series,
-        durationMinutes: catalog.durationMinutes,
-      });
-  hasDescription = Boolean(descriptionText?.trim());
-
-  // Persist ItemList-derived pageEvidence so Writer/title SSOT sees full cast.
-  const synthesized: PageEvidenceShape = {
-    productName: catalog.productName ?? input.productTitle,
-    actors,
-    description: descriptionText ? { text: descriptionText } : null,
-    catalog: {
-      genres: genres.map((value) => ({ value })),
-      maker: catalog.makers[0] ? { value: catalog.makers[0] } : pe?.catalog?.maker ?? null,
-      series: catalog.series[0] ? { value: catalog.series[0] } : pe?.catalog?.series ?? null,
-      durationMinutes:
-        catalog.durationMinutes != null
-          ? { value: catalog.durationMinutes }
-          : pe?.catalog?.durationMinutes ?? null,
-    },
-  };
-
-  const metaPatch = {
-    pageEvidence: {
-      ...synthesized,
-      synthesizedFrom: "itemlist",
-      fetchedAt: new Date().toISOString(),
-    },
-    role: "page_evidence",
-  };
-
-  if (sourceDocumentId) {
-    await input.lifecycle.updateSourceDocumentMetadata(sourceDocumentId, metaPatch);
-  } else {
-    const created = await input.lifecycle.createSourceDocument({
-      sourceKey: "fanza-itemlist-evidence",
-      documentType: "product",
-      externalId: input.canonicalId,
-      url: input.productUrl || buildFanzaCanonicalProductUrl(input.canonicalId),
-      title: `FANZA ItemList evidence: ${input.canonicalId}`,
-      robotsAllowed: true,
-      normalizedText: [
-        `contentId: ${input.canonicalId}`,
-        `actors: ${actors.join(", ") || "absent"}`,
-        `genres: ${genres.join(", ") || "absent"}`,
-        hasDescription ? "description: present" : "description: absent",
-      ].join("\n"),
-      metadata: metaPatch,
-    });
-    sourceDocumentId = created.id;
-  }
-
   return {
-    status: "ITEMLIST_SYNTHESIZED",
+    status: "NEEDS_ENRICHMENT",
     sourceDocumentId,
-    hasDescription,
-    actorCount: actors.length,
-    genreCount: genres.length,
+    hasDescription: false,
+    actorCount: actors.length || catalog.actors.length,
+    genreCount: genres.length || catalog.genres.length,
     fetchAttempted,
   };
 }
