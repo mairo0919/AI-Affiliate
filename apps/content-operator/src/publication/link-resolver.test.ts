@@ -266,4 +266,13 @@ describe("public body sanitizer", () => {
     expect(cleaned.body).not.toContain("pending://");
     expect(cleaned.body).not.toContain("AWAITING_PROVIDER");
   });
+
+  it("does not treat URL-encoding fragments as templatePercent markers", () => {
+    const body =
+      '<a href="https://example.invalid/?q=%E3%81%82%E3%81%84">%PRODUCT_TITLE%</a>';
+    expect(containsInternalLinkMarkers(body)).toBe(true); // %PRODUCT_TITLE%
+    const onlyEncoded =
+      '<img src="https://pics.dmm.co.jp/digital/video/ssis00123/ssis00123jp-1.jpg" alt="%E3%83%91%E3%83%83%E3%82%B1%E3%83%BC%E3%82%B8">';
+    expect(containsInternalLinkMarkers(onlyEncoded)).toBe(false);
+  });
 });

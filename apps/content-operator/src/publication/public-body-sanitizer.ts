@@ -8,7 +8,8 @@ const FORBIDDEN_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
   { name: "affiliateReplacementCandidate", pattern: /affiliateReplacementCandidate/gi },
   { name: "replacementStatus", pattern: /replacementStatus\s*[:=]/gi },
   { name: "templateMustache", pattern: /\{\{[^}]+\}\}/g },
-  { name: "templatePercent", pattern: /%\w+%/g },
+  // Placeholders like %PRODUCT_ID% — not URL-encoding fragments like %E3% / %81%.
+  { name: "templatePercent", pattern: /%[A-Za-z_][A-Za-z0-9_]{2,}%/g },
   { name: "pendingUrl", pattern: /\bpending:\/\/\S+/gi },
   { name: "internalScheme", pattern: /\b(?:productlink|internal|aff-candidate):\/\/\S+/gi },
   {

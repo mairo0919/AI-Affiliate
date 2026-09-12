@@ -356,7 +356,9 @@ export async function runPublishSlotScheduler(deps: {
     let placed = false;
     while (queueIdx < queue.length && !placed) {
       const candidate = queue[queueIdx++]!;
-      const result: WordPressPublishOneResult = await publishContentVersionToWordPress(
+      let result: WordPressPublishOneResult;
+      try {
+        result = await publishContentVersionToWordPress(
         {
           config: deps.config,
           lifecycle: deps.lifecycle,
@@ -385,6 +387,16 @@ export async function runPublishSlotScheduler(deps: {
           },
         },
       );
+      } catch (error) {
+        otherSkipped.push({
+          contentVersionId: candidate.contentVersionId,
+          reason:
+            error instanceof Error
+              ? `PUBLISH_THROW:${error.message.slice(0, 160)}`
+              : "PUBLISH_THROW",
+        });
+        continue;
+      }
 
       if (result.ok && result.published) {
         reserved.push({

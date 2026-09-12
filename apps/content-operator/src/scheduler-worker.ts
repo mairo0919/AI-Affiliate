@@ -81,6 +81,9 @@ async function main(): Promise<void> {
                   ? result.publishSlots.futureReserveBudget
                   : null,
             };
+      // When publish phase threw and was wrapped as skipped by pipeline, surface reason.
+      const publishSkipReason =
+        publish.skipped && "reason" in publish ? publish.reason : null;
       const stockResearchReason =
         "skipped" in result.stockResearch && result.stockResearch.skipped
           ? result.stockResearch.skipReason
@@ -108,7 +111,7 @@ async function main(): Promise<void> {
           !publish.skipped && "futureReserveBudget" in result.publishSlots
             ? result.publishSlots.futureReserveBudget
             : "-"
-        } providers=${providerProbe} xPublishSkipped=${
+        } publishSkipReason=${publishSkipReason ?? "-"} providers=${providerProbe} xPublishSkipped=${
           "skipped" in result.xPublish && result.xPublish.skipped
         }`,
       );
