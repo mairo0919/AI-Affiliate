@@ -535,6 +535,8 @@ function buildParametersFromFlags(flags: CliFlags): ScheduleParameters {
 async function runMock(): Promise<void> {
   const config = loadConfig();
   const logger = createLogger(config.logLevel);
+  const { assertMockResearchAllowed } = await import("./research/mock-research-guard.js");
+  assertMockResearchAllowed(config.nodeEnv);
   const database = createDatabaseClient();
 
   await database.connect();

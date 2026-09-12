@@ -24,6 +24,14 @@ import {
 import { MockDynamicPaginatedProvider } from "../providers/mock/dynamic-paginated.js";
 import type { NotificationService } from "../notifications/notification-service.js";
 import { researchProviderAvailability } from "../adapters/affiliate/provider-status.js";
+import { normalizeProductKey } from "../daily-ops/blog-product-exclusion.js";
+import {
+  asScheduleParameters,
+  readStartOffset,
+  resolveNextRunAtAfterCollection,
+  resolveNextStartOffset,
+} from "../research/schedule-cursor.js";
+import { loadWordPressLiveProductKeys } from "../stock/approved-stock.js";
 import { computeNextRunAt, isWithinGraceWindow } from "./cron.js";
 import { applyRetryAndNotify, notifySuccess } from "./run-effects.js";
 import { resolveJobFailureError } from "./job-failure-error.js";
@@ -57,15 +65,17 @@ export interface ScheduleRunOutcome {
   savedCount: number;
   updatedCount: number;
   errorCount: number;
+  wpDuplicateExcluded: number;
+  startOffset: number | null;
+  nextOffset: number | null;
+  researchTotal: number | null;
+  softTarget: number | null;
   executionTime: number;
   errorMessage?: string;
 }
 
 function asParameters(value: unknown): ScheduleParameters {
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    return value as ScheduleParameters;
-  }
-  return {};
+  return asScheduleParameters(value);
 }
 
 function toJobParams(parameters: ScheduleParameters, config: AppConfig): CollectionJobParams {
@@ -78,10 +88,7 @@ function toJobParams(parameters: ScheduleParameters, config: AppConfig): Collect
       typeof parameters.hits === "number" && Number.isFinite(parameters.hits)
         ? parameters.hits
         : config.fanzaDefaultHits,
-    startOffset:
-      typeof parameters.startOffset === "number" && Number.isFinite(parameters.startOffset)
-        ? parameters.startOffset
-        : 1,
+    startOffset: readStartOffset(parameters),
     maxPages:
       typeof parameters.maxPages === "number" && Number.isFinite(parameters.maxPages)
         ? parameters.maxPages
@@ -99,13 +106,26 @@ function toJobParams(parameters: ScheduleParameters, config: AppConfig): Collect
 
 function countsFromResult(result: CollectionJobRunResult | null): Pick<
   ScheduleRunOutcome,
-  "fetchedCount" | "savedCount" | "updatedCount" | "errorCount"
+  | "fetchedCount"
+  | "savedCount"
+  | "updatedCount"
+  | "errorCount"
+  | "wpDuplicateExcluded"
+  | "startOffset"
+  | "nextOffset"
+  | "researchTotal"
+  | "softTarget"
 > {
   return {
     fetchedCount: result?.fetchedCount ?? 0,
     savedCount: result?.savedCount ?? 0,
     updatedCount: result?.updatedCount ?? 0,
     errorCount: result?.errorCount ?? 0,
+    wpDuplicateExcluded: result?.wpDuplicateExcluded ?? 0,
+    startOffset: result?.startOffset ?? null,
+    nextOffset: result?.nextOffset ?? null,
+    researchTotal: null,
+    softTarget: null,
   };
 }
 
@@ -342,12 +362,25 @@ export class ScheduleRunner {
       try {
         const provider = this.createProvider(fresh);
         const params = toJobParams(asParameters(fresh.parameters), this.config);
+        let wpProductKeys: Set<string> | undefined;
+        if (fresh.providerName === "fanza") {
+          try {
+            const live = await loadWordPressLiveProductKeys(this.config);
+            wpProductKeys = live.keys;
+          } catch (error) {
+            this.logger.warn(
+              `wp product key load failed for research dedupe metrics: ${toSafeErrorMessage(error)}`,
+            );
+          }
+        }
         const runner = new CollectionJobRunner({
           logger: this.logger,
           database: this.database,
           jobs: this.jobs,
           requestIntervalMs:
             fresh.providerName === "fanza" ? this.config.fanzaRequestIntervalMs : 0,
+          wpProductKeys,
+          normalizeProductKey,
         });
         jobResult = await runner.run(provider, params);
       } catch (error) {
@@ -374,6 +407,8 @@ export class ScheduleRunner {
             scheduledFor,
             nextRunAt,
             ...countsFromResult(null),
+            researchTotal: null,
+            softTarget: null,
             executionTime: Date.now() - startedWall,
             errorMessage: "configuration incomplete (credentials or API approval pending)",
           };
@@ -430,10 +465,45 @@ export class ScheduleRunner {
 
       if (runStatus === "COMPLETED" || runStatus === "PARTIALLY_COMPLETED") {
         const previousFailureCount = fresh.consecutiveFailureCount;
-        const nextRunAt =
+        const cronNextRunAt =
           triggerType === "SCHEDULED" || fresh.scheduleType === "CRON"
             ? this.safeNextRunAt(fresh, this.now())
-            : fresh.nextRunAt;
+            : (fresh.nextRunAt ?? this.now());
+        const researchTotal = await this.database.prisma.researchItem.count({
+          where:
+            fresh.providerName === "fanza"
+              ? { source: { type: "FANZA" } }
+              : undefined,
+        });
+        const softTarget = this.config.researchSoftTarget;
+        const params = asParameters(fresh.parameters);
+        const hits =
+          typeof params.hits === "number" && Number.isFinite(params.hits)
+            ? params.hits
+            : this.config.fanzaDefaultHits;
+        const currentOffset = jobResult.startOffset;
+        const cursor = resolveNextStartOffset({
+          jobNextOffset: jobResult.nextOffset,
+          hits,
+          currentOffset,
+          fetchedCount: jobResult.fetchedCount,
+          researchTotal,
+          softTarget,
+        });
+        const nextRunAt = resolveNextRunAtAfterCollection({
+          now: this.now(),
+          cronNextRunAt: cronNextRunAt ?? this.now(),
+          researchTotal,
+          softTarget,
+          softFillIntervalMs: this.config.researchSoftFillIntervalMs,
+          wrapped: cursor.wrapped,
+        });
+        await this.schedules.updateSchedule(fresh.id, {
+          parameters: {
+            ...params,
+            startOffset: cursor.startOffset,
+          },
+        });
         await this.schedules.markScheduleAfterRun({
           scheduleId: fresh.id,
           lastRunAt: this.now(),
@@ -451,6 +521,18 @@ export class ScheduleRunner {
           partiallyCompleted: runStatus === "PARTIALLY_COMPLETED",
         });
         const refreshed = await this.schedules.findScheduleById(fresh.id);
+        const duplicateRate =
+          jobResult.fetchedCount > 0
+            ? Math.round((jobResult.updatedCount / jobResult.fetchedCount) * 100)
+            : 0;
+        this.logger.info(
+          `research schedule summary name=${fresh.name} status=${runStatus} fetched=${jobResult.fetchedCount} inserted=${jobResult.savedCount} updated=${jobResult.updatedCount} duplicates=${jobResult.updatedCount} duplicateRate=${duplicateRate}% wpDuplicateExcluded=${jobResult.wpDuplicateExcluded} offset=${jobResult.startOffset} nextOffset=${cursor.startOffset} researchTotal=${researchTotal} softTarget=${softTarget} nextRunAt=${nextRunAt.toISOString()}`,
+        );
+        if (jobResult.fetchedCount > 0 && duplicateRate >= 100 && !cursor.wrapped) {
+          this.logger.warn(
+            `research duplicateRate=100% name=${fresh.name} offset=${jobResult.startOffset} — paging cursor advanced to ${cursor.startOffset}`,
+          );
+        }
         return {
           scheduleId: fresh.id,
           scheduleName: fresh.name,
@@ -461,6 +543,10 @@ export class ScheduleRunner {
           scheduledFor,
           nextRunAt: refreshed?.nextRunAt ?? nextRunAt,
           ...countsFromResult(jobResult),
+          startOffset: jobResult.startOffset,
+          nextOffset: cursor.startOffset,
+          researchTotal,
+          softTarget,
           executionTime: Date.now() - startedWall,
         };
       }

@@ -11,6 +11,11 @@ import {
   findResearchProviderDescriptor,
   systemResearchScheduleName,
 } from "../adapters/affiliate/research-availability.js";
+import {
+  asScheduleParameters,
+  mergeScheduleParametersPreservingCursor,
+  shouldSoftFillNow,
+} from "./schedule-cursor.js";
 
 export interface EnsureCollectionSchedulesResult {
   ensured: string[];
@@ -64,6 +69,8 @@ export async function ensureResearchCollectionSchedules(input: {
   config: AppConfig;
   logger: Logger;
   now?: () => Date;
+  /** Optional FANZA ResearchItem count for soft-fill pull-forward. */
+  countFanzaResearchItems?: () => Promise<number>;
 }): Promise<EnsureCollectionSchedulesResult> {
   const now = input.now ?? (() => new Date());
   const result: EnsureCollectionSchedulesResult = { ensured: [], paused: [], skipped: [] };
@@ -86,8 +93,8 @@ export async function ensureResearchCollectionSchedules(input: {
     const name = systemResearchScheduleName(key);
     const cron = input.config.researchCollectionCron;
     const timezone = input.config.researchCollectionTimezone;
-    const parameters = parametersForProvider(key, input.config);
-    const nextRunAt = computeNextRunAt({
+    const defaults = parametersForProvider(key, input.config);
+    const cronNextRunAt = computeNextRunAt({
       cronExpression: cron,
       timezone,
       after: now(),
@@ -101,7 +108,7 @@ export async function ensureResearchCollectionSchedules(input: {
         scheduleType: "CRON",
         cronExpression: cron,
         timezone,
-        parameters,
+        parameters: defaults,
         isActive: true,
         // First create: run on the next due tick immediately (not wait for next cron wall clock).
         nextRunAt: now(),
@@ -111,6 +118,9 @@ export async function ensureResearchCollectionSchedules(input: {
       continue;
     }
 
+    const existingParams = asScheduleParameters(existing.parameters);
+    const parameters = mergeScheduleParametersPreservingCursor(defaults, existingParams);
+
     // Never-run schedules must catch up once credentials become AVAILABLE.
     // Failed collections also catch up, but only while nextRunAt is still due/past
     // (do not override a healthy future cron after recovery).
@@ -119,11 +129,31 @@ export async function ensureResearchCollectionSchedules(input: {
       existing.consecutiveFailureCount > 0 &&
       (existing.nextRunAt == null || existing.nextRunAt.getTime() <= now().getTime());
     const needsCatchUp = neverRan || failedPendingRetry;
-    const nextRunAtResolved = needsCatchUp
+
+    let nextRunAtResolved = needsCatchUp
       ? now()
       : existing.nextRunAt && existing.nextRunAt.getTime() > now().getTime()
         ? existing.nextRunAt
-        : nextRunAt;
+        : cronNextRunAt;
+
+    if (!needsCatchUp && key === "fanza" && input.countFanzaResearchItems) {
+      const researchTotal = await input.countFanzaResearchItems();
+      if (
+        shouldSoftFillNow({
+          now: now(),
+          lastRunAt: existing.lastRunAt,
+          nextRunAt: existing.nextRunAt,
+          researchTotal,
+          softTarget: input.config.researchSoftTarget,
+          softFillIntervalMs: input.config.researchSoftFillIntervalMs,
+        })
+      ) {
+        nextRunAtResolved = now();
+        input.logger.info(
+          `research auto-schedule soft-fill due provider=${key} researchTotal=${researchTotal} softTarget=${input.config.researchSoftTarget} startOffset=${parameters.startOffset}`,
+        );
+      }
+    }
 
     await input.schedules.updateSchedule(existing.id, {
       providerName: key,

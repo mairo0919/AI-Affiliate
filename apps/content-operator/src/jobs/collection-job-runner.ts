@@ -48,6 +48,9 @@ export interface CollectionJobRunnerDeps {
   sleepImpl?: (ms: number) => Promise<void>;
   requestIntervalMs?: number;
   lockTtlMs?: number;
+  /** Live WP publish+future product keys — counted only, still upserted as enrichment. */
+  wpProductKeys?: Set<string>;
+  normalizeProductKey?: (raw: string | null | undefined) => string | null;
 }
 
 export interface CollectionJobRunResult {
@@ -60,9 +63,12 @@ export interface CollectionJobRunResult {
   updatedCount: number;
   skippedCount: number;
   errorCount: number;
+  /** Fetched items whose externalId already exists on WP publish/future. */
+  wpDuplicateExcluded: number;
   currentOffset: number | null;
   nextOffset: number | null;
   elapsedMs: number;
+  startOffset: number;
 }
 
 function defaultSleep(ms: number): Promise<void> {
@@ -92,6 +98,10 @@ export class CollectionJobRunner {
   private readonly sleepImpl: (ms: number) => Promise<void>;
   private readonly requestIntervalMs: number;
   private readonly lockTtlMs: number;
+  private readonly wpProductKeys: Set<string>;
+  private readonly normalizeProductKey:
+    | ((raw: string | null | undefined) => string | null)
+    | null;
 
   constructor(deps: CollectionJobRunnerDeps) {
     this.logger = deps.logger;
@@ -100,6 +110,8 @@ export class CollectionJobRunner {
     this.sleepImpl = deps.sleepImpl ?? defaultSleep;
     this.requestIntervalMs = deps.requestIntervalMs ?? 1000;
     this.lockTtlMs = deps.lockTtlMs ?? DEFAULT_LOCK_TTL_MS;
+    this.wpProductKeys = deps.wpProductKeys ?? new Set();
+    this.normalizeProductKey = deps.normalizeProductKey ?? null;
   }
 
   async run(
@@ -153,6 +165,7 @@ export class CollectionJobRunner {
     let updatedCount = 0;
     let skippedCount = 0;
     let errorCount = 0;
+    let wpDuplicateExcluded = 0;
     let pagesProcessed = 0;
     let currentOffset: number | null = startOffset;
     let nextOffset: number | null = startOffset;
@@ -212,7 +225,7 @@ export class CollectionJobRunner {
 
           if (hadPageSuccess && !isFatalConfigOrAuthError(error)) {
             await this.jobs.partiallyCompleteJob(job.id, safeMessage);
-            return this.toResult(job.id, "PARTIALLY_COMPLETED", {
+            return this.toResult(job.id, "PARTIALLY_COMPLETED", this.snapshotCounts({
               pagesProcessed,
               fetchedCount,
               mappedCount,
@@ -220,13 +233,15 @@ export class CollectionJobRunner {
               updatedCount,
               skippedCount,
               errorCount,
+              wpDuplicateExcluded,
               currentOffset,
               nextOffset,
               elapsedMs: Date.now() - startedAt,
-            });
+              startOffset,
+            }));
           }
           await this.jobs.failJob(job.id, safeMessage);
-          return this.toResult(job.id, "FAILED", {
+          return this.toResult(job.id, "FAILED", this.snapshotCounts({
             pagesProcessed,
             fetchedCount,
             mappedCount,
@@ -234,10 +249,12 @@ export class CollectionJobRunner {
             updatedCount,
             skippedCount,
             errorCount,
+            wpDuplicateExcluded,
             currentOffset,
             nextOffset,
             elapsedMs: Date.now() - startedAt,
-          });
+            startOffset,
+          }));
         }
 
         const pageFetched = pageResult.stats?.fetchedCount ?? pageResult.items.length;
@@ -266,6 +283,14 @@ export class CollectionJobRunner {
 
         if (!dryRun) {
           try {
+            if (this.wpProductKeys.size > 0 && this.normalizeProductKey) {
+              for (const item of pageResult.items) {
+                const key = this.normalizeProductKey(item.externalId);
+                if (key && this.wpProductKeys.has(key)) {
+                  wpDuplicateExcluded += 1;
+                }
+              }
+            }
             const summary = await this.research.saveCollection(pageResult);
             savedCount += summary.createdCount;
             updatedCount += summary.updatedCount;
@@ -283,6 +308,13 @@ export class CollectionJobRunner {
               retryable: false,
             });
             throw new DatabaseError(safeMessage, { cause: error });
+          }
+        } else if (this.wpProductKeys.size > 0 && this.normalizeProductKey) {
+          for (const item of pageResult.items) {
+            const key = this.normalizeProductKey(item.externalId);
+            if (key && this.wpProductKeys.has(key)) {
+              wpDuplicateExcluded += 1;
+            }
           }
         }
 
@@ -326,7 +358,7 @@ export class CollectionJobRunner {
         await this.jobs.partiallyCompleteJob(job.id);
       }
 
-      return this.toResult(job.id, finalStatus, {
+      return this.toResult(job.id, finalStatus, this.snapshotCounts({
         pagesProcessed,
         fetchedCount,
         mappedCount,
@@ -334,14 +366,16 @@ export class CollectionJobRunner {
         updatedCount,
         skippedCount,
         errorCount,
+        wpDuplicateExcluded,
         currentOffset,
         nextOffset,
         elapsedMs: Date.now() - startedAt,
-      });
+        startOffset,
+      }));
     } catch (error) {
       if (error instanceof CancelledError) {
         await this.jobs.markCancelled(job.id);
-        return this.toResult(job.id, "CANCELLED", {
+        return this.toResult(job.id, "CANCELLED", this.snapshotCounts({
           pagesProcessed,
           fetchedCount,
           mappedCount,
@@ -349,10 +383,12 @@ export class CollectionJobRunner {
           updatedCount,
           skippedCount,
           errorCount,
+          wpDuplicateExcluded,
           currentOffset,
           nextOffset,
           elapsedMs: Date.now() - startedAt,
-        });
+          startOffset,
+        }));
       }
 
       const safeMessage = sanitizeForLog(error instanceof Error ? error.message : String(error));
@@ -368,7 +404,7 @@ export class CollectionJobRunner {
 
       if (hadPageSuccess && !isFatalConfigOrAuthError(error)) {
         await this.jobs.partiallyCompleteJob(job.id, safeMessage);
-        return this.toResult(job.id, "PARTIALLY_COMPLETED", {
+        return this.toResult(job.id, "PARTIALLY_COMPLETED", this.snapshotCounts({
           pagesProcessed,
           fetchedCount,
           mappedCount,
@@ -376,17 +412,19 @@ export class CollectionJobRunner {
           updatedCount,
           skippedCount,
           errorCount: errorCount + 1,
+          wpDuplicateExcluded,
           currentOffset,
           nextOffset,
           elapsedMs: Date.now() - startedAt,
-        });
+          startOffset,
+        }));
       }
 
       const latest = await this.jobs.findJobById(job.id);
       if (latest && latest.status === "RUNNING") {
         await this.jobs.failJob(job.id, safeMessage);
       }
-      return this.toResult(job.id, "FAILED", {
+      return this.toResult(job.id, "FAILED", this.snapshotCounts({
         pagesProcessed,
         fetchedCount,
         mappedCount,
@@ -394,10 +432,12 @@ export class CollectionJobRunner {
         updatedCount,
         skippedCount,
         errorCount: errorCount + 1,
+        wpDuplicateExcluded,
         currentOffset,
         nextOffset,
         elapsedMs: Date.now() - startedAt,
-      });
+        startOffset,
+      }));
     } finally {
       await this.jobs.releaseLock(lockKey, job.id);
     }
@@ -426,13 +466,19 @@ export class CollectionJobRunner {
     return this.run(provider, params);
   }
 
+  private snapshotCounts(
+    counts: Omit<CollectionJobRunResult, "jobId" | "status">,
+  ): Omit<CollectionJobRunResult, "jobId" | "status"> {
+    return counts;
+  }
+
   private toResult(
     jobId: string,
     status: string,
     counts: Omit<CollectionJobRunResult, "jobId" | "status">,
   ): CollectionJobRunResult {
     this.logger.info(
-      `Job finished jobId=${jobId} status=${status} pages=${counts.pagesProcessed} fetched=${counts.fetchedCount} mapped=${counts.mappedCount} errors=${counts.errorCount}`,
+      `Job finished jobId=${jobId} status=${status} pages=${counts.pagesProcessed} fetched=${counts.fetchedCount} mapped=${counts.mappedCount} inserted=${counts.savedCount} updated=${counts.updatedCount} duplicates=${counts.updatedCount} wpDuplicateExcluded=${counts.wpDuplicateExcluded} offset=${counts.startOffset} nextOffset=${counts.nextOffset ?? "none"} errors=${counts.errorCount}`,
     );
     return { jobId, status, ...counts };
   }

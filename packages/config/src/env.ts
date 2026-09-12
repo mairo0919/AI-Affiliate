@@ -55,6 +55,10 @@ export interface AppConfig {
   researchFanzaMaxPages: number;
   researchFanzaMaxItems: number;
   researchFanzaSort: string;
+  /** Soft ResearchItem inventory target for FANZA ItemList paging (not a hard delete stop). */
+  researchSoftTarget: number;
+  /** While below soft target, schedule next ItemList page after this interval (1 page/run). */
+  researchSoftFillIntervalMs: number;
   researchScheduleFailureLimit: number;
   researchScheduleGraceMs: number;
   researchRetryEnabled: boolean;
@@ -600,6 +604,11 @@ export function loadConfig(options?: { requireDatabaseUrl?: boolean }): AppConfi
       500,
     ),
     researchFanzaSort: process.env.RESEARCH_FANZA_SORT?.trim() || "date",
+    researchSoftTarget: parsePositiveInt(process.env.RESEARCH_SOFT_TARGET, 500),
+    researchSoftFillIntervalMs: parsePositiveInt(
+      process.env.RESEARCH_SOFT_FILL_INTERVAL_MS,
+      15 * 60_000,
+    ),
     researchScheduleFailureLimit: parsePositiveInt(
       process.env.RESEARCH_SCHEDULE_FAILURE_LIMIT,
       5,

@@ -453,6 +453,8 @@ export class SchedulerPipeline {
         config: this.config,
         logger: this.logger,
         now: this.now,
+        countFanzaResearchItems: async () =>
+          this.database.prisma.researchItem.count({ where: { source: { type: "FANZA" } } }),
       });
     } catch (error) {
       this.logger.warn(`research auto-schedule ensure failed: ${String(error)}`);
