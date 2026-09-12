@@ -153,7 +153,7 @@ export function isPerformerGenreListTitle(title: string, performers: string[]): 
     if (!m?.[1]) continue;
     const rest = m[1].trim();
     if (isBareGenreToken(rest)) return true;
-    const parts = rest.split(/[・\/／、,|｜]/u).map((p) => p.trim()).filter(Boolean);
+    const parts = rest.split(/[・/／、,|｜]/u).map((p) => p.trim()).filter(Boolean);
     if (parts.length >= 2 && parts.filter((p) => isBareGenreToken(p)).length >= 2) return true;
   }
   return false;
