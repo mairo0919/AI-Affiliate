@@ -424,10 +424,13 @@ export function selectXSocialFacts(input: {
 }
 
 /**
- * Compose natural X posts from selected facts — no tag enumeration / no duplicate lines.
+ * Compose X posts from already-realized social lines (not raw fact dump).
+ * Thread shape / link assembly only — realization happens in x-social-realize.
  */
 export function composeXSocialPosts(input: {
   facts: XSocialFact[];
+  /** Realized copy lines (editorial). Falls back to fact.text if omitted. */
+  realizedLines?: string[];
   threadShape: XThreadShape;
   linkMode: "WP_TRAFFIC" | "DIRECT_AFFILIATE" | "COMBINED";
   wpUrl: string | null;
@@ -435,7 +438,6 @@ export function composeXSocialPosts(input: {
   disclosure: string;
   performers?: string[];
 }): Array<{ sequence: number; role: "ROOT" | "REPLY" | "CTA"; body: string; linkKind: "none" | "wp" | "fanza" }> {
-  const facts = input.facts;
   const disclosure = input.disclosure;
   const withDisc = (body: string) => {
     if (!disclosure) return body.trim();
@@ -447,31 +449,18 @@ export function composeXSocialPosts(input: {
     return `${body} ${url}`.trim();
   };
 
-  const primary = facts[0]?.text;
-  const secondary = facts[1]?.text;
-  const tertiary = facts[2]?.text;
-  const performer =
-    facts.find((f) => f.kind === "performer")?.text ?? input.performers?.[0] ?? null;
+  const lines = (input.realizedLines?.length
+    ? input.realizedLines
+    : input.facts.map((f) => f.text)
+  )
+    .map((t) => t.replace(/[。．]+$/u, "").trim())
+    .filter(Boolean);
 
-  const hookLine = (): string => {
-    if (!primary) {
-      return performer ? `${performer}の作品` : "公開情報ベースの作品ポイント";
-    }
-    if (facts[0]!.kind === "performer" && secondary) {
-      return `${primary} — ${secondary}`;
-    }
-    const performerCount = input.performers?.length ?? 0;
-    if (
-      performer &&
-      performerCount <= 2 &&
-      facts[0]!.kind !== "performer" &&
-      !primary.includes(performer) &&
-      primary.length <= 40
-    ) {
-      return `${performer}の${primary}`;
-    }
-    return primary;
-  };
+  const primary = lines[0];
+  const secondary = lines[1];
+  const tertiary = lines[2];
+
+  const hookLine = (): string => primary ?? input.performers?.[0] ?? "公開情報ベースの作品ポイント";
 
   const supportLine = (text: string | undefined, fallback: string): string => {
     if (!text) return fallback;
@@ -481,11 +470,14 @@ export function composeXSocialPosts(input: {
 
   if (input.threadShape === "SINGLE") {
     let body = `${hookLine()}。`;
-    if (secondary && !overlaps(secondary, primary ?? "") && facts[1]!.kind !== "taxonomy_aux") {
-      // Fold second work fact into same post when SINGLE
-      if (body.length + secondary.length < 70) {
-        body = `${hookLine()}。${secondary}。`;
-      }
+    // Realized copy may already be multi-sentence in one line — do not glue raw second fact.
+    if (
+      secondary &&
+      !overlaps(secondary, primary ?? "") &&
+      !body.includes(secondary) &&
+      body.length + secondary.length < 72
+    ) {
+      body = `${hookLine()}。${secondary}。`;
     }
     if (input.linkMode === "WP_TRAFFIC") {
       body = `${body}詳細は記事で。`;
@@ -520,9 +512,8 @@ export function composeXSocialPosts(input: {
   });
 
   if (input.threadShape === "SHORT_THREAD") {
-    let body = `${supportLine(secondary, performer ?? "")}。`;
-    if (!secondary && !performer) {
-      // Should not happen if selection is correct — fall back to SINGLE shape content
+    let body = `${supportLine(secondary, "")}。`;
+    if (!secondary) {
       body = `${hookLine()}。`;
     }
     if (input.linkMode === "COMBINED" && input.wpUrl && input.fanzaUrl) {
@@ -577,7 +568,6 @@ export function composeXSocialPosts(input: {
   const t = supportLine(tertiary, "");
   let last = t ? `${t}。` : "";
   if (!last) {
-    // No third fact — collapse to SHORT rather than filler
     const only = posts.length === 1 ? `${hookLine()}。` : "";
     if (only && input.linkMode !== "WP_TRAFFIC") {
       return [

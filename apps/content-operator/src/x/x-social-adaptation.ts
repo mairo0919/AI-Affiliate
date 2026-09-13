@@ -13,6 +13,7 @@ import {
   type XSocialFact,
   type XThreadShape,
 } from "./x-social-facts.js";
+import { realizeXSocialCopy, type SocialThinSkip } from "./x-social-realize.js";
 
 export type XLinkMode = "WP_TRAFFIC" | "DIRECT_AFFILIATE" | "COMBINED";
 
@@ -58,17 +59,22 @@ export type XSocialAdaptationResult = {
   hooks: string[];
   selectedFacts: XSocialFact[];
   discardedTaxonomy: string[];
+  realizedLines: string[];
+  productNameCopyRate: number;
+  /** When set, posts are empty — do not publish. */
+  skip: SocialThinSkip | null;
   wpUrl: string | null;
   fanzaUrl: string | null;
   mediaMode: "TEXT_ONLY";
   warnings: string[];
   tracking: {
-    format: "x-social-adaptation-v2";
+    format: "x-social-adaptation-v3";
     cid: string;
     linkMode: XLinkMode;
     threadShape: XThreadShape;
     hookCount: number;
     factSources: string[];
+    skipped: boolean;
   };
 };
 
@@ -227,8 +233,55 @@ export function adaptCanonicalToXSocial(
   }
 
   const disclosure = input.disclosure ?? "#PR";
+  const realized = realizeXSocialCopy({
+    facts: selection.selected,
+    performers: input.performerNames,
+    productTitle: input.productTitle,
+    canonicalTitle,
+  });
+
+  if (!realized.ok) {
+    warnings.push(realized.skip.reason);
+    warnings.push(`thin_detail:${realized.skip.detail}`);
+    const hooks = selection.selected.map((f) => f.text);
+    return {
+      threadShape: selection.threadShape,
+      threadReason: selection.threadReason,
+      linkMode: link.mode,
+      posts: [],
+      canonicalTitleUsed: canonicalTitle,
+      wpTitleUsedAsSoleInput: false,
+      titleDivergence,
+      hooks,
+      selectedFacts: selection.selected,
+      discardedTaxonomy: selection.discardedTaxonomy,
+      realizedLines: [],
+      productNameCopyRate: realized.productNameCopyRate,
+      skip: realized.skip,
+      wpUrl: link.wpUrl,
+      fanzaUrl: link.fanzaUrl,
+      mediaMode: "TEXT_ONLY",
+      warnings,
+      tracking: {
+        format: "x-social-adaptation-v3",
+        cid: input.cid,
+        linkMode: link.mode,
+        threadShape: selection.threadShape,
+        hookCount: hooks.length,
+        factSources: [...new Set(selection.selected.map((f) => f.source))],
+        skipped: true,
+      },
+    };
+  }
+
+  if (realized.productNameCopyRate >= 0.85) {
+    warnings.push("high_product_name_copy_rate");
+  }
+  for (const n of realized.realizationNotes) warnings.push(`realize:${n}`);
+
   const posts = composeXSocialPosts({
     facts: selection.selected,
+    realizedLines: realized.lines,
     threadShape: selection.threadShape,
     linkMode: link.mode,
     wpUrl: link.wpUrl,
@@ -255,17 +308,21 @@ export function adaptCanonicalToXSocial(
     hooks,
     selectedFacts: selection.selected,
     discardedTaxonomy: selection.discardedTaxonomy,
+    realizedLines: realized.lines,
+    productNameCopyRate: realized.productNameCopyRate,
+    skip: null,
     wpUrl: link.wpUrl,
     fanzaUrl: link.fanzaUrl,
     mediaMode: "TEXT_ONLY",
     warnings,
     tracking: {
-      format: "x-social-adaptation-v2",
+      format: "x-social-adaptation-v3",
       cid: input.cid,
       linkMode: link.mode,
       threadShape: selection.threadShape,
       hookCount: hooks.length,
       factSources: [...new Set(selection.selected.map((f) => f.source))],
+      skipped: false,
     },
   };
 }

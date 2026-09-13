@@ -598,6 +598,10 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
             : adapted.linkMode === "COMBINED"
               ? "COMBINED"
               : "DIRECT_AFFILIATE";
+          if (adapted.skip || adapted.posts.length === 0) {
+            x.held = true;
+            x.note = adapted.skip?.reason ?? "SOCIAL_CONTENT_TOO_THIN";
+          } else {
           const primaryUrl =
             adapted.linkMode === "DIRECT_AFFILIATE"
               ? adapted.fanzaUrl
@@ -659,6 +663,7 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
               contentId = created.id;
               llmCalls += 0;
             }
+          }
           }
         }
 

@@ -126,6 +126,13 @@ export {
 } from "./x-social-facts.js";
 export type { XSocialFact, XSocialFactKind } from "./x-social-facts.js";
 export {
+  realizeXSocialCopy,
+  assessSocialContentThinness,
+  editorialRealizePhrase,
+  productNameCopyRate,
+} from "./x-social-realize.js";
+export type { SocialRealizeResult, SocialThinSkip } from "./x-social-realize.js";
+export {
   loadCanonicalXSource,
   adaptLoadedCanonicalToX,
 } from "./canonical-x-source.js";

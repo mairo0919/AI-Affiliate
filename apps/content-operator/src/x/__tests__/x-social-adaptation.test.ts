@@ -13,6 +13,10 @@ import {
   selectXSocialFacts,
   toXSocialSafePhrase,
 } from "../x-social-facts.js";
+import {
+  editorialRealizePhrase,
+  realizeXSocialCopy,
+} from "../x-social-realize.js";
 import { chooseXPostRoute } from "../../daily-ops/x-route.js";
 import { buildXDryRunPayload } from "../x-dry-run.js";
 
@@ -65,7 +69,6 @@ describe("x-social-facts selection", () => {
     expect(selected.selected.every((f) => f.kind !== "taxonomy_aux" || selected.selected.length > 1)).toBe(
       true,
     );
-    // Must not be pure taxonomy enumeration
     expect(selected.selected.map((f) => f.text).join("|")).not.toMatch(/^キス・接吻\|人妻/);
   });
 
@@ -97,6 +100,76 @@ describe("x-social-facts selection", () => {
   });
 });
 
+describe("x-social-realize composition", () => {
+  it("rewrites catalog dump into punctuated situation-first copy", () => {
+    const out = editorialRealizePhrase(
+      "MadonnaVR史上初専属美熟女10人大集合町内会の合宿で欲求不満な人妻たちが僕1人を求め合い奪い合う超ハーレム温泉",
+      "situation",
+    );
+    expect(out).toMatch(/合宿で/);
+    expect(out).toMatch(/。/);
+    expect(out).not.toMatch(/^MadonnaVR史上初専属美熟女10人大集合町内会/);
+  });
+
+  it("rewrites と化した mash into natural subject-first sentence", () => {
+    const out = editorialRealizePhrase("唾液敏感女と化した麗しの欲情妻長瀬麻美", "situation", [
+      "長瀬麻美",
+    ]);
+    expect(out).toMatch(/長瀬麻美/);
+    expect(out).toMatch(/と化す/);
+    expect(out).not.toBe("唾液敏感女と化した麗しの欲情妻長瀬麻美。");
+  });
+
+  it("skips performer-only and catalog-only", () => {
+    const performerOnly = realizeXSocialCopy({
+      facts: [{ text: "桜乃りの", kind: "performer", source: "performer", score: 1 }],
+      performers: ["桜乃りの"],
+    });
+    expect(performerOnly.ok).toBe(false);
+    if (!performerOnly.ok) expect(performerOnly.skip.reason).toBe("SOCIAL_CONTENT_TOO_THIN");
+
+    const catalog = realizeXSocialCopy({
+      facts: [
+        {
+          text: "ギュっと上戸まり2タイトル4時間",
+          kind: "situation",
+          source: "claim",
+          score: 1,
+        },
+      ],
+      performers: ["上戸まり"],
+    });
+    expect(catalog.ok).toBe(false);
+
+    const shortRel = realizeXSocialCopy({
+      facts: [
+        {
+          text: "彩月七緒と幼なじみ",
+          kind: "relationship",
+          source: "article_plan",
+          score: 1,
+        },
+      ],
+      performers: ["彩月七緒"],
+    });
+    expect(shortRel.ok).toBe(false);
+  });
+
+  it("preserves already-natural sodah-like copy", () => {
+    const line =
+      "シャンプーが香るたび、ボクは何度も先輩に恋をする。時折僕を惑わす大人の視線と、部屋で無防備にこぼれる彩月七緒";
+    const out = realizeXSocialCopy({
+      facts: [{ text: line, kind: "situation", source: "claim", score: 1 }],
+      performers: ["彩月七緒"],
+    });
+    expect(out.ok).toBe(true);
+    if (out.ok) {
+      expect(out.lines[0]).toMatch(/シャンプーが香る/);
+      expect(out.lines[0]).toMatch(/先輩に恋をする/);
+    }
+  });
+});
+
 describe("x-social-adaptation", () => {
   it("uses plan/claim situation — not WP title or genre list", () => {
     const planFacts = extractArticlePlanSocialFacts({
@@ -121,6 +194,8 @@ describe("x-social-adaptation", () => {
     const result = adaptCanonicalToXSocial({
       canonicalTitle: "MadonnaVR史上初の専属美熟女10人とハイクオリティVRの温泉中出し乱交",
       wordpressTitle: "SEO別タイトル",
+      productTitle:
+        "【VR】MadonnaVR史上初！！専属美熟女10人大集合！！町内会の合宿で欲求不満な人妻たちが僕1人を求め合い奪い合う超ハーレム温泉中出し乱交 8KVR",
       cid: "juvr00281",
       performerNames: ["風間ゆみ", "椎名ゆな"],
       articlePlanFacts: planFacts,
@@ -131,11 +206,30 @@ describe("x-social-adaptation", () => {
       disclosure: "#PR",
       preferredLinkMode: "DIRECT_AFFILIATE",
     });
+    expect(result.skip).toBeNull();
     expect(result.wpTitleUsedAsSoleInput).toBe(false);
     expect(result.posts[0]!.body).toMatch(/合宿|町内会|10人|ハーレム/);
     expect(result.posts.map((p) => p.body).join("\n")).not.toMatch(/^ハーレム。人妻・主婦/);
     expect(result.posts.every((p) => !detectDupTaxonomyThread(p.body))).toBe(true);
     expect(result.selectedFacts[0]!.kind).not.toBe("taxonomy_aux");
+    expect(result.posts[0]!.body).toMatch(/、|。/);
+  });
+
+  it("skips SOCIAL_CONTENT_TOO_THIN instead of posting performer-only", () => {
+    const result = adaptCanonicalToXSocial({
+      canonicalTitle: "桜乃りの",
+      cid: "snos00418",
+      performerNames: ["桜乃りの"],
+      claimStatements: [],
+      articlePlanFacts: [],
+      taxonomyTags: ["独占配信", "単体作品"],
+      affiliateUrl: "https://al.fanza.co.jp/?af_id=1",
+      affiliateLinkReady: true,
+      wpStatus: "future",
+      disclosure: "#PR",
+    });
+    expect(result.skip?.reason).toBe("SOCIAL_CONTENT_TOO_THIN");
+    expect(result.posts).toHaveLength(0);
   });
 
   it("falls back to FANZA when WP is future", () => {
@@ -211,7 +305,7 @@ describe("dry-run multi-post", () => {
         fanzaDefaultService: "digital",
         fanzaDefaultFloor: "videoa",
       },
-      body: adapted.posts[0]!.body,
+      body: adapted.posts[0]?.body ?? "",
       posts: adapted.posts,
       threadShape: adapted.threadShape,
       linkMode: adapted.linkMode,
