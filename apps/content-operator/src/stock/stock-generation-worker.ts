@@ -307,7 +307,8 @@ export async function runStockGenerationBatch(deps: {
           researchItemId: item.id,
           productTitle: item.title,
           productCanonicalId: selected.canonicalId,
-          productUrl: ctaUrl,
+          // Evidence ingest must use official product page URL (never affiliate wrapper).
+          productUrl: buildFanzaCanonicalProductUrl(selected.canonicalId),
           rawData: item.rawData,
           ctaUrl,
           route: "STOCK_GENERATION",

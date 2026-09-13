@@ -53,7 +53,7 @@ export type PageDescriptionEvidence = {
   evidenceType: "official_page_description";
   text: string;
   originField: string;
-  provenance: "jsonld";
+  provenance: "jsonld" | "dom";
   /** Not auto-promoted to Generator fuel in this phase. */
   allowedForGeneration: false;
 };
@@ -285,6 +285,38 @@ export function extractFanzaPageEvidenceFromHtml(input: {
         const thumb = classifyPageImageUrl(video.thumbnailUrl, "jsonld.VideoObject.thumbnailUrl");
         if (thumb) images.push(thumb);
       }
+    }
+  }
+
+  // Fallback when JSON-LD Product.description is absent (some DVD box sets).
+  if (!description) {
+    const ogDesc =
+      htmlMatchFirst(
+        input.html,
+        /property=["']og:description["']\s+content=["']([^"']+)["']/i,
+      ) ||
+      htmlMatchFirst(
+        input.html,
+        /content=["']([^"']+)["']\s+property=["']og:description["']/i,
+      ) ||
+      htmlMatchFirst(
+        input.html,
+        /name=["']description["']\s+content=["']([^"']+)["']/i,
+      ) ||
+      htmlMatchFirst(
+        input.html,
+        /content=["']([^"']+)["']\s+name=["']description["']/i,
+      );
+    if (ogDesc?.trim() && ogDesc.trim().length >= 12) {
+      description = {
+        source: FANZA_PAGE_EVIDENCE_SOURCE,
+        evidenceType: "official_page_description",
+        text: ogDesc.trim(),
+        originField: "meta.og:description",
+        provenance: "dom",
+        allowedForGeneration: false,
+      };
+      originFields.push("meta.og:description");
     }
   }
 

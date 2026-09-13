@@ -31,9 +31,11 @@ type PageEvidenceShape = {
     maker?: { value?: string } | null;
     series?: { value?: string } | null;
     durationMinutes?: { value?: number } | null;
-  };
+  } | null;
   productName?: string | null;
   synthesizedFrom?: string;
+  fetchMode?: string;
+  extractMode?: string;
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -124,15 +126,31 @@ export function shouldAvoidSingularPerformerFraming(input: {
   return shape === "MULTI_PERFORMER" || shape === "BEST_COMPILATION";
 }
 
-function isUsableOfficialPageEvidence(pe: PageEvidenceShape | null): boolean {
+/**
+ * Official product page Evidence is usable when:
+ * - real page fetch (not ItemList-only synth), and
+ * - JSON-LD / page synopsis exists, OR
+ * - productName + cast/catalog from a real page (some DVD box sets omit description).
+ */
+export function isUsableOfficialPageEvidence(pe: PageEvidenceShape | null): boolean {
   if (!pe) return false;
-  if (!pe.description?.text?.trim()) return false;
+  const peRec = pe as PageEvidenceShape & { fetchMode?: string; extractMode?: string };
   // Reject ItemList-only synth unless a real page fetch stamped fetchMode.
-  if (pe.synthesizedFrom === "itemlist") {
-    const peRec = pe as PageEvidenceShape & { fetchMode?: string };
-    if (!peRec.fetchMode) return false;
-  }
-  return true;
+  if (pe.synthesizedFrom === "itemlist" && !peRec.fetchMode) return false;
+
+  const hasDesc = Boolean(pe.description?.text?.trim());
+  if (hasDesc) return true;
+
+  const productName = (pe.productName ?? "").trim();
+  const hasRichName =
+    productName.length >= 12 && !/^[a-z]{2,8}\d{3,}$/i.test(productName);
+  const hasActors = (pe.actors?.length ?? 0) > 0;
+  const hasGenres = (pe.catalog?.genres?.length ?? 0) > 0;
+  const hasDuration = Number.isFinite(pe.catalog?.durationMinutes?.value);
+  const realPage = Boolean(peRec.fetchMode?.trim() || peRec.extractMode);
+
+  // Official page without synopsis: productName + cast/catalog is still Claims fuel.
+  return Boolean(realPage && hasRichName && (hasActors || hasGenres) && (hasActors || hasGenres || hasDuration));
 }
 
 /**
@@ -157,11 +175,11 @@ export async function ensureOfficialEnrichmentForStockItem(input: {
     .map((g) => (typeof g?.value === "string" ? g.value.trim() : ""))
     .filter(Boolean);
 
-  if (isUsableOfficialPageEvidence(pe) && actors.length > 0) {
+  if (isUsableOfficialPageEvidence(pe)) {
     return {
       status: "ALREADY_PRESENT",
       sourceDocumentId: existing?.id ?? null,
-      hasDescription: true,
+      hasDescription: Boolean(pe?.description?.text?.trim()),
       actorCount: actors.length,
       genreCount: genres.length,
       fetchAttempted: false,
@@ -188,16 +206,18 @@ export async function ensureOfficialEnrichmentForStockItem(input: {
       });
       sourceDocumentId = ingested.sourceDocumentId ?? sourceDocumentId;
       if (ingested.evidence) {
-        const hasDescription = Boolean(ingested.evidence.description?.text?.trim());
         const pageActors = [...(ingested.evidence.actors ?? [])].filter(Boolean);
         const pageGenres = (ingested.evidence.catalog?.genres ?? [])
           .map((g) => g.value)
           .filter(Boolean);
-        if (hasDescription) {
+        const usable = isUsableOfficialPageEvidence(
+          ingested.evidence as PageEvidenceShape,
+        );
+        if (usable) {
           return {
             status: "PAGE_ENRICHED",
             sourceDocumentId,
-            hasDescription: true,
+            hasDescription: Boolean(ingested.evidence.description?.text?.trim()),
             actorCount: pageActors.length,
             genreCount: pageGenres.length,
             fetchAttempted,

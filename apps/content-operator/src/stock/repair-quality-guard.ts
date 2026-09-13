@@ -231,6 +231,14 @@ export function scoreArticleAxes(snap: ArticleSnapshot): QualityAxes {
     specificity -= 30;
   }
 
+  // Performer + evaluative crumb is not a factual product title (e.g. 戸川なみの美しさ).
+  if (/の(?:美しさ|妖艶さ|かわいらしさ|魅力|最高)$/u.test(title)) {
+    titleQuality -= 45;
+    factual -= 30;
+    specificity -= 25;
+    naturalness -= 20;
+  }
+
   // Official title dump is also weak editorial
   if (title.length >= 36 && title === snap.productTitle.slice(0, title.length)) {
     titleQuality -= 15;

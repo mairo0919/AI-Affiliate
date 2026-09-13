@@ -15,6 +15,7 @@ import type { PageEvidenceMetaShape } from "../article-pattern/official-page-evi
 import type { ContentGenerationService } from "../generation/content-generation-service.js";
 import {
   ensureOfficialEnrichmentForStockItem,
+  isUsableOfficialPageEvidence,
   readPageEvidenceFromDocMetadata,
   type OfficialEnrichmentResult,
 } from "../stock/ensure-official-enrichment.js";
@@ -89,7 +90,7 @@ function readPageEvidence(
     const pe = (doc.metadata as Record<string, unknown>).pageEvidence;
     if (!pe || typeof pe !== "object" || Array.isArray(pe)) return null;
     const shape = pe as PageEvidenceMetaShape;
-    if (!shape.description?.text?.trim()) return null;
+    if (!isUsableOfficialPageEvidence(shape)) return null;
     return shape;
   });
 }

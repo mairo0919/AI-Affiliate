@@ -15,6 +15,7 @@ import {
 import type { Logger } from "@ai-affiliate/shared";
 import type { PublisherAdapter } from "../adapters/types.js";
 import { requireApiLLMProvider } from "../adapters/llm/create-llm-provider.js";
+import { buildFanzaCanonicalProductUrl } from "../adapters/affiliate/fanza-affiliate-provider.js";
 import {
   wordpressCredentialsPresent,
 } from "../adapters/publisher/wordpress-api-publisher.js";
@@ -334,7 +335,8 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
           researchItemId: item.id,
           productTitle: item.title,
           productCanonicalId: selected.canonicalId,
-          productUrl: ctaUrl,
+          // Evidence ingest must use official product page URL (never affiliate wrapper).
+          productUrl: buildFanzaCanonicalProductUrl(selected.canonicalId),
           rawData: item.rawData,
           ctaUrl,
           route: "DAILY_OPS",

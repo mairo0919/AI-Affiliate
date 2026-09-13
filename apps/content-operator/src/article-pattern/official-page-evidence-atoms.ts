@@ -93,9 +93,9 @@ const PROMO_SALVAGE_DENY_RE =
 
 /** Scene stems aligned with semantic-evidence SCENE_STEM_RE + common action prefixes. */
 const SCENE_SALVAGE_MATCH_RE =
-  /(?:追撃|猛烈|ハード|杭打ち|逆\d+P)?(?:キス|舐め|セックス|ピストン|激ピス|潮(?:吹)?|乱交|痴女(?:られ|誘惑)?|わからせ|洗脳|生ハメ|顔面|挿入|絶頂|責め|フェラ|騎乗|中出し|ハメ潮|アナル|レ[○●]プ|どしゃぶり)/gu;
+  /(?:追撃|猛烈|ハード|杭打ち|逆\d+P)?(?:キス|舐め|セックス|ピストン|激ピス|潮(?:吹)?|(?<!淫)乱交|痴女(?:られ|誘惑)?|わからせ|洗脳|生ハメ|顔面|挿入|絶頂|責め|フェラ|騎乗|中出し|ハメ潮|アナル|レ[○●]プ|どしゃぶり)/gu;
 const SCENE_SALVAGE_TEST_RE =
-  /(?:追撃|猛烈|ハード|杭打ち|逆\d+P)?(?:キス|舐め|セックス|ピストン|激ピス|潮(?:吹)?|乱交|痴女(?:られ|誘惑)?|わからせ|洗脳|生ハメ|顔面|挿入|絶頂|責め|フェラ|騎乗|中出し|ハメ潮|アナル|レ[○●]プ|どしゃぶり)/u;
+  /(?:追撃|猛烈|ハード|杭打ち|逆\d+P)?(?:キス|舐め|セックス|ピストン|激ピス|潮(?:吹)?|(?<!淫)乱交|痴女(?:られ|誘惑)?|わからせ|洗脳|生ハメ|顔面|挿入|絶頂|責め|フェラ|騎乗|中出し|ハメ潮|アナル|レ[○●]プ|どしゃぶり)/u;
 
 const QTY_SALVAGE_MATCH_RE = /\d+\s*(?:作品|本番|射精|時間|分|コーナー|タイトル|発射)/gu;
 const QTY_SALVAGE_TEST_RE = /^\d+\s*(?:作品|本番|射精|時間|分|コーナー|タイトル|発射)$/u;
@@ -1036,8 +1036,11 @@ export function extractAtomsFromPageEvidenceMeta(
   }
   const base = extractOfficialPageFactAtoms({
     contentId: meta.contentId,
-    descriptionText: meta.description?.text ?? null,
-    descriptionOriginField: meta.description?.originField ?? "jsonld.Product.description",
+    // Prefer synopsis; when absent, productName still yields work-theme atoms.
+    descriptionText: meta.description?.text?.trim() || meta.productName || null,
+    descriptionOriginField: meta.description?.text?.trim()
+      ? (meta.description?.originField ?? "jsonld.Product.description")
+      : meta.productNameOriginField ?? "jsonld.Product.name",
     videoDescription: meta.video?.description ?? null,
     videoOriginField: meta.video?.originField ?? "jsonld.VideoObject.description",
     actors: meta.actors?.length ? meta.actors : meta.video?.actor ?? null,

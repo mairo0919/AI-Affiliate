@@ -12,6 +12,7 @@ import { validateFanzaAffiliateUrl } from "../daily-blog/affiliate-url.js";
 import { buildFanzaCanonicalProductUrl } from "../adapters/affiliate/fanza-affiliate-provider.js";
 import {
   extractItemListCatalogFacts,
+  isUsableOfficialPageEvidence,
   readPageEvidenceFromDocMetadata,
   shouldAvoidSingularPerformerFraming,
 } from "./ensure-official-enrichment.js";
@@ -247,11 +248,11 @@ export async function auditApiEraArticle(input: {
   const pe = doc ? readPageEvidenceFromDocMetadata(doc.metadata) : null;
   const synthesized = (pe as { synthesizedFrom?: string; fetchMode?: string } | null)?.synthesizedFrom === "itemlist"
     && !(pe as { fetchMode?: string } | null)?.fetchMode;
-  const hasOfficialDescription = Boolean(pe?.description?.text?.trim()) && !synthesized;
+  const hasOfficialPageEvidence = isUsableOfficialPageEvidence(pe) && !synthesized;
 
   const reasons: string[] = [];
-  if (!hasOfficialDescription) {
-    reasons.push(synthesized ? "SYNTHESIZED_EVIDENCE" : "MISSING_OFFICIAL_DESCRIPTION");
+  if (!hasOfficialPageEvidence) {
+    reasons.push(synthesized ? "SYNTHESIZED_EVIDENCE" : "MISSING_OFFICIAL_PAGE_EVIDENCE");
   }
   if (scope !== "NONE") reasons.push(`SCOPE_${scope}`);
 
@@ -303,7 +304,7 @@ export async function auditApiEraArticle(input: {
   // Classification: Evidence first; quality issues → repair; else keep.
   // Missing historical reviews alone does NOT force repair (informational).
   let classification: AuditClass = "NORMAL";
-  if (!hasOfficialDescription) {
+  if (!hasOfficialPageEvidence) {
     classification = "NEEDS_ENRICHMENT";
   } else if (
     scope !== "NONE" ||
@@ -335,7 +336,7 @@ export async function auditApiEraArticle(input: {
     classification,
     reasons: uniqueReasons,
     evidence: {
-      hasOfficialDescription,
+      hasOfficialDescription: hasOfficialPageEvidence,
       synthesized,
       actorCount: catalog.actors.length || (pe?.actors?.length ?? 0),
     },

@@ -85,7 +85,8 @@ async function enrichNeeds(input: {
         config: input.config,
         logger: input.logger,
         canonicalId: row.cid,
-        productUrl: ctaUrl,
+        // Always enrich from the official product page (never affiliate wrapper).
+        productUrl: buildFanzaCanonicalProductUrl(row.cid),
         researchItemId: item.id,
         productTitle: item.title,
         rawData: item.rawData,

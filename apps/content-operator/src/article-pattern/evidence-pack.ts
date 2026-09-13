@@ -777,9 +777,21 @@ export function dedupeConcreteEvidenceByFamily(
   return [...byFamily.values()];
 }
 
+/** Bare compilation form labels — weak alone; prefer productName / series theme. */
+const BARE_COMPILATION_FORM_RE =
+  /^(?:ベスト|総集編|コレクション|女優ベスト・総集編|ベスト・総集編|BEST)$/iu;
+
+/** Weak series shells that are not work-specific themes. */
+const WEAK_SERIES_SHELL_RE = /^(?:\d+\s*時間|BEST|ベスト|総集編)$/iu;
+
+/** Promotional / evaluative crumbs — never Claims fuel for titles. */
+const EVALUATIVE_CLAIM_CRUMB_RE =
+  /^(?:美しさ|妖艶さ|かわいらしさ|魅力|最高|厳選|おすすめ|話題|必見|大ボリューム|詰まった)$/u;
+
 /**
  * Production claim bootstrap from page-evidence atoms — never raw description.text synopsis.
- * r81: unknown_concrete may contribute only via Writer salvage (not all-pass).
+ * Projects official productName / series / runtime theme so BEST/総集編 titles are not
+ * performer+genre-only. r81: unknown_concrete may contribute only via Writer salvage.
  */
 export function claimStatementsFromPageEvidence(input: {
   pageEvidenceMeta: PageEvidenceMetaShape;
@@ -787,9 +799,84 @@ export function claimStatementsFromPageEvidence(input: {
   actors?: string[] | null;
   maxClaims?: number;
 }): string[] {
-  const atoms = extractAtomsFromPageEvidenceMeta(input.pageEvidenceMeta);
+  const pe = input.pageEvidenceMeta;
   const scored: Array<{ statement: string; score: number; familyId: string }> = [];
   const seenFam = new Set<string>();
+  const seenStmt = new Set<string>();
+
+  const pushScored = (statement: string, score: number, familyId: string) => {
+    const s = statement.trim();
+    if (s.length < 2 || seenStmt.has(s) || seenFam.has(familyId)) return;
+    if (isWriterSynopsisLike(s)) return;
+    if (isWriterCatalogConfirmation(s)) return;
+    if (EVALUATIVE_CLAIM_CRUMB_RE.test(s)) return;
+    seenStmt.add(s);
+    seenFam.add(familyId);
+    scored.push({ statement: s, score, familyId });
+  };
+
+  // 1) Official productName facets — work-specific theme SSOT (not affiliate / genre shell).
+  const productName = (pe.productName?.trim() || input.productTitle?.trim() || "").trim();
+  if (productName && !looksLikeBareContentId(productName, pe.contentId)) {
+    if (productName.length >= 12 && productName.length <= 72) {
+      pushScored(productName, 140, "product_identity::name");
+    } else if (productName.length > 72) {
+      // Long official titles: keep leading situation/theme phrase (not full synopsis dump).
+      const lead = productName
+        .split(/[。！？]/u)[0]!
+        .trim()
+        .slice(0, 56)
+        .replace(/[、・\s]+$/u, "")
+        .trim();
+      if (lead.length >= 12 && !isWriterSynopsisLike(lead)) {
+        pushScored(lead, 136, "product_identity::name_lead");
+      }
+    }
+    for (const facet of titleFacets(productName)) {
+      if (BARE_COMPILATION_FORM_RE.test(facet)) {
+        pushScored(facet, 25, `title_form::${facet}`);
+        continue;
+      }
+      const sem = classifySemanticEvidence(facet, {
+        sourceType: "product_title",
+        titleIdentityToken: true,
+      });
+      if (sem.primary === "EVALUATIVE" || sem.primary === "CATALOG") continue;
+      if (sem.blueprintType === "maker_or_label" || sem.blueprintType === "availability_or_catalog") {
+        continue;
+      }
+      const projected = projectWriterEvidenceFact(sem.blueprintType, facet);
+      if (!projected) continue;
+      const boost =
+        /\d+\s*(?:時間|分|作品|タイトル|コーナー)/u.test(facet) ||
+        /(?:家政婦|NTR|寝取|巨乳レズ|メスサド|クンニ|義父|家出|実写化)/u.test(facet)
+          ? 35
+          : 20;
+      pushScored(
+        projected.statement,
+        writerClaimSelectionScore(projected) + boost,
+        `title_facet::${projected.statement.slice(0, 24)}`,
+      );
+    }
+  }
+
+  // 2) Official series when it is a work-specific theme (not "4時間").
+  const series = pe.catalog?.series?.value?.trim();
+  if (series && series.length >= 4 && !WEAK_SERIES_SHELL_RE.test(series)) {
+    const seriesClaim = series.length <= 72 ? series : series.slice(0, 72);
+    if (!isWriterSynopsisLike(seriesClaim)) {
+      pushScored(seriesClaim, 128, "catalog::series");
+    }
+  }
+
+  // 3) Official runtime.
+  const dur = pe.catalog?.durationMinutes?.value;
+  if (typeof dur === "number" && Number.isFinite(dur) && dur > 0) {
+    pushScored(`${dur}分`, 112, "catalog::durationMinutes");
+  }
+
+  // 4) Description / genre atoms (existing path) — never raw description dump.
+  const atoms = extractAtomsFromPageEvidenceMeta(pe);
   for (const atom of atoms.concrete.filter((a) => a.generatorAllowed)) {
     const projected = projectWriterEvidenceFact(String(atom.blueprintType), atom.fact);
     if (!projected) continue;
@@ -801,29 +888,43 @@ export function claimStatementsFromPageEvidence(input: {
           : classifySemanticEvidence(projected.statement).primary,
         projected.statement,
       );
-    if (seenFam.has(fam)) continue;
-    seenFam.add(fam);
-    scored.push({
-      statement: projected.statement,
-      score: writerClaimSelectionScore(projected),
-      familyId: fam,
-    });
+    let score = writerClaimSelectionScore(projected);
+    if (BARE_COMPILATION_FORM_RE.test(projected.statement)) score = Math.min(score, 22);
+    pushScored(projected.statement, score, fam);
   }
+
   scored.sort((a, b) => b.score - a.score);
-  const statements = scored.slice(0, 4).map((s) => s.statement);
-  const actors = input.actors ?? input.pageEvidenceMeta.actors ?? [];
-  for (const name of actors) {
-    const actor = name?.trim();
-    if (!actor) continue;
-    if (
-      !statements.some(
-        (s) => performerEntityKey(s) === performerEntityKey(actor) || s.includes(actor),
-      )
-    ) {
-      statements.push(actor);
+
+  const actors = (input.actors ?? pe.actors ?? [])
+    .map((n) => n?.trim())
+    .filter((n): n is string => Boolean(n));
+  const actorKeys = new Set(actors.map((a) => performerEntityKey(a)));
+  const max = input.maxClaims ?? 8;
+  const actorCap = actors.length <= 1 ? 1 : Math.min(2, actors.length);
+  const themeBudget = Math.max(3, max - actorCap);
+
+  const statements: string[] = [];
+  for (const row of scored) {
+    if (statements.length >= themeBudget) break;
+    // Keep performer atoms for later actorCap — avoid flooding theme slots.
+    if (actorKeys.has(performerEntityKey(row.statement))) continue;
+    if (actors.some((a) => row.statement.includes(a) && row.statement.length <= a.length + 2)) {
+      continue;
     }
+    statements.push(row.statement);
   }
-  return [...new Set(statements)].slice(0, input.maxClaims ?? 5);
+
+  for (const actor of actors.slice(0, actorCap)) {
+    const alreadyNamed = statements.some((s) => {
+      if (performerEntityKey(s) === performerEntityKey(actor)) return true;
+      // Long productName/series claims may contain the name — still keep an identity claim.
+      if (s.length <= actor.length + 4 && s.includes(actor)) return true;
+      return false;
+    });
+    if (!alreadyNamed) statements.push(actor);
+  }
+
+  return [...new Set(statements)].slice(0, max);
 }
 
 /**
