@@ -34,11 +34,12 @@ function tagName(
 async function loadPublishedBlogUrls(
   prisma: DatabaseClient["prisma"],
 ): Promise<Map<string, string>> {
-  // Prefer WORDPRESS URLs for X BLOG_TRAFFIC; keep BLOGGER history readable.
+  // X WP traffic requires a publicly reachable article — PUBLISHED only
+  // (never DRAFT / SCHEDULED / future). Prefer WORDPRESS over BLOGGER.
   const publishedTargets = await prisma.publicationTarget.findMany({
     where: {
       platform: { in: ["WORDPRESS", "BLOGGER"] },
-      status: { in: ["PUBLISHED", "DRAFT"] },
+      status: "PUBLISHED",
       publishedUrl: { not: null },
     },
     orderBy: { publishedAt: "desc" },

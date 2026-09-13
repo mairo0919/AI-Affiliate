@@ -97,3 +97,29 @@ export type {
 } from "./x-fanza-sample-rights.js";
 export { buildXDryRunPayload, isXLivePostBlocked } from "./x-dry-run.js";
 export type { XDryRunPayload } from "./x-dry-run.js";
+export {
+  evaluateXBacklogEligibility,
+  isWordPressPublicForXTraffic,
+  isPublicationTargetPublicForX,
+  X_BACKLOG_BLOCKING_CLASSES,
+} from "./x-eligibility.js";
+export type { XBacklogEligibility, XBacklogEligibilityInput, XAuditIssueClass } from "./x-eligibility.js";
+export {
+  adaptCanonicalToXSocial,
+  chooseXLinkMode,
+  chooseXThreadShape,
+  extractXSocialHooks,
+  adaptationPostsToGeneratedBodies,
+} from "./x-social-adaptation.js";
+export type {
+  XLinkMode,
+  XThreadShape,
+  XAdaptedPost,
+  XSocialAdaptationInput,
+  XSocialAdaptationResult,
+} from "./x-social-adaptation.js";
+export {
+  loadCanonicalXSource,
+  adaptLoadedCanonicalToX,
+} from "./canonical-x-source.js";
+export type { CanonicalXSource } from "./canonical-x-source.js";

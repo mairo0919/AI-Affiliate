@@ -1,5 +1,9 @@
 /**
- * Future X promotion handoff — store state only; do not auto-post in R54.
+ * Legacy blog→X handoff payload (state only).
+ *
+ * Production X auto-post reachability is via daily-ops / XPublicationService
+ * (`apps/content-operator/src/x/**` + `daily-ops/live-orchestrator.ts`).
+ * This module does NOT call X API and must not be treated as a second publish route.
  */
 
 export interface BlogPublishXHandoff {
@@ -11,7 +15,10 @@ export interface BlogPublishXHandoff {
   bloggerPostId: string;
   contentVersionId: string;
   createdAt: string;
+  /** Always false — auto-post is owned by daily-ops X phase, not this handoff. */
   xAutoPostConnected: false;
+  /** Explicit pointer to the production X path. */
+  productionXPath: "daily-ops/x-publication-service";
 }
 
 export function buildXHandoffPayload(input: {
@@ -34,5 +41,6 @@ export function buildXHandoffPayload(input: {
     contentVersionId: input.contentVersionId,
     createdAt: (input.now ?? new Date()).toISOString(),
     xAutoPostConnected: false,
+    productionXPath: "daily-ops/x-publication-service",
   };
 }

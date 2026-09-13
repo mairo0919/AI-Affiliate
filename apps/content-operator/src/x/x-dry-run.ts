@@ -1,6 +1,7 @@
 /**
  * X publishing DRY_RUN payload builder — production-shaped, no live createPost.
  * Does not change article Writer prompts. Uses X_SOCIAL_CONTENT / X_SOCIAL_MEDIA surfaces.
+ * Prefer canonical social adaptation posts when provided (not WP title-only).
  */
 
 import type { AppConfig } from "@ai-affiliate/config";
@@ -16,6 +17,7 @@ import {
   type XSocialMediaCandidateReport,
   type XSocialMediaDecision,
 } from "./x-social-media-gate.js";
+import type { XAdaptedPost, XLinkMode, XThreadShape } from "./x-social-adaptation.js";
 
 export type XDryRunPayload = {
   format: "x-dry-run-payload-v1";
@@ -26,10 +28,14 @@ export type XDryRunPayload = {
   wouldCallCreatePost: false;
   route: XPostRoute;
   destinationUrl: string;
+  secondaryUrl: string | null;
   affiliateLinkReady: boolean;
   offerKind: string;
   monetizationStatus: string;
   body: string;
+  posts: Array<{ sequence: number; role: string; body: string; linkKind?: string }>;
+  threadShape: XThreadShape | null;
+  linkMode: XLinkMode | null;
   weightedLength: number;
   maxWeightedLength: number;
   withinLimit: boolean;
@@ -67,10 +73,14 @@ export function buildXDryRunPayload(input: {
     | "fanzaDefaultFloor"
   >;
   body: string;
+  posts?: XAdaptedPost[] | null;
+  threadShape?: XThreadShape | null;
+  linkMode?: XLinkMode | null;
   productId?: string | null;
   affiliateUrl?: string | null;
   publishedBlogUrl?: string | null;
   preferredRoute?: XPostRoute | null;
+  preferCombinedHint?: boolean;
   mediaCandidates?: XSocialMediaCandidate[] | null;
   researchImages?: Array<{
     sourceUrl: string;
@@ -97,21 +107,32 @@ export function buildXDryRunPayload(input: {
     affiliateUrl: offer.url ?? input.affiliateUrl ?? "",
     publishedBlogUrl: input.publishedBlogUrl,
     preferredRoute: input.preferredRoute,
+    preferCombinedHint: input.preferCombinedHint,
     affiliateLinkReady: offer.affiliateLinkReady,
     canonicalProductUrl: offer.kind === "CANONICAL_PRODUCT" ? offer.url : null,
   });
 
+  const posts =
+    input.posts?.map((p) => ({
+      sequence: p.sequence,
+      role: p.role,
+      body: p.body,
+      linkKind: p.linkKind,
+    })) ?? [{ sequence: 1, role: "ROOT", body: input.body }];
+
   const counter = new XCharacterCounter();
-  const counted = counter.count(input.body);
+  const rootBody = posts[0]?.body ?? input.body;
+  const counted = counter.count(rootBody);
   const weightedLength = counted.weightedLength;
   const maxWeightedLength = input.config.xMaxWeightedLength ?? 280;
   const disclosure = (input.config.xAffiliateDisclosure ?? "").trim();
+  const allText = posts.map((p) => p.body).join("\n");
   const disclosurePresent =
     !disclosure ||
-    input.body.includes(disclosure) ||
-    /#PR|アフィリエイト/u.test(input.body);
+    allText.includes(disclosure) ||
+    /#PR|アフィリエイト/u.test(allText);
 
-  const adult = detectXAdultExpressions(input.body);
+  const adult = detectXAdultExpressions(allText);
   const fanzaXSiteApproved =
     input.fanzaXSiteApproved === true || input.config.fanzaXSiteApproved === true;
   const media = evaluateXSocialMedia({
@@ -137,11 +158,17 @@ export function buildXDryRunPayload(input: {
   if (!offer.affiliateLinkReady) {
     warnings.push("affiliate_pending: destination is blog or canonical product URL only");
   }
-  if (!input.publishedBlogUrl && route.route === "BLOG_TRAFFIC") {
+  if (!input.publishedBlogUrl && (route.route === "BLOG_TRAFFIC" || route.route === "COMBINED")) {
     warnings.push("blog_url_missing");
   }
   if (weightedLength > maxWeightedLength) {
     warnings.push(`weighted_length ${weightedLength} exceeds max ${maxWeightedLength}`);
+  }
+  for (const p of posts) {
+    const w = counter.count(p.body).weightedLength;
+    if (w > maxWeightedLength) {
+      warnings.push(`post_seq_${p.sequence}_weighted_length ${w} exceeds max`);
+    }
   }
   if (!disclosurePresent) {
     warnings.push("affiliate_disclosure_missing");
@@ -167,13 +194,17 @@ export function buildXDryRunPayload(input: {
     wouldCallCreatePost: false,
     route: route.route,
     destinationUrl: route.destinationUrl,
+    secondaryUrl: route.secondaryUrl ?? null,
     affiliateLinkReady: route.affiliateLinkReady,
     offerKind: offer.kind,
     monetizationStatus: offer.monetizationStatus,
-    body: input.body,
+    body: rootBody,
+    posts,
+    threadShape: input.threadShape ?? null,
+    linkMode: input.linkMode ?? null,
     weightedLength,
     maxWeightedLength,
-    withinLimit: weightedLength <= maxWeightedLength,
+    withinLimit: posts.every((p) => counter.count(p.body).weightedLength <= maxWeightedLength),
     disclosurePresent,
     contentPolicySurface: CONTENT_POLICY_SURFACE.X_SOCIAL_CONTENT,
     mediaDecision: media.decision,

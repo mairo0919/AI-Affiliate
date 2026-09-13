@@ -42,6 +42,10 @@ import {
   publishContentVersionToWordPress,
 } from "../wordpress/wordpress-publish-path.js";
 import { XPublicationService } from "../x/publication-service.js";
+import {
+  adaptLoadedCanonicalToX,
+  loadCanonicalXSource,
+} from "../x/canonical-x-source.js";
 import { loadDailyCandidatePool } from "./candidate-pool.js";
 import { planDailyChannels } from "./channel-selection.js";
 import {
@@ -549,7 +553,7 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
       : plan.blog.selection.reason || "no_blog_selection";
   }
 
-  // ——— X ———
+  // ——— X (distribution channel; never skips WordPress generation above) ———
   if ((xNeeded > 0 || deps.forceSmoke) && plan.x.selection.selected && !plan.x.blocked) {
     x.attempted = true;
     const selected = plan.x.selection.selected;
@@ -572,114 +576,204 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
       x.note = `X_RELEASE_MODE_${deps.config.xReleaseMode}`;
     } else {
       try {
-        // Prefer ContentCandidate for selected research item in latest analysis
-        let candidateId: string | null = null;
-        if (analysisRunId) {
-          const cand = await deps.database.prisma.contentCandidate.findFirst({
-            where: {
-              analysisRunId,
-              researchItemId: selected.researchItemId,
-            },
-            orderBy: { rank: "asc" },
-          });
-          candidateId = cand?.id ?? null;
-        }
-        if (!candidateId) {
-          x.held = true;
-          x.note = "NO_CONTENT_CANDIDATE_FOR_RESEARCH_ITEM";
-        } else {
-          const gen = await deps.contentEngine.generate({
-            contentType: "X_POST",
-            candidateId,
-            limit: 1,
-            force: true,
-            skipExistingSameType: false,
-            minScore: 0,
-            includeRequiresConfirmation: true,
-          });
-          llmCalls += gen.generatedCount > 0 ? 1 : 0;
-          const created = gen.items.find((i) => i.contentId && !i.skipped);
-          if (!created?.contentId) {
-            x.held = true;
-            x.note = `x_generate_${gen.items[0]?.skipReason ?? "failed"}`;
-          } else {
-            const contents = new ContentRepository(deps.database.prisma);
-            const contentId = created.contentId;
-            const row = await contents.findGeneratedContentById(contentId);
-            if (!row) throw new Error("generated content missing");
+        // Prefer canonical ContentVersion + Evidence social adaptation (not WP scrape).
+        const canonicalSource = await loadCanonicalXSource(
+          deps.database.prisma,
+          selected.canonicalId,
+        );
+        let contentId: string | null = null;
+        const contents = new ContentRepository(deps.database.prisma);
 
-            // Ensure destination matches route (DIRECT affiliate vs blog URL)
-            if (destinationUrl && row.affiliateUrl !== destinationUrl) {
-              await deps.database.prisma.generatedContent.update({
-                where: { id: contentId },
-                data: {
-                  affiliateUrl: destinationUrl,
-                  callToAction: destinationUrl,
-                  inputSnapshot: {
-                    ...((row.inputSnapshot as object) ?? {}),
-                    dailyXRoute: x.route,
-                    destinationUrl,
+        if (canonicalSource?.contentVersionId) {
+          const adapted = adaptLoadedCanonicalToX(canonicalSource, {
+            preferredRoute: (plan.x.route?.route as
+              | "DIRECT_AFFILIATE"
+              | "BLOG_TRAFFIC"
+              | "COMBINED"
+              | null) ?? null,
+            disclosure: deps.config.xAffiliateDisclosure,
+          });
+          x.route = adapted.linkMode === "WP_TRAFFIC"
+            ? "BLOG_TRAFFIC"
+            : adapted.linkMode === "COMBINED"
+              ? "COMBINED"
+              : "DIRECT_AFFILIATE";
+          const primaryUrl =
+            adapted.linkMode === "DIRECT_AFFILIATE"
+              ? adapted.fanzaUrl
+              : adapted.wpUrl ?? adapted.fanzaUrl;
+          if (!primaryUrl) {
+            x.held = true;
+            x.note = "x_adaptation_no_destination_url";
+          } else {
+            let candidateId: string | null = null;
+            if (analysisRunId) {
+              const cand = await deps.database.prisma.contentCandidate.findFirst({
+                where: {
+                  analysisRunId,
+                  researchItemId: selected.researchItemId,
+                },
+                orderBy: { rank: "asc" },
+              });
+              candidateId = cand?.id ?? null;
+            }
+            if (!candidateId) {
+              x.held = true;
+              x.note = "NO_CONTENT_CANDIDATE_FOR_RESEARCH_ITEM";
+            } else {
+              const { createHash } = await import("node:crypto");
+              const rootBody = adapted.posts[0]?.body ?? "";
+              const created = await contents.createGeneratedContent({
+                contentCandidateId: candidateId,
+                researchItemId: selected.researchItemId,
+                contentType: "X_POST",
+                targetChannel: "X",
+                status: "READY_TO_PUBLISH",
+                title: adapted.canonicalTitleUsed.slice(0, 120),
+                body: rootBody,
+                summary: adapted.hooks.slice(0, 3).join(" / "),
+                hashtags: [],
+                callToAction: primaryUrl,
+                affiliateUrl: primaryUrl,
+                promptVersion: "x-social-adaptation-v1",
+                generationProvider: "canonical-adapt",
+                generationModel: "none",
+                inputSnapshot: {
+                  source: "canonical_content_version",
+                  contentVersionId: canonicalSource.contentVersionId,
+                  dailyXRoute: x.route,
+                  destinationUrl: primaryUrl,
+                  secondaryUrl: adapted.fanzaUrl,
+                  xSocialAdaptation: {
+                    threadShape: adapted.threadShape,
+                    linkMode: adapted.linkMode,
+                    posts: adapted.posts,
+                    tracking: adapted.tracking,
+                    warnings: adapted.warnings,
                   },
                 },
+                contentHash: createHash("sha256").update(rootBody).digest("hex"),
+                version: 1,
+                generatedAt: now,
               });
+              contentId = created.id;
+              llmCalls += 0;
             }
+          }
+        }
 
-            let status = row.status;
-            if (status === "REVIEW_REQUIRED" || status === "DRAFT") {
-              await contents.approveContent(contentId, "daily-ops");
-              status = "APPROVED";
-            }
-            if (status === "APPROVED") {
-              await contents.markReadyToPublish(contentId);
-              status = "READY_TO_PUBLISH";
-            }
-            if (status !== "READY_TO_PUBLISH") {
+        if (!x.held && !contentId) {
+          // Fallback: existing ContentEngine X_POST path (Evidence-based, not WP body).
+          let candidateId: string | null = null;
+          if (analysisRunId) {
+            const cand = await deps.database.prisma.contentCandidate.findFirst({
+              where: {
+                analysisRunId,
+                researchItemId: selected.researchItemId,
+              },
+              orderBy: { rank: "asc" },
+            });
+            candidateId = cand?.id ?? null;
+          }
+          if (!candidateId) {
+            x.held = true;
+            x.note = "NO_CONTENT_CANDIDATE_FOR_RESEARCH_ITEM";
+          } else {
+            const gen = await deps.contentEngine.generate({
+              contentType: "X_POST",
+              candidateId,
+              limit: 1,
+              force: true,
+              skipExistingSameType: false,
+              minScore: 0,
+              includeRequiresConfirmation: true,
+            });
+            llmCalls += gen.generatedCount > 0 ? 1 : 0;
+            const created = gen.items.find((i) => i.contentId && !i.skipped);
+            if (!created?.contentId) {
               x.held = true;
-              x.note = `content_not_ready:${status}`;
+              x.note = `x_generate_${gen.items[0]?.skipReason ?? "failed"}`;
             } else {
-              const idempotencyKey = `x-daily:${dayKey}:${selected.canonicalId}:${x.route ?? "DIRECT"}`;
-              const existing = await deps.database.prisma.xPublication.findUnique({
-                where: { idempotencyKey },
-              });
-              if (existing?.status === "PUBLISHED" || existing?.status === "PARTIALLY_PUBLISHED") {
-                x.held = true;
-                x.note = "idempotent_already_published";
-                x.publicationId = existing.id;
-                x.url = existing.rootPostUrl;
-                x.externalId = existing.rootPostId;
-              } else {
-                const pub = await deps.xPublicationService.createFromContent({
-                  contentId,
-                  strategy: "AUTO",
-                  publishNow: true,
-                });
-                x.publicationId = pub.id;
-                await deps.database.prisma.xPublication.update({
-                  where: { id: pub.id },
+              contentId = created.contentId;
+              const row = await contents.findGeneratedContentById(contentId);
+              if (!row) throw new Error("generated content missing");
+              if (destinationUrl && row.affiliateUrl !== destinationUrl) {
+                await deps.database.prisma.generatedContent.update({
+                  where: { id: contentId },
                   data: {
-                    strategyVersion: `${plan.xMixSlot}|AUTO`,
+                    affiliateUrl: destinationUrl,
+                    callToAction: destinationUrl,
+                    inputSnapshot: {
+                      ...((row.inputSnapshot as object) ?? {}),
+                      dailyXRoute: x.route,
+                      destinationUrl,
+                    },
                   },
-                }).catch(() => undefined);
-                const due = await deps.xPublicationService.runDue(5);
-                xPublishCalls += due.filter(
-                  (p) => p.status === "PUBLISHED" || p.status === "PARTIALLY_PUBLISHED",
-                ).length;
-                const refreshed = await deps.database.prisma.xPublication.findUnique({
-                  where: { id: pub.id },
                 });
-                if (
-                  refreshed?.status === "PUBLISHED" ||
-                  refreshed?.status === "PARTIALLY_PUBLISHED"
-                ) {
-                  x.published = true;
-                  x.url = refreshed.rootPostUrl;
-                  x.externalId = refreshed.rootPostId;
-                  x.note = "live_published";
-                } else {
-                  x.held = true;
-                  x.note = `x_status_${refreshed?.status ?? "unknown"}`;
-                }
               }
+              let status = row.status;
+              if (status === "REVIEW_REQUIRED" || status === "DRAFT") {
+                await contents.approveContent(contentId, "daily-ops");
+                status = "APPROVED";
+              }
+              if (status === "APPROVED") {
+                await contents.markReadyToPublish(contentId);
+                status = "READY_TO_PUBLISH";
+              }
+              if (status !== "READY_TO_PUBLISH") {
+                x.held = true;
+                x.note = `content_not_ready:${status}`;
+                contentId = null;
+              }
+            }
+          }
+        }
+
+        if (!x.held && contentId) {
+          const idempotencyKey = `x-daily:${dayKey}:${selected.canonicalId}:${x.route ?? "DIRECT"}`;
+          const existing = await deps.database.prisma.xPublication.findUnique({
+            where: { idempotencyKey },
+          });
+          if (existing?.status === "PUBLISHED" || existing?.status === "PARTIALLY_PUBLISHED") {
+            x.held = true;
+            x.note = "idempotent_already_published";
+            x.publicationId = existing.id;
+            x.url = existing.rootPostUrl;
+            x.externalId = existing.rootPostId;
+          } else {
+            const pub = await deps.xPublicationService.createFromContent({
+              contentId,
+              strategy: "AUTO",
+              publishNow: true,
+            });
+            x.publicationId = pub.id;
+            await deps.database.prisma.xPublication
+              .update({
+                where: { id: pub.id },
+                data: {
+                  strategyVersion: `${plan.xMixSlot}|AUTO`,
+                  idempotencyKey,
+                },
+              })
+              .catch(() => undefined);
+            const due = await deps.xPublicationService.runDue(5);
+            xPublishCalls += due.filter(
+              (p) => p.status === "PUBLISHED" || p.status === "PARTIALLY_PUBLISHED",
+            ).length;
+            const refreshed = await deps.database.prisma.xPublication.findUnique({
+              where: { id: pub.id },
+            });
+            if (
+              refreshed?.status === "PUBLISHED" ||
+              refreshed?.status === "PARTIALLY_PUBLISHED"
+            ) {
+              x.published = true;
+              x.url = refreshed.rootPostUrl;
+              x.externalId = refreshed.rootPostId;
+              x.note = "live_published";
+            } else {
+              x.held = true;
+              x.note = `x_status_${refreshed?.status ?? "unknown"}`;
             }
           }
         }

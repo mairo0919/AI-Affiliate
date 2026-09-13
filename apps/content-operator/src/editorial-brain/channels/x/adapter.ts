@@ -1,7 +1,8 @@
 import type { ChannelEditorialPlan, CoreEditorialPlan } from "../../core/types.js";
 import type { ChannelEditorialModule } from "../../core/channel-module.js";
 
-export type XPostMode = "single" | "thread";
+/** Variable X structure — not a fixed 4-post template. */
+export type XPostMode = "single" | "short_thread" | "rich_thread";
 
 export type XChannelPlanSpecifics = {
   objective: string;
@@ -35,10 +36,15 @@ export function buildXChannelPlan(core: CoreEditorialPlan): ChannelEditorialPlan
     .map((a) => a.claimId);
   const omittedClaimIds = core.omittedClaimIds.map((o) => o.claimId);
 
-  // Thread only when information gain target cannot fit a single dense post
-  const postMode: XPostMode =
-    core.informationGainTarget >= 4 && !core.scarcityMode ? "thread" : "single";
-  const threadPostCount = postMode === "thread" ? Math.min(3, core.informationGainTarget) : 1;
+  // Variable length from information density — never a fixed 4-post template
+  let postMode: XPostMode = "single";
+  if (!core.scarcityMode && core.informationGainTarget >= 4) {
+    postMode = "rich_thread";
+  } else if (!core.scarcityMode && core.informationGainTarget >= 2) {
+    postMode = "short_thread";
+  }
+  const threadPostCount =
+    postMode === "rich_thread" ? Math.min(3, core.informationGainTarget) : postMode === "short_thread" ? 2 : 1;
 
   const specifics: XChannelPlanSpecifics = {
     objective: "attention_then_interest_then_optional_cta",

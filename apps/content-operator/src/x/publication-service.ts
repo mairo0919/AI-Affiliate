@@ -316,23 +316,60 @@ export class XPublicationService {
       if (tagObj?.actress?.[0]) facts.push(`actress:${tagObj.actress[0]}`);
     }
 
-    const built: GeneratedXPublication = this.builder.build(
-      strategyType,
-      {
-        title: content.title,
-        affiliateUrl: content.affiliateUrl,
-        hashtags: Array.isArray(content.hashtags)
-          ? (content.hashtags as string[])
-          : [],
-        summary: content.summary,
-        callToAction: content.callToAction,
-        facts,
-        relatedPostUrl: hasRelated ? bestRelated!.rootPostUrl : null,
-        relatedPublicationId: hasRelated ? bestRelated!.id : null,
-        maxPosts: this.config.xAutoMaxPostsPerPublication,
-      },
-      selection.experimentGroup,
-    );
+    // Prefer canonical social adaptation posts (Evidence/CV) when present — do not
+    // rebuild from WP title via the generic publication builder.
+    const adapted = snapshot?.xSocialAdaptation as
+      | {
+          posts?: Array<{
+            sequence: number;
+            role: "ROOT" | "REPLY" | "CTA" | "HUB";
+            body: string;
+          }>;
+          threadShape?: string;
+        }
+      | undefined;
+
+    let built: GeneratedXPublication;
+    if (adapted?.posts && adapted.posts.length > 0) {
+      const posts = adapted.posts.map((post, index) => ({
+        sequence: post.sequence || index + 1,
+        role: post.role,
+        body: post.body,
+        replyToSequence: index === 0 ? undefined : index,
+      }));
+      this.builder.validateStructure(posts);
+      for (const post of posts) {
+        this.builder.assertPostValid(
+          post,
+          posts.length > 1 ? "THREAD" : "SINGLE_POST",
+        );
+      }
+      strategyType = posts.length > 1 ? "THREAD" : "SINGLE_POST";
+      built = {
+        strategyType,
+        strategyVersion: STRATEGY_VERSION,
+        experimentGroup: selection.experimentGroup,
+        posts,
+      };
+    } else {
+      built = this.builder.build(
+        strategyType,
+        {
+          title: content.title,
+          affiliateUrl: content.affiliateUrl,
+          hashtags: Array.isArray(content.hashtags)
+            ? (content.hashtags as string[])
+            : [],
+          summary: content.summary,
+          callToAction: content.callToAction,
+          facts,
+          relatedPostUrl: hasRelated ? bestRelated!.rootPostUrl : null,
+          relatedPublicationId: hasRelated ? bestRelated!.id : null,
+          maxPosts: this.config.xAutoMaxPostsPerPublication,
+        },
+        selection.experimentGroup,
+      );
+    }
 
     const scheduledAt = options.publishNow
       ? this.now()
