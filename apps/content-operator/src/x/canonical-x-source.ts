@@ -1,6 +1,9 @@
 /**
  * Load Factory canonical article inputs for X social adaptation.
  * WordPress is destination-only — never scraped as copy SSOT.
+ *
+ * Prefers ARTICLE_PLAN facts + strategy Claims (same product understanding as the article).
+ * Genre tags are loaded only as demoted taxonomy auxiliaries.
  */
 
 import type { DatabaseClient } from "@ai-affiliate/database";
@@ -11,6 +14,10 @@ import {
   adaptCanonicalToXSocial,
   type XSocialAdaptationResult,
 } from "./x-social-adaptation.js";
+import {
+  extractArticlePlanSocialFacts,
+  type XSocialFact,
+} from "./x-social-facts.js";
 import { xPostRouteToLinkMode, type XPostRoute } from "../daily-ops/x-route.js";
 
 export type CanonicalXSource = {
@@ -26,7 +33,10 @@ export type CanonicalXSource = {
   performerNames: string[];
   seriesName: string | null;
   claimStatements: Array<{ id: string; statement: string }>;
+  /** @deprecated genre tags — use taxonomyTags; kept for callers. */
   safeFacets: string[];
+  taxonomyTags: string[];
+  articlePlanFacts: XSocialFact[];
   productTitle: string | null;
 };
 
@@ -35,7 +45,7 @@ function asRecord(v: unknown): Record<string, unknown> {
 }
 
 /**
- * Resolve ContentVersion + claims + WP publication for a CID.
+ * Resolve ContentVersion + ARTICLE_PLAN + claims + WP publication for a CID.
  */
 export async function loadCanonicalXSource(
   prisma: DatabaseClient["prisma"],
@@ -104,6 +114,8 @@ export async function loadCanonicalXSource(
     (researchItem?.tags ?? []).find((t) => t.researchTag.type.toLowerCase() === "series")
       ?.researchTag.name ?? null;
 
+  const articlePlanFacts = extractArticlePlanSocialFacts(version?.structuredContent ?? null);
+
   let claimStatements: Array<{ id: string; statement: string }> = [];
   if (version?.id) {
     const linked = await prisma.contentVersionClaim.findMany({
@@ -114,6 +126,23 @@ export async function loadCanonicalXSource(
     claimStatements = linked
       .filter((row) => row.claim.status === "SUPPORTED")
       .map((row) => ({ id: row.claim.id, statement: row.claim.statement }));
+  }
+
+  // Fallback: strategy-scoped Claims (same understanding as article generation)
+  if (claimStatements.length === 0 && version?.contentId) {
+    const content = await prisma.content.findUnique({
+      where: { id: version.contentId },
+      select: { strategyId: true },
+    });
+    if (content?.strategyId) {
+      const strategyClaims = await prisma.claim.findMany({
+        where: { strategyId: content.strategyId, status: "SUPPORTED" },
+        take: 20,
+        orderBy: { createdAt: "desc" },
+        select: { id: true, statement: true },
+      });
+      claimStatements = strategyClaims.map((c) => ({ id: c.id, statement: c.statement }));
+    }
   }
 
   const raw = asRecord(researchItem?.rawData);
@@ -142,11 +171,11 @@ export async function loadCanonicalXSource(
           ? "draft"
           : wpStatusFromMeta;
 
-  const safeFacets: string[] = [];
+  const taxonomyTags: string[] = [];
   for (const g of (researchItem?.tags ?? []).filter(
     (t) => t.researchTag.type.toLowerCase() === "genre",
   )) {
-    safeFacets.push(g.researchTag.name);
+    taxonomyTags.push(g.researchTag.name);
   }
 
   return {
@@ -162,7 +191,9 @@ export async function loadCanonicalXSource(
     performerNames: performers,
     seriesName: series,
     claimStatements,
-    safeFacets,
+    safeFacets: taxonomyTags,
+    taxonomyTags,
+    articlePlanFacts,
     productTitle: researchItem?.title ?? null,
   };
 }
@@ -186,7 +217,8 @@ export function adaptLoadedCanonicalToX(
     performerNames: source.performerNames,
     seriesName: source.seriesName,
     claimStatements: source.claimStatements,
-    safeFacets: source.safeFacets,
+    taxonomyTags: source.taxonomyTags,
+    articlePlanFacts: source.articlePlanFacts,
     publishedBlogUrl: source.publishedBlogUrl,
     wpStatus: source.wpStatus,
     affiliateUrl: source.affiliateUrl,

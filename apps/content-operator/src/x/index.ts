@@ -119,6 +119,13 @@ export type {
   XSocialAdaptationResult,
 } from "./x-social-adaptation.js";
 export {
+  extractArticlePlanSocialFacts,
+  selectXSocialFacts,
+  composeXSocialPosts,
+  toXSocialSafePhrase,
+} from "./x-social-facts.js";
+export type { XSocialFact, XSocialFactKind } from "./x-social-facts.js";
+export {
   loadCanonicalXSource,
   adaptLoadedCanonicalToX,
 } from "./canonical-x-source.js";
