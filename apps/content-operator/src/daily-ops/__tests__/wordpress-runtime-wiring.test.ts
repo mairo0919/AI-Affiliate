@@ -317,6 +317,7 @@ describe("wordpress runtime wiring (daily-ops / scheduler)", () => {
     const live = readSource("live-orchestrator.ts");
     expect(live).toContain("xPublicationService");
     expect(live).toContain("XPublicationService");
-    expect(live).toContain("// ——— X ———");
+    expect(live).toMatch(/\/\/ ——— X/);
+    expect(live).toContain("loadCanonicalXSource");
   });
 });
