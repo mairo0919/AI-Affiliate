@@ -203,16 +203,84 @@ describe("x-social-adaptation", () => {
       affiliateUrl: "https://al.fanza.co.jp/?af_id=example-001",
       affiliateLinkReady: true,
       wpStatus: "future",
-      disclosure: "#PR",
+      disclosure: "",
       preferredLinkMode: "DIRECT_AFFILIATE",
     });
     expect(result.skip).toBeNull();
     expect(result.wpTitleUsedAsSoleInput).toBe(false);
     expect(result.posts[0]!.body).toMatch(/合宿|町内会|10人|ハーレム/);
+    expect(result.posts[0]!.body).not.toMatch(/#PR/);
     expect(result.posts.map((p) => p.body).join("\n")).not.toMatch(/^ハーレム。人妻・主婦/);
     expect(result.posts.every((p) => !detectDupTaxonomyThread(p.body))).toBe(true);
     expect(result.selectedFacts[0]!.kind).not.toBe("taxonomy_aux");
     expect(result.posts[0]!.body).toMatch(/、|。/);
+  });
+
+  it("reuses article hero image — no X-only FANZA fetch", () => {
+    const result = adaptCanonicalToXSocial({
+      canonicalTitle: "町内会の合宿ハーレム",
+      cid: "juvr00281",
+      articlePlanFacts: [
+        {
+          text: "町内会の合宿で人妻たちが一人を求め合うハーレム温泉",
+          kind: "situation",
+          source: "article_plan",
+          score: 10,
+        },
+      ],
+      articleImages: [
+        {
+          role: "hero",
+          sourceUrl: "https://pics.dmm.co.jp/digital/video/juvr00281/juvr00281pl.jpg",
+          imageType: "main_large",
+          alt: "hero",
+          researchImageId: "ri-1",
+          usageStatus: "ALLOWED",
+          provenance: "research_image",
+          displayMode: "url_reference",
+        },
+        {
+          role: "auxiliary",
+          sourceUrl: "https://pics.dmm.co.jp/digital/video/juvr00281/juvr00281jp-1.jpg",
+          imageType: "sample_large",
+          alt: "sample",
+          researchImageId: "ri-2",
+          usageStatus: "ALLOWED",
+          provenance: "research_image",
+          displayMode: "url_reference",
+        },
+      ],
+      affiliateUrl: "https://al.fanza.co.jp/?af_id=example-001",
+      affiliateLinkReady: true,
+      wpStatus: "future",
+      disclosure: "",
+    });
+    expect(result.mediaMode).toBe("SAFE_IMAGE");
+    expect(result.mediaRole).toBe("hero");
+    expect(result.mediaUrl).toContain("juvr00281pl.jpg");
+    expect(result.posts[0]!.body).not.toMatch(/#PR/);
+  });
+
+  it("falls back to TEXT_ONLY when no ALLOWED article images", () => {
+    const result = adaptCanonicalToXSocial({
+      canonicalTitle: "町内会の合宿ハーレム",
+      cid: "juvr00281",
+      articlePlanFacts: [
+        {
+          text: "町内会の合宿で人妻たちが一人を求め合うハーレム温泉",
+          kind: "situation",
+          source: "article_plan",
+          score: 10,
+        },
+      ],
+      articleImages: [],
+      affiliateUrl: "https://al.fanza.co.jp/?af_id=1",
+      affiliateLinkReady: true,
+      wpStatus: "future",
+      disclosure: "",
+    });
+    expect(result.mediaMode).toBe("TEXT_ONLY");
+    expect(result.mediaUrl).toBeNull();
   });
 
   it("skips SOCIAL_CONTENT_TOO_THIN instead of posting performer-only", () => {
@@ -226,7 +294,7 @@ describe("x-social-adaptation", () => {
       affiliateUrl: "https://al.fanza.co.jp/?af_id=1",
       affiliateLinkReady: true,
       wpStatus: "future",
-      disclosure: "#PR",
+      disclosure: "",
     });
     expect(result.skip?.reason).toBe("SOCIAL_CONTENT_TOO_THIN");
     expect(result.posts).toHaveLength(0);
@@ -291,7 +359,7 @@ describe("dry-run multi-post", () => {
       affiliateUrl: "https://al.fanza.co.jp/?af_id=1",
       affiliateLinkReady: true,
       wpStatus: "future",
-      disclosure: "#PR",
+      disclosure: "",
     });
     const payload = buildXDryRunPayload({
       config: {
@@ -300,7 +368,7 @@ describe("dry-run multi-post", () => {
         xGlobalKillSwitch: true,
         xAutoPublicationEnabled: false,
         xMaxWeightedLength: 280,
-        xAffiliateDisclosure: "#PR",
+        xAffiliateDisclosure: "",
         fanzaXSiteApproved: false,
         fanzaDefaultService: "digital",
         fanzaDefaultFloor: "videoa",
@@ -312,9 +380,23 @@ describe("dry-run multi-post", () => {
       productId: "dazd00312",
       affiliateUrl: "https://al.fanza.co.jp/?af_id=1",
       preferredRoute: "DIRECT_AFFILIATE",
+      articleImages: [
+        {
+          role: "hero",
+          sourceUrl: "https://pics.dmm.co.jp/digital/video/dazd00312/dazd00312pl.jpg",
+          imageType: "main_large",
+          alt: "hero",
+          researchImageId: null,
+          usageStatus: "ALLOWED",
+          provenance: "research_image",
+          displayMode: "url_reference",
+        },
+      ],
     });
     expect(payload.wouldCallCreatePost).toBe(false);
     expect(payload.killSwitch).toBe(true);
+    expect(payload.mediaDecision).toBe("SAFE_IMAGE");
+    expect(payload.mediaSelectedUrl).toContain("dazd00312pl.jpg");
   });
 });
 

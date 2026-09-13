@@ -8,6 +8,10 @@
 
 import type { DatabaseClient } from "@ai-affiliate/database";
 import { validateFanzaAffiliateUrl } from "../daily-blog/affiliate-url.js";
+import {
+  parseArticleImages,
+  type ArticleImage,
+} from "../generation/article-images.js";
 import { resolvePublicationOffer } from "../publication/offer-resolution.js";
 import { FANZA_PROVIDER_KEY } from "../publication/provider-registry-meta.js";
 import {
@@ -38,6 +42,8 @@ export type CanonicalXSource = {
   taxonomyTags: string[];
   articlePlanFacts: XSocialFact[];
   productTitle: string | null;
+  /** Same resolved images as WP (structuredContent.images). */
+  articleImages: ArticleImage[];
 };
 
 function asRecord(v: unknown): Record<string, unknown> {
@@ -115,6 +121,7 @@ export async function loadCanonicalXSource(
       ?.researchTag.name ?? null;
 
   const articlePlanFacts = extractArticlePlanSocialFacts(version?.structuredContent ?? null);
+  const articleImages = parseArticleImages(sc.images);
 
   let claimStatements: Array<{ id: string; statement: string }> = [];
   if (version?.id) {
@@ -195,6 +202,7 @@ export async function loadCanonicalXSource(
     taxonomyTags,
     articlePlanFacts,
     productTitle: researchItem?.title ?? null,
+    articleImages,
   };
 }
 
@@ -202,6 +210,7 @@ export function adaptLoadedCanonicalToX(
   source: CanonicalXSource,
   opts?: {
     preferredRoute?: XPostRoute | null;
+    /** Composer does not inject disclosure; leave unset/empty. */
     disclosure?: string | null;
     preferWpTraffic?: boolean;
   },
@@ -219,12 +228,13 @@ export function adaptLoadedCanonicalToX(
     claimStatements: source.claimStatements,
     taxonomyTags: source.taxonomyTags,
     articlePlanFacts: source.articlePlanFacts,
+    articleImages: source.articleImages,
     publishedBlogUrl: source.publishedBlogUrl,
     wpStatus: source.wpStatus,
     affiliateUrl: source.affiliateUrl,
     affiliateLinkReady: source.affiliateLinkReady,
     preferredLinkMode,
-    disclosure: opts?.disclosure ?? "#PR",
+    disclosure: opts?.disclosure ?? "",
     preferWpTraffic: opts?.preferWpTraffic,
   });
 }

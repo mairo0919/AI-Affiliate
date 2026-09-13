@@ -13,11 +13,16 @@
  */
 
 import { imageContentKey, isTrustedDmmImageUrl } from "../generation/article-images.js";
+import type { ArticleImage } from "../generation/article-images.js";
 import { CONTENT_POLICY_SURFACE } from "./content-policy-surfaces.js";
 import {
   evaluateFanzaOfficialSampleMaterialRights,
   FANZA_X_SAMPLE_TRANSFORM_POLICY,
 } from "./x-fanza-sample-rights.js";
+import {
+  selectXMediaFromArticleImages,
+  X_ARTICLE_MEDIA_POLICY_VERSION,
+} from "./x-article-media.js";
 
 export const X_SOCIAL_MEDIA_POLICY_VERSION = "x-social-media-v3";
 
@@ -650,11 +655,14 @@ export function selectXSocialMediaImage(input: {
 }
 
 /**
- * Backward-compatible entry: prefers selectXSocialMediaImage when research images given.
- * Legacy bare candidates without research list still supported.
+ * Backward-compatible entry.
+ * Prefer structuredContent.images (article pipeline) — never invent an X-only FANZA fetch.
+ * Legacy researchImages path remains for old tests only when articleImages absent.
  */
 export function evaluateXSocialMedia(input: {
   candidates?: XSocialMediaCandidate[] | null;
+  /** Preferred: CV structuredContent.images (same as WP). */
+  articleImages?: ArticleImage[] | unknown | null;
   researchImages?: Array<{
     sourceUrl: string;
     imageType?: string | null;
@@ -671,6 +679,57 @@ export function evaluateXSocialMedia(input: {
   announceCardAvailable?: boolean;
   announceCardUrl?: string | null;
 }): XSocialMediaEvaluation {
+  const hasArticleImages = Array.isArray(input.articleImages)
+    ? input.articleImages.length > 0
+    : input.articleImages != null;
+  if (hasArticleImages) {
+    const pick = selectXMediaFromArticleImages({ articleImages: input.articleImages });
+    return {
+      decision: pick.decision,
+      reason: pick.reason,
+      contentPolicySurface: CONTENT_POLICY_SURFACE.X_SOCIAL_MEDIA,
+      policyVersion: X_ARTICLE_MEDIA_POLICY_VERSION,
+      selectedUrl: pick.selectedUrl,
+      selectedSampleIndex: null,
+      selectedReason: pick.reason,
+      fanzaXSiteApproved: false,
+      transformPolicy: FANZA_X_SAMPLE_TRANSFORM_POLICY,
+      notes: [
+        "reuse_structuredContent.images",
+        "no_x_specific_fanza_fetch",
+        `transform=${FANZA_X_SAMPLE_TRANSFORM_POLICY.allowed.join("|")}_only`,
+      ],
+      candidates: pick.candidates.map((c) => ({
+        sampleIndex: null,
+        sourceUrl: c.sourceUrl,
+        sourceKind: c.role === "hero" ? "article_hero" : "article_sample",
+        imageType: c.imageType,
+        earlyPreferred: c.role === "hero",
+        rightsStatus:
+          c.usageStatus === "ALLOWED"
+            ? ("ALLOWED" as const)
+            : c.usageStatus === "REQUIRES_CONFIRMATION"
+              ? ("REQUIRES_CONFIRMATION" as const)
+              : ("UNKNOWN" as const),
+        rightsReason: `article_pipeline:${c.usageStatus}`,
+        materialRightsStatus:
+          c.usageStatus === "ALLOWED" ? ("ELIGIBLE" as const) : ("NOT_ELIGIBLE" as const),
+        materialRightsReason:
+          c.usageStatus === "ALLOWED" ? "structuredContent.images" : `usage_${c.usageStatus}`,
+        siteApprovalStatus: "N/A" as const,
+        xSocialStatus:
+          c.usageStatus === "ALLOWED" ? ("X_SOCIAL_SAFE" as const) : ("SKIPPED_RIGHTS" as const),
+        xSocialReasons:
+          c.usageStatus === "ALLOWED"
+            ? ["reuse_article_pipeline_image"]
+            : [`article_usage_${c.usageStatus}`],
+        suitabilityScore: c.role === "hero" ? 100 : 80,
+        adopted: c.adopted,
+        excludeReason: c.excludeReason,
+      })),
+    };
+  }
+
   if (input.researchImages?.length || input.announceCardAvailable) {
     return selectXSocialMediaImage({
       researchImages: input.researchImages,

@@ -591,7 +591,8 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
               | "BLOG_TRAFFIC"
               | "COMBINED"
               | null) ?? null,
-            disclosure: deps.config.xAffiliateDisclosure,
+            // Composer must not inject #PR / disclosure into social copy.
+            disclosure: "",
           });
           x.route = adapted.linkMode === "WP_TRAFFIC"
             ? "BLOG_TRAFFIC"
@@ -654,6 +655,10 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
                     posts: adapted.posts,
                     tracking: adapted.tracking,
                     warnings: adapted.warnings,
+                    mediaMode: adapted.mediaMode,
+                    mediaUrl: adapted.mediaUrl,
+                    mediaReason: adapted.mediaReason,
+                    mediaRole: adapted.mediaRole,
                   },
                 },
                 contentHash: createHash("sha256").update(rootBody).digest("hex"),

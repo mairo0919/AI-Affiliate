@@ -133,6 +133,11 @@ export {
 } from "./x-social-realize.js";
 export type { SocialRealizeResult, SocialThinSkip } from "./x-social-realize.js";
 export {
+  selectXMediaFromArticleImages,
+  X_ARTICLE_MEDIA_POLICY_VERSION,
+} from "./x-article-media.js";
+export type { XArticleMediaPick, XArticleMediaCandidate } from "./x-article-media.js";
+export {
   loadCanonicalXSource,
   adaptLoadedCanonicalToX,
 } from "./canonical-x-source.js";

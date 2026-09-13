@@ -7,6 +7,7 @@
 
 import { detectXAdultExpressions } from "./x-social-content-policy.js";
 import { isWordPressPublicForXTraffic } from "./x-eligibility.js";
+import type { ArticleImage } from "../generation/article-images.js";
 import {
   composeXSocialPosts,
   selectXSocialFacts,
@@ -14,6 +15,7 @@ import {
   type XThreadShape,
 } from "./x-social-facts.js";
 import { realizeXSocialCopy, type SocialThinSkip } from "./x-social-realize.js";
+import { selectXMediaFromArticleImages } from "./x-article-media.js";
 
 export type XLinkMode = "WP_TRAFFIC" | "DIRECT_AFFILIATE" | "COMBINED";
 
@@ -38,11 +40,17 @@ export type XSocialAdaptationInput = {
   safeFacets?: string[];
   taxonomyTags?: string[];
   articlePlanFacts?: XSocialFact[];
+  /** Same resolved images as WP (structuredContent.images). */
+  articleImages?: ArticleImage[] | unknown | null;
   publishedBlogUrl?: string | null;
   wpStatus?: string | null;
   affiliateUrl?: string | null;
   affiliateLinkReady?: boolean;
   preferredLinkMode?: XLinkMode | null;
+  /**
+   * Composer does not inject affiliate disclosure / #PR.
+   * Leave empty; publication layer may handle separately.
+   */
   disclosure?: string | null;
   preferWpTraffic?: boolean;
 };
@@ -65,16 +73,20 @@ export type XSocialAdaptationResult = {
   skip: SocialThinSkip | null;
   wpUrl: string | null;
   fanzaUrl: string | null;
-  mediaMode: "TEXT_ONLY";
+  mediaMode: "SAFE_IMAGE" | "TEXT_ONLY";
+  mediaUrl: string | null;
+  mediaReason: string;
+  mediaRole: "hero" | "auxiliary" | null;
   warnings: string[];
   tracking: {
-    format: "x-social-adaptation-v3";
+    format: "x-social-adaptation-v4";
     cid: string;
     linkMode: XLinkMode;
     threadShape: XThreadShape;
     hookCount: number;
     factSources: string[];
     skipped: boolean;
+    mediaMode: "SAFE_IMAGE" | "TEXT_ONLY";
   };
 };
 
@@ -232,7 +244,14 @@ export function adaptCanonicalToXSocial(
     warnings.push("affiliate_not_ready");
   }
 
-  const disclosure = input.disclosure ?? "#PR";
+  const disclosure = (input.disclosure ?? "").trim();
+  const mediaPick = selectXMediaFromArticleImages({
+    articleImages: input.articleImages,
+  });
+  if (mediaPick.decision === "TEXT_ONLY") {
+    warnings.push(`x_media_text_only:${mediaPick.reason}`);
+  }
+
   const realized = realizeXSocialCopy({
     facts: selection.selected,
     performers: input.performerNames,
@@ -260,16 +279,20 @@ export function adaptCanonicalToXSocial(
       skip: realized.skip,
       wpUrl: link.wpUrl,
       fanzaUrl: link.fanzaUrl,
-      mediaMode: "TEXT_ONLY",
+      mediaMode: mediaPick.decision,
+      mediaUrl: mediaPick.selectedUrl,
+      mediaReason: mediaPick.reason,
+      mediaRole: mediaPick.selectedRole,
       warnings,
       tracking: {
-        format: "x-social-adaptation-v3",
+        format: "x-social-adaptation-v4",
         cid: input.cid,
         linkMode: link.mode,
         threadShape: selection.threadShape,
         hookCount: hooks.length,
         factSources: [...new Set(selection.selected.map((f) => f.source))],
         skipped: true,
+        mediaMode: mediaPick.decision,
       },
     };
   }
@@ -313,16 +336,20 @@ export function adaptCanonicalToXSocial(
     skip: null,
     wpUrl: link.wpUrl,
     fanzaUrl: link.fanzaUrl,
-    mediaMode: "TEXT_ONLY",
+    mediaMode: mediaPick.decision,
+    mediaUrl: mediaPick.selectedUrl,
+    mediaReason: mediaPick.reason,
+    mediaRole: mediaPick.selectedRole,
     warnings,
     tracking: {
-      format: "x-social-adaptation-v3",
+      format: "x-social-adaptation-v4",
       cid: input.cid,
       linkMode: link.mode,
       threadShape: selection.threadShape,
       hookCount: hooks.length,
       factSources: [...new Set(selection.selected.map((f) => f.source))],
       skipped: false,
+      mediaMode: mediaPick.decision,
     },
   };
 }

@@ -82,6 +82,9 @@ export function buildXDryRunPayload(input: {
   preferredRoute?: XPostRoute | null;
   preferCombinedHint?: boolean;
   mediaCandidates?: XSocialMediaCandidate[] | null;
+  /** Preferred: structuredContent.images (same as WP). */
+  articleImages?: unknown[] | null;
+  /** @deprecated Prefer articleImages — X must not invent a FANZA-only fetch path. */
   researchImages?: Array<{
     sourceUrl: string;
     imageType?: string | null;
@@ -137,7 +140,8 @@ export function buildXDryRunPayload(input: {
     input.fanzaXSiteApproved === true || input.config.fanzaXSiteApproved === true;
   const media = evaluateXSocialMedia({
     candidates: input.mediaCandidates ?? [],
-    researchImages: input.researchImages ?? null,
+    articleImages: input.articleImages ?? null,
+    researchImages: input.articleImages?.length ? null : input.researchImages ?? null,
     productCanonicalId: input.productId ?? null,
     fanzaAffiliateImageTermsVerified: input.fanzaAffiliateImageTermsVerified === true,
     fanzaXSiteApproved,
@@ -181,8 +185,10 @@ export function buildXDryRunPayload(input: {
       "publication_block:WAITING_FOR_AFFILIATE_SITE_APPROVAL (material rights may still be ELIGIBLE)",
     );
   }
-  if (media.decision !== "SAFE_IMAGE") {
+  if (media.decision !== "SAFE_IMAGE" && media.decision !== "TEXT_ONLY") {
     warnings.push(`x_media=${media.decision}:${media.reason}`);
+  } else if (media.decision === "TEXT_ONLY") {
+    warnings.push(`x_media=TEXT_ONLY:${media.reason}`);
   }
 
   return {
