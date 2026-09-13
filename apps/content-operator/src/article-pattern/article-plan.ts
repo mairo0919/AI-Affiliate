@@ -41,6 +41,8 @@ import {
   isTitleClauseFragment,
   repairBracketSplitPlanFacts,
   toTitleDisplayFact,
+  extractSourceTitleSafeThemes,
+  isGenericTitleFallbackFact,
 } from "./title-eligibility.js";
 import {
   balanceReaderFacingPunctuation,
@@ -168,6 +170,8 @@ function isNoiseContentIdFact(fact: string): boolean {
 function isQuantityOrRuntimeOnlyFact(fact: string): boolean {
   const f = (fact ?? "").trim();
   if (!f) return false;
+  // Work-form / edition nouns that merely contain a count are not qty-only.
+  if (/(?:BEST|ベスト|総集編|実写化|家政婦|元カノ|再会)/u.test(f)) return false;
   if (/^\d+\s*(?:時間|分|回|本番|射精|作品|名|人|cm|コーナー|タイトル)$/u.test(f)) {
     return true;
   }
@@ -206,6 +210,22 @@ function isThinTitleFacts(titleFacts: string[], performerNames: Set<string>): bo
   if (titleFacts.length === 0) return true;
   if (titleFacts.every(isQuantityOrRuntimeOnlyFact)) return true;
   if (isPerformerOnlyTitleFacts(titleFacts, performerNames)) return true;
+  // Performer + duration only still lacks a work axis (e.g. 幸村泉希 + 126分).
+  const hasQty = titleFacts.some(isQuantityOrRuntimeOnlyFact);
+  const hasNonAuxWork = titleFacts.some((f) => {
+    const t = f.trim();
+    if (!t || isQuantityOrRuntimeOnlyFact(t)) return false;
+    if (performerNames.has(t)) return false;
+    if (
+      /^[\u3040-\u309f\u30a0-\u30ff\u4e00-\u9fffー]{2,8}$/u.test(t) &&
+      !/(?:ベスト|総集編|作品|時間|分|射精|本番|痴女|中出し|元カノ|再会|家政婦)/u.test(t)
+    ) {
+      // Bare name-shaped token without work markers — treat as performer-like aux.
+      return false;
+    }
+    return true;
+  });
+  if (hasQty && !hasNonAuxWork) return true;
   return false;
 }
 
@@ -293,6 +313,7 @@ function titleFormSpecificityScore(fact: string): number {
   if (/\d+\s*(?:作品|タイトル|コーナー|時間)/u.test(f)) s += 10;
   if (/わからせ|痴女|ハーレム|騎乗|中出し/u.test(f)) s += 8;
   if (/^(?:ベスト|時間ベスト|8時間ベスト)$/u.test(f)) s -= 40;
+  if (/^(?:ベスト・総集編|ベストと総集編|女優ベスト・総集編)$/u.test(f)) s -= 50;
   return s;
 }
 
@@ -1013,10 +1034,17 @@ function refineTitleExecutionFacts(input: {
     unsafeSet.add(input.productTitle.trim());
   }
   const unsafe = [...unsafeSet];
-  // Drop unsafe from title/lead — do NOT paste full unsafe/synopsis title into lead.
+  // Drop unsafe from title/lead — prefer SOURCE-substring compaction over deletion.
   for (const u of unsafe) {
-    titleFacts = titleFacts.filter((f) => f !== u);
-    leadFacts = leadFacts.filter((f) => f !== u);
+    const compacted = extractSourceTitleSafeThemes(u)[0] ?? toTitleDisplayFact(u);
+    titleFacts = titleFacts.flatMap((f) => {
+      if (f !== u) return [f];
+      return compacted ? [compacted] : [];
+    });
+    leadFacts = leadFacts.flatMap((f) => {
+      if (f !== u) return [f];
+      return compacted && !isUnsafeLeadExecutionTarget(compacted) ? [compacted] : [];
+    });
   }
   leadFacts = leadFacts.filter((f) => f.trim() && !isUnsafeLeadExecutionTarget(f));
   // Compact / drop unfinished clause fragments already in titleFacts.
@@ -1052,9 +1080,26 @@ function refineTitleExecutionFacts(input: {
       if (!display) continue;
       safe = display;
     }
-    if (!safe || !isTitleEligibleFact(safe, eligibility)) continue;
+    if (!safe || !isTitleEligibleFact(safe, eligibility)) {
+      // Unsafe pack facts → keep contiguous SOURCE title themes instead of dropping.
+      for (const theme of extractSourceTitleSafeThemes(item.fact)) {
+        if (!isTitleEligibleFact(theme, eligibility)) continue;
+        if (isNoiseContentIdFact(theme)) continue;
+        if (/(?:すいません|ですか|なのか)/u.test(theme)) continue;
+        candidates.push({
+          fact: theme,
+          score: 70 + Math.min(theme.length, 20) + (/(?:BEST|ベスト|家政婦|元カノ|再会|クンニ)/u.test(theme) ? 16 : 0),
+          isPerformer: false,
+          isQty: isQuantityOrRuntimeOnlyFact(theme),
+        });
+      }
+      continue;
+    }
     if (unsafe.includes(safe) || isUnsafeLeadExecutionTarget(safe)) continue;
     if (isNoiseContentIdFact(safe)) continue;
+    if (/(?:すいません|ですか|なのか)/u.test(safe)) continue;
+    if (/(?:なんや|ヤバい|やばい|やねん|手伝って|お終|オシマイ|ワシ)/u.test(safe)) continue;
+    if (/\d+\s*時$/u.test(safe) && !/\d+\s*時間/u.test(safe)) continue;
     const isPerformer = item.type === "performer_identity";
     const nameForAttest = safe.trim();
     const performerAttested =
@@ -1139,16 +1184,72 @@ function refineTitleExecutionFacts(input: {
         isQty: isQuantityOrRuntimeOnlyFact(pt),
       });
     }
+    // Long / clause-like official titles → contiguous SOURCE themes (not genre shells).
+    for (const theme of extractSourceTitleSafeThemes(pt)) {
+      if (!isTitleEligibleFact(theme, eligibility)) continue;
+      const score =
+        88 + (/(?:BEST|ベスト第|家政婦|元カノ|再会|クンニ|メスサド)/u.test(theme) ? 12 : 0);
+      const existing = candidates.find((c) => c.fact === theme);
+      if (existing) {
+        existing.score = Math.max(existing.score, score);
+        // SOURCE work-form themes must not stay stuck as qty from pack typing.
+        if (!isQuantityOrRuntimeOnlyFact(theme)) existing.isQty = false;
+        continue;
+      }
+      candidates.push({
+        fact: theme,
+        score,
+        isPerformer: false,
+        isQty: isQuantityOrRuntimeOnlyFact(theme),
+      });
+    }
+  }
+  // Demote bare catalog genre/form when any work-specific SOURCE theme exists.
+  const hasSourceWorkTheme = candidates.some(
+    (c) => !c.isPerformer && !c.isQty && !isGenericTitleFallbackFact(c.fact),
+  );
+  for (const c of candidates) {
+    if (hasSourceWorkTheme && isGenericTitleFallbackFact(c.fact)) {
+      c.score -= 100;
+    }
+    // Bare compilation form loses even harder when edition/theme exists.
+    if (
+      hasSourceWorkTheme &&
+      /^(?:ベスト・総集編|ベストと総集編|女優ベスト・総集編)$/u.test(c.fact)
+    ) {
+      c.score -= 40;
+    }
   }
   candidates.sort((a, b) => b.score - a.score);
 
   const performers = candidates.filter((c) => c.isPerformer);
   const workFacets = candidates.filter((c) => !c.isPerformer);
   const compactWork = workFacets.filter((c) => isCompactTitleWorkFacet(c.fact));
-  const nonQtyWork = (compactWork.length > 0 ? compactWork : workFacets).filter((c) => !c.isQty);
+  // High-score SOURCE product-title themes must stay in the facet pool even when
+  // shorter compact crumbs exist (e.g. 「夫婦喧嘩」 must not hide 「元カノと3年ぶりに再会」).
+  const sourceThemeWork = workFacets.filter(
+    (c) =>
+      !c.isQty &&
+      c.score >= 88 &&
+      !isGenericTitleFallbackFact(c.fact) &&
+      !isQuantityOrRuntimeOnlyFact(c.fact),
+  );
+  const preferredWorkPool = (() => {
+    if (sourceThemeWork.length === 0 && compactWork.length === 0) return workFacets;
+    const byFact = new Map<string, Cand>();
+    for (const c of [...sourceThemeWork, ...compactWork]) {
+      const prev = byFact.get(c.fact);
+      if (!prev || c.score > prev.score) byFact.set(c.fact, c);
+    }
+    return [...byFact.values()];
+  })();
+  const nonQtyWork = preferredWorkPool.filter((c) => !c.isQty);
   const titleIsPerformerOnly = isPerformerOnlyTitleFacts(titleFacts, performerNames);
   const titleIsQtyOnly =
     titleFacts.length > 0 && titleFacts.every(isQuantityOrRuntimeOnlyFact);
+  const titleLacksSourceTheme =
+    sourceThemeWork.length > 0 &&
+    !titleFacts.some((f) => sourceThemeWork.some((w) => w.fact === f));
   const repMode = input.rep?.mode;
   const avoidSingularPerformerTitle =
     performers.length >= 2 ||
@@ -1169,15 +1270,27 @@ function refineTitleExecutionFacts(input: {
   const needsTitleEnrichment =
     unsafe.length > 0 ||
     titleFacts.length === 0 ||
+    titleLacksSourceTheme ||
     (titleIsPerformerOnly && (nonQtyWork.length > 0 || workFacets.length > 0)) ||
     (titleIsQtyOnly && (performers.length > 0 || nonQtyWork.length > 0)) ||
     (thinBefore && (performers.length > 0 || nonQtyWork.length > 0 || workFacets.length > 0));
 
   if (needsTitleEnrichment) {
     const composed: string[] = [];
-    const pushUnique = (f: string, opts?: { allowQty?: boolean; allowSparse?: boolean }) => {
+    const pushUnique = (f: string, opts?: { allowQty?: boolean; allowSparse?: boolean; allowGeneric?: boolean }) => {
       if (!f || composed.includes(f) || !isTitleEligibleFact(f, eligibility)) return;
       if (composed.length >= input.maxTitle) return;
+      // Work-specific SOURCE theme present → do not fill title with bare genre/form shells.
+      if (
+        !opts?.allowGeneric &&
+        isGenericTitleFallbackFact(f) &&
+        (hasSourceWorkTheme ||
+          candidates.some(
+            (c) => !c.isPerformer && !isGenericTitleFallbackFact(c.fact) && !c.isQty,
+          ))
+      ) {
+        return;
+      }
       const qty = isQuantityOrRuntimeOnlyFact(f);
       // Duration is auxiliary — never the only work feature beside performer when better facets exist.
       if (qty && !opts?.allowQty) {
@@ -1213,6 +1326,17 @@ function refineTitleExecutionFacts(input: {
     };
 
     if (preferredTitlePerformer) pushUnique(preferredTitlePerformer.fact, { allowSparse: true });
+    // Lock in the best SOURCE product-title theme before pack genre/body crumbs.
+    for (const w of [...sourceThemeWork].sort((a, b) => {
+      const aBest = /(?:BEST|ベスト)/u.test(a.fact) ? 1 : 0;
+      const bBest = /(?:BEST|ベスト)/u.test(b.fact) ? 1 : 0;
+      if (aBest !== bBest) return bBest - aBest;
+      return b.score - a.score || b.fact.length - a.fact.length;
+    })) {
+      if (composed.length >= input.maxTitle) break;
+      if (composed.some((c) => !performerNames.has(c) && !isQuantityOrRuntimeOnlyFact(c))) break;
+      pushUnique(w.fact);
+    }
     // Prefer specific identity/form/collection before bare theme tags.
     const facetPool = nonQtyWork.length > 0 ? nonQtyWork : workFacets;
     const identityFacets = facetPool
@@ -1235,6 +1359,12 @@ function refineTitleExecutionFacts(input: {
           !isTitleThemeVarietyList(w.fact),
       )
       .sort((a, b) => {
+        // Official SOURCE themes (score≥88) outrank shorter compact crumbs.
+        const aSource = a.score >= 88 ? 1 : 0;
+        const bSource = b.score >= 88 ? 1 : 0;
+        if (aSource !== bSource) return bSource - aSource;
+        // Within SOURCE themes, prefer higher score (再会 > 夫婦喧嘩).
+        if (aSource && bSource && a.score !== b.score) return b.score - a.score;
         const aCompact = isCompactTitleWorkFacet(a.fact);
         const bCompact = isCompactTitleWorkFacet(b.fact);
         if (aCompact !== bCompact) return aCompact ? -1 : 1;
@@ -1260,8 +1390,14 @@ function refineTitleExecutionFacts(input: {
     const hasFormIdentity = composed.some(
       (c) => isTitleIdentityOrFormFacet(c) && !performerNames.has(c),
     );
-    // When form/edition is present, do not pile persona/scene crumbs into title.
-    if (!hasFormIdentity) {
+    const hasSourceThemeLocked = composed.some(
+      (c) =>
+        !performerNames.has(c) &&
+        !isQuantityOrRuntimeOnlyFact(c) &&
+        sourceThemeWork.some((w) => w.fact === c),
+    );
+    // When form/edition or SOURCE work theme is present, do not pile body/genre crumbs.
+    if (!hasFormIdentity && !hasSourceThemeLocked) {
       let otherAdded = 0;
       const otherCap =
         preferredTitlePerformer && composed.some((c) => c === preferredTitlePerformer.fact)
@@ -1278,10 +1414,19 @@ function refineTitleExecutionFacts(input: {
         pushUnique(w.fact);
         if (composed.length > before) otherAdded += 1;
       }
+    } else if (hasSourceThemeLocked) {
+      // Keep performer + locked SOURCE theme (+ form); drop leftover pack crumbs.
+      const locked = new Set(sourceThemeWork.map((w) => w.fact));
+      for (let i = composed.length - 1; i >= 0; i -= 1) {
+        const f = composed[i]!;
+        if (performerNames.has(f) || locked.has(f) || isTitleIdentityOrFormFacet(f)) continue;
+        composed.splice(i, 1);
+      }
     }
     // Theme tags remain eligible — fill only remaining slots (at most one when identity present).
     const hasIdentity = composed.some((f) => isTitleIdentityOrFormFacet(f));
     let themeAdded = 0;
+    if (!hasSourceThemeLocked) {
     for (const w of themeFacets) {
       if (composed.length >= input.maxTitle) break;
       if (hasFormIdentity) break;
@@ -1291,6 +1436,7 @@ function refineTitleExecutionFacts(input: {
       if (isTitleThemeVarietyList(w.fact)) continue;
       pushUnique(w.fact, { allowSparse: true });
       themeAdded += 1;
+    }
     }
     // Duration only when no non-qty work feature was available.
     const hasNonQtyWork = composed.some(
@@ -1308,7 +1454,13 @@ function refineTitleExecutionFacts(input: {
     }
 
     if (composed.length > 0) {
-      titleFacts = composed;
+      titleFacts = composed.filter(
+        (f) => !(hasSourceWorkTheme && isGenericTitleFallbackFact(f)),
+      );
+      // Prefer work theme (+ optional performer) over empty after generic strip.
+      if (titleFacts.length === 0 && preferredTitlePerformer) {
+        titleFacts = [preferredTitlePerformer.fact];
+      }
     } else if (titleFacts.length === 0) {
       const primary = input.assignment.title.primary?.fact?.trim();
       if (primary && isTitleEligibleFact(primary, eligibility) && !isNoiseContentIdFact(primary)) {
@@ -1375,7 +1527,17 @@ function refineTitleExecutionFacts(input: {
       composed.push(f);
     };
     if (preferredTitlePerformer) push(preferredTitlePerformer.fact);
+    for (const w of [...sourceThemeWork].sort((a, b) => b.score - a.score || b.fact.length - a.fact.length)) {
+      if (composed.some((c) => !performerNames.has(c) && !isQuantityOrRuntimeOnlyFact(c))) break;
+      push(w.fact);
+    }
     const pool = nonQtyWork.length > 0 ? nonQtyWork : workFacets;
+    const hasSourceThemeLocked = composed.some(
+      (c) =>
+        !performerNames.has(c) &&
+        !isQuantityOrRuntimeOnlyFact(c) &&
+        sourceThemeWork.some((w) => w.fact === c),
+    );
     for (const w of pool
       .filter(
         (x) => isTitleIdentityOrFormFacet(x.fact) && !isTitleThemeVarietyList(x.fact),
@@ -1385,6 +1547,7 @@ function refineTitleExecutionFacts(input: {
           titleFormSpecificityScore(b.fact) - titleFormSpecificityScore(a.fact) ||
           b.score - a.score,
       )) {
+      if (hasSourceThemeLocked) break;
       if (
         composed.some(
           (c) => isTitleIdentityOrFormFacet(c) && !performerNames.has(c),
@@ -1397,7 +1560,7 @@ function refineTitleExecutionFacts(input: {
     const hasFormIdentity = composed.some(
       (c) => isTitleIdentityOrFormFacet(c) && !performerNames.has(c),
     );
-    if (!hasFormIdentity) {
+    if (!hasFormIdentity && !hasSourceThemeLocked) {
       for (const w of pool
         .filter(
           (x) =>
@@ -1419,7 +1582,62 @@ function refineTitleExecutionFacts(input: {
       const qty = pool.find((x) => x.isQty) ?? workFacets.find((x) => x.isQty);
       if (qty) push(qty.fact, true);
     }
-    if (composed.length > titleFacts.length) titleFacts = composed;
+    if (
+      composed.length > titleFacts.length ||
+      (sourceThemeWork.length > 0 &&
+        composed.some((f) => sourceThemeWork.some((w) => w.fact === f)) &&
+        !titleFacts.some((f) => sourceThemeWork.some((w) => w.fact === f)))
+    ) {
+      titleFacts = composed;
+    }
+  }
+
+  // Final SOURCE-theme gate: when official themes exist, drop leftover pack crumbs.
+  if (sourceThemeWork.length > 0) {
+    const locked = new Set(sourceThemeWork.map((w) => w.fact));
+    const kept = titleFacts.filter(
+      (f) =>
+        performerNames.has(f) ||
+        locked.has(f) ||
+        isTitleIdentityOrFormFacet(f),
+    );
+    if (!kept.some((f) => locked.has(f))) {
+      const best = [...sourceThemeWork].sort((a, b) => {
+        const aBest = /(?:BEST|ベスト)/u.test(a.fact) ? 1 : 0;
+        const bBest = /(?:BEST|ベスト)/u.test(b.fact) ? 1 : 0;
+        if (aBest !== bBest) return bBest - aBest;
+        return b.score - a.score || b.fact.length - a.fact.length;
+      })[0];
+      if (best && isTitleEligibleFact(best.fact, eligibility)) {
+        const performersOnly = kept.filter((f) => performerNames.has(f));
+        if (performersOnly.length === 0) {
+          const attestedName = [...titleAttested][0]?.trim();
+          if (attestedName && isTitleEligibleFact(attestedName, eligibility)) {
+            performersOnly.push(attestedName);
+          } else if (preferredTitlePerformer) {
+            performersOnly.push(preferredTitlePerformer.fact);
+          } else if (performers[0] && !avoidSingularPerformerTitle) {
+            performersOnly.push(performers[0].fact);
+          }
+        }
+        titleFacts = [...performersOnly, best.fact].slice(0, input.maxTitle);
+      } else if (kept.length > 0) {
+        titleFacts = kept;
+      }
+    } else {
+      let next = kept.slice(0, input.maxTitle);
+      if (!next.some((f) => performerNames.has(f))) {
+        const attestedName = [...titleAttested][0]?.trim();
+        if (
+          attestedName &&
+          isTitleEligibleFact(attestedName, eligibility) &&
+          !next.some((f) => f.includes(attestedName))
+        ) {
+          next = [attestedName, ...next].slice(0, input.maxTitle);
+        }
+      }
+      titleFacts = next;
+    }
   }
 
   // Lead must carry additive situation/work facts — not title-subset performer alone,
@@ -1490,7 +1708,8 @@ function preferSourceTitleFacetIfEligible(
 ): string[] {
   const eligibility = { productTitle, rep };
   const facet = productTitle.trim();
-  if (!isTitleEligibleFact(facet, eligibility)) return titleFacts;
+  const safeFacet = toTitleDisplayFact(facet);
+  if (!safeFacet || !isTitleEligibleFact(safeFacet, eligibility)) return titleFacts;
 
   const primary = assignment.title.primary;
   const metadataPerformerPrimary =
@@ -1506,11 +1725,11 @@ function preferSourceTitleFacetIfEligible(
     titleFacts.length === 1 &&
     titleFacts[0] === attested[0] &&
     attested[0] === primaryName &&
-    facet.length <= attested[0]!.length + 4;
+    safeFacet.length <= attested[0]!.length + 4;
 
   if (attestedOnlyName) return titleFacts;
 
-  return [facet];
+  return [safeFacet];
 }
 
 /**

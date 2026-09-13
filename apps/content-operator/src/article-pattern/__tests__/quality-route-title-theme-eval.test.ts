@@ -116,7 +116,9 @@ describe("quality route — title / theme / eval", () => {
     const formHits = plan.title.facts.filter((f) => /ベスト/u.test(f));
     expect(formHits.length).toBeLessThanOrEqual(1);
     expect(
-      plan.title.facts.some((f) => /MOODYZベスト第2弾|わからせ痴女られ10作品8時間ベスト|ベスト第2弾/u.test(f)),
+      plan.title.facts.some((f) =>
+        /MOODYZベスト第2弾|わからせ痴女られ10作品8時間ベスト|10作品8時間ベスト|ベスト第2弾/u.test(f),
+      ),
     ).toBe(true);
   });
 
