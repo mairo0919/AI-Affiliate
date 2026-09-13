@@ -136,7 +136,7 @@ export function extractSourceTitleSafeThemes(source: string): string[] {
     if (/[「」]/.test(t)) return;
     // Truncation after censor marks (クリ○リス → リス…).
     const at = src.indexOf(t);
-    if (at > 0 && /[○●\*※]/.test(src[at - 1]!)) return;
+    if (at > 0 && /[○●*※]/.test(src[at - 1]!)) return;
     // Cut mid-hiragana / mid-quantity (セックスレスな|戸川なみ 4).
     const next = at >= 0 ? src[at + t.length] : undefined;
     if (next && /[ぁ-ん]/.test(next) && /[ぁ-ん]$/u.test(t)) return;
