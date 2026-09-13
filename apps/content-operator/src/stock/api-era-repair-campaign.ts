@@ -77,7 +77,6 @@ async function enrichNeeds(input: {
       out.stillNeeds += 1;
       continue;
     }
-    const ctaUrl = buildFanzaCanonicalProductUrl(row.cid);
     try {
       const enrichment = await ensureOfficialEnrichmentForStockItem({
         lifecycle: input.lifecycle,
