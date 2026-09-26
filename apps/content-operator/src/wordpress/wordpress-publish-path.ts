@@ -35,6 +35,7 @@ import {
   evidenceFromStructuredContent,
   evaluatePublicationMetadataQuality,
   generatePublicationMetadata,
+  isGenericCidGuideTitle,
   type PublicationMetadata,
 } from "./publication-metadata.js";
 import { createLLMProvider } from "../adapters/llm/create-llm-provider.js";
@@ -769,10 +770,48 @@ export async function publishContentVersionToWordPress(
     };
   }
 
-  // WP post title uses publication metadata when available (Writer article.title untouched in HTML body).
-  if (publicationMetadata?.title) {
-    built = { ...built, title: publicationMetadata.title, excerpt: publicationMetadata.metaDescription || built.excerpt };
+  // WP post_title / H1: ContentVersion semantic title is SSOT.
+  // Publication metadata may carry SEO/tax only — never overwrite with a regenerated title.
+  const articleTitleRaw =
+    structuredForHtml.article &&
+    typeof structuredForHtml.article === "object" &&
+    typeof (structuredForHtml.article as { title?: unknown }).title === "string"
+      ? String((structuredForHtml.article as { title: string }).title).trim()
+      : "";
+  const versionTitleRaw =
+    typeof version.title === "string" ? version.title.trim() : "";
+  const canonicalWpTitle =
+    (versionTitleRaw.length >= 2 && !isGenericCidGuideTitle(versionTitleRaw)
+      ? versionTitleRaw
+      : "") ||
+    (articleTitleRaw.length >= 2 && !isGenericCidGuideTitle(articleTitleRaw)
+      ? articleTitleRaw
+      : "") ||
+    versionTitleRaw ||
+    articleTitleRaw ||
+    publicationMetadata?.title ||
+    built.title;
+  if (publicationMetadata && publicationMetadata.title !== canonicalWpTitle) {
+    publicationMetadata = {
+      ...publicationMetadata,
+      title: canonicalWpTitle,
+      titleAuthority: "content_version",
+      quality: evaluatePublicationMetadataQuality(
+        {
+          ...publicationMetadata,
+          title: canonicalWpTitle,
+          titleAuthority: "content_version",
+        },
+        evidence,
+      ),
+    };
+    structuredForHtml.publicationMetadata = publicationMetadata;
   }
+  built = {
+    ...built,
+    title: canonicalWpTitle,
+    excerpt: publicationMetadata?.metaDescription || built.excerpt,
+  };
 
   const authPass =
     deps.config.wordpressMode === "mock" ||

@@ -114,6 +114,13 @@ import {
 } from "../editorial-brain/generation/reference-guided-layer.js";
 import { validateReferenceExecution } from "../editorial-brain/generation/reference-execution-compliance.js";
 import { buildOptionBBloggerGeneratorPrompt } from "../editorial-brain/generation/option-b-blogger-prompt.js";
+import {
+  buildDeterministicEditorialDecisionFallback,
+  buildEditorialDecisionPlannerPrompt,
+  parseEditorialDecisionJson,
+  validateEditorialDecisionGrounding,
+  type ArticleEditorialDecision,
+} from "../article-pattern/article-editorial-decision.js";
 import type { ArticlePatternRepository } from "@ai-affiliate/database";
 import {
   toWritingSkeletonPromptContract,
@@ -729,11 +736,68 @@ export class ContentGenerationService {
       materialDepth: materialDepthFromProfile(materialProfile),
       profile: materialProfile,
     });
+
+    // Free-form editorial decision (not a title phrase; not a fixed category enum).
+    const evidenceSurfaces = evidencePack.concreteEvidence
+      .filter((e) => e.generationEligible)
+      .map((e) => e.fact.trim())
+      .filter((f) => f.length >= 2)
+      .slice(0, 28);
+    const performers = evidencePack.concreteEvidence
+      .filter((e) => e.type === "performer_identity")
+      .map((e) => e.fact.trim())
+      .filter(Boolean)
+      .slice(0, 8);
+    const planBodyFacts = articlePlanBase.body.flatMap((b) => b.facts).slice(0, 20);
+    let editorialDecision: ArticleEditorialDecision =
+      buildDeterministicEditorialDecisionFallback({
+        productTitle: input.productTitle,
+        evidenceSurfaces,
+        performers,
+      });
+    try {
+      const edPrompt = buildEditorialDecisionPlannerPrompt({
+        productTitle: input.productTitle,
+        evidenceSurfaces,
+        planBodyFacts,
+        performers,
+      });
+      const edLlm = await this.llm.executeTask({
+        taskType: "GENERATION_BLOGGER",
+        promptIdentifier: "article-editorial-decision-v1",
+        promptVersion: "1",
+        systemInstruction: edPrompt.system,
+        userPrompt: edPrompt.user,
+        model: this.models.generation,
+        input: { productTitle: input.productTitle, phase: "editorial_decision" },
+      });
+      const rawText = JSON.stringify(edLlm.output ?? {});
+      const parsed =
+        parseEditorialDecisionJson(rawText) ??
+        (typeof edLlm.output?.angle === "string"
+          ? parseEditorialDecisionJson(JSON.stringify(edLlm.output))
+          : null);
+      if (parsed) {
+        const g = validateEditorialDecisionGrounding({
+          decision: parsed,
+          allowedSurfaces: [...evidenceSurfaces, ...planBodyFacts],
+          performers,
+        });
+        if (g.ok) editorialDecision = parsed;
+      }
+    } catch {
+      // keep deterministic fallback — still free-text cut, not fact assembly
+    }
+
+    const articlePlanWithDecision = {
+      ...articlePlanBase,
+      editorialDecision,
+    };
     const articlePlanExecution = toWriterExecutionContractView(
-      buildArticlePlanExecutionContract(articlePlanBase),
+      buildArticlePlanExecutionContract(articlePlanWithDecision),
     );
     // R151 — attach execution on the plan object so authority pickArticlePlan.execution works.
-    const articlePlan = { ...articlePlanBase, execution: articlePlanExecution };
+    const articlePlan = { ...articlePlanWithDecision, execution: articlePlanExecution };
 
     // V2 — allow one section per reader job (Formatter still flattens headings).
     const planBodySlots = Math.max(1, articlePlanBase.body.length);

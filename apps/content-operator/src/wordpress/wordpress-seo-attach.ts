@@ -243,9 +243,10 @@ export function buildWordPressSeoAttach(input: WordPressSeoAttachInput): WordPre
   const meta: Record<string, string> = {
     [WP_SEO_META_KEYS.seoTitle]: seoTitle,
     [WP_SEO_META_KEYS.seoDescription]: excerpt,
+    /** Empty string clears stale meta (e.g. attribute-only series names). */
+    [WP_SEO_META_KEYS.productCid]: productCanonicalId ?? "",
+    [WP_SEO_META_KEYS.seriesName]: seriesList[0]?.name ?? "",
   };
-  if (productCanonicalId) meta[WP_SEO_META_KEYS.productCid] = productCanonicalId;
-  if (seriesList[0]) meta[WP_SEO_META_KEYS.seriesName] = seriesList[0].name;
   if (seriesList.length > 1) {
     meta.otonaselect_series_names = seriesList.map((s) => s.name).join("|");
   }

@@ -131,15 +131,23 @@ export type ArticlePlan = {
   purpose?: import("./article-plan-editorial-frame.js").ArticlePlanPurpose | null;
   /** V2 — highest-signal Evidence axis; null when only bare names. */
   coreAngle?: import("./article-plan-editorial-frame.js").ArticlePlanCoreAngle | null;
+  /**
+   * Free-form editorial cut for the article (not a title phrase; not a category enum).
+   * Writer writes the headline from this decision + grounding — not by assembling title.facts.
+   */
+  editorialDecision?: import("./article-editorial-decision.js").ArticleEditorialDecision | null;
 };
 
 export const ARTICLE_PLAN_JOBS = {
+  /** @deprecated legacy fact-compose job — production uses editorial_headline */
   title: "who_plus_core",
   lead: "opening_facts",
   body: "body_facts",
   /** V2 aliases — only when editorialFrame=true */
   titleV2: "title_compose",
   leadV2: "overview",
+  /** Production title job: Writer writes headline from editorialDecision */
+  titleEditorial: "editorial_headline",
 } as const;
 
 /**
@@ -2145,7 +2153,7 @@ export function buildArticlePlan(input: {
       coreAngle,
       bodyProgression,
       sourceExpansion,
-      title: { job: ARTICLE_PLAN_JOBS.titleV2, facts: titleFacts, heading: null },
+      title: { job: ARTICLE_PLAN_JOBS.titleEditorial, facts: titleFacts, heading: null },
       // Leadless: empty lead retained only for transitional ArticlePlan typing.
       lead: { job: ARTICLE_PLAN_JOBS.leadV2, facts: [], heading: null },
       body: finalBody,
@@ -2158,7 +2166,8 @@ export function buildArticlePlan(input: {
     productTitle: input.productTitle,
     bodyProgression,
     sourceExpansion,
-    title: { job: ARTICLE_PLAN_JOBS.title, facts: titleFacts, heading: null },
+    // title.facts remain grounding material; job marks editorial headline authority
+    title: { job: ARTICLE_PLAN_JOBS.titleEditorial, facts: titleFacts, heading: null },
     // Leadless write: opening materials live in body; lead.facts always empty.
     lead: { job: ARTICLE_PLAN_JOBS.lead, facts: [], heading: null },
     body: bodySlots.filter((s) => s.facts.length > 0),

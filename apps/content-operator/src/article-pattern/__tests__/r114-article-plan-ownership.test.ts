@@ -56,7 +56,7 @@ describe("R114 ArticlePlan ownership", () => {
   it("builds Planner-owned ArticlePlan with selected facts", () => {
     const { plan } = build();
     expect(plan.schemaVersion).toBe(1);
-    expect(plan.title.job).toBe("who_plus_core");
+    expect(plan.title.job).toBe("editorial_headline");
     expect(plan.lead.job).toBe("opening_facts");
     expect(plan.lead.facts).toEqual([]);
     expect(plan.title.facts.length + plan.body.flatMap((b) => b.facts).length).toBeGreaterThan(0);

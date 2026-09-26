@@ -20,11 +20,28 @@ function parseFlags(argv: string[]): Record<string, string> {
   return flags;
 }
 
+function parseOrphanCidMap(raw: string | undefined): Record<string, string> {
+  const map: Record<string, string> = {};
+  if (!raw?.trim()) return map;
+  for (const part of raw.split(",")) {
+    const t = part.trim();
+    if (!t) continue;
+    const colon = t.indexOf(":");
+    if (colon <= 0) continue;
+    const wpId = t.slice(0, colon).trim();
+    const cid = t.slice(colon + 1).trim();
+    if (wpId && cid) map[wpId] = cid;
+  }
+  return map;
+}
+
 /**
  * Usage:
  *   wp-refresh-metadata --futures
  *   wp-refresh-metadata --ids=43,47,48
  *   wp-refresh-metadata --ids=46 --only-if-weak
+ *   wp-refresh-metadata --ids=153 --orphan-cid=153:1RCTD00763
+ *   wp-refresh-metadata --orphan-cid-map=153:1RCTD00763,154:1RCTD00759
  */
 export async function runWpRefreshMetadataCli(argv: string[]): Promise<void> {
   const flags = parseFlags(argv);
@@ -33,14 +50,22 @@ export async function runWpRefreshMetadataCli(argv: string[]): Promise<void> {
   await database.connect();
   try {
     const lifecycle = new LifecycleRepository(database.prisma);
+    const orphanCidByExternalId = {
+      ...parseOrphanCidMap(flags["orphan-cid-map"]),
+      ...parseOrphanCidMap(flags["orphan-cid"]),
+    };
+    const orphanIds = Object.keys(orphanCidByExternalId);
     const ids = flags.futures
       ? [...DEFAULT_FUTURE_METADATA_REFRESH_IDS]
-      : (flags.ids ?? "")
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean);
+      : [
+          ...(flags.ids ?? "")
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean),
+          ...orphanIds.filter((id) => !(flags.ids ?? "").split(",").map((s) => s.trim()).includes(id)),
+        ];
     if (ids.length === 0) {
-      console.error("Provide --futures or --ids=43,47,...");
+      console.error("Provide --futures or --ids=43,47,... or --orphan-cid-map=153:cid,...");
       process.exitCode = 1;
       return;
     }
@@ -51,6 +76,7 @@ export async function runWpRefreshMetadataCli(argv: string[]): Promise<void> {
       externalIds: ids,
       useLlm: flags["no-llm"] !== "true",
       onlyIfWeak: flags["only-if-weak"] === "true",
+      orphanCidByExternalId,
     });
     const summary = {
       ok: true,

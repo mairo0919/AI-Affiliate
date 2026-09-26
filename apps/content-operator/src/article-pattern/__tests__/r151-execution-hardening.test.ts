@@ -70,10 +70,12 @@ describe("R151 ArticlePlan execution hardening", () => {
   });
 
   describe("title execution", () => {
-    it("CASE 4: title → EXACT_SURFACE", () => {
+    it("CASE 4: descriptive title theme → SEMANTIC_PRESERVE (editorial headline)", () => {
       expect(deriveExecutionMode("【長身美脚の一花先生に暴走中出し】", "title")).toBe(
-        "EXACT_SURFACE",
+        "SEMANTIC_PRESERVE",
       );
+      expect(deriveExecutionMode("優梨まいな", "title")).toBe("EXACT_SURFACE");
+      expect(deriveExecutionMode("50発射", "title")).toBe("EXACT_SURFACE");
     });
 
     it("CASE 5: title paraphrase with new meaning fails compliance", () => {
@@ -97,7 +99,7 @@ describe("R151 ArticlePlan execution hardening", () => {
           (f) => f.code === "PLAN_FACT_OMISSION" || f.code === "PLAN_UNPLANNED_MEANING",
         ),
       ).toBe(true);
-      expect(deriveExecutionMode(plan.title.facts[0]!, "title")).toBe("EXACT_SURFACE");
+      expect(deriveExecutionMode(plan.title.facts[0]!, "title")).toBe("SEMANTIC_PRESERVE");
     });
 
     it("CASE 6: quantity alteration → fail (anchor/quantity not realized)", () => {

@@ -450,14 +450,16 @@ export async function seedP45Prompts(repo: LifecycleRepository): Promise<void> {
     {
       identifier: "review.writing-quality",
       taskType: "REVIEW",
-      body: "Writing quality review for {{title}} / {{body}}",
-      systemInstruction: "Flag repetitive AI phrasing and empty intros. Return JSON review result.",
+      body: "Writing quality review for title={{title}} body={{body}}. Evaluate GROUNDING, CONTENT_ALIGNMENT, NATURAL_JAPANESE, EDITORIAL_ANGLE_CLARITY, INFORMATION_VALUE, DISTINCTIVENESS, ARTICLE_HEADLINE_QUALITY. Fail grounded-but-low-value headlines: PACKAGE_COPY_REPHRASE, FACT_ASSEMBLY (performer+keyword glue / fact concatenation), CATALOG_SHELL, GENERIC_LABEL, MECHANICAL_TEMPLATE. Being factual or containing a performer name is NOT enough to PASS the title.",
+      systemInstruction:
+        "Return JSON review result. Title must be an article headline with editorial value, not package-copy shortening or fact assembly. Reject unnatural performer+genre glue.",
     },
     {
       identifier: "revision.partial",
       taskType: "REVISION",
       body: "Partially revise article title={{title}} body={{body}} rationale={{rationale}}",
-      systemInstruction: "Return a revised blogger article JSON. Keep claim fidelity.",
+      systemInstruction:
+        "Return a revised blogger article JSON. Keep claim fidelity. If revising the title: write a fresh editorial headline from ARTICLE_PLAN.editorialDecision — do not assemble title.facts, do not use 「〜が魅せる／が贈る」, do not shorten productTitle.",
     },
     {
       identifier: "revision.full",

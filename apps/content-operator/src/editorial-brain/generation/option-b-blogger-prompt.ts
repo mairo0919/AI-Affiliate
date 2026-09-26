@@ -34,12 +34,18 @@ export function toWriterVisibleArticlePlan(plan: unknown): unknown {
     schemaVersion: p.schemaVersion,
     materialDepth: p.materialDepth,
     productTitle: p.productTitle,
-    title: p.title,
+    title: p.title
+      ? {
+          ...(typeof p.title === "object" && p.title ? (p.title as object) : {}),
+          groundingOnly: true,
+        }
+      : p.title,
     lead: p.lead,
     body,
   };
   if (p.purpose) out.purpose = p.purpose;
   if (p.coreAngle) out.coreAngle = p.coreAngle;
+  if (p.editorialDecision) out.editorialDecision = p.editorialDecision;
   // SOURCE density ceiling — length permission, not a paragraph template.
   if (p.sourceExpansion && typeof p.sourceExpansion === "object") {
     const se = p.sourceExpansion as Record<string, unknown>;
@@ -143,8 +149,8 @@ export function buildOptionBBloggerGeneratorPrompt(input: {
       ? [
           "ARTICLE_PLAN_EXECUTION (FACT safety per contribution — obey executionMode / mustPreserve / notAllowed; do not invent):",
           JSON.stringify(execution),
-          "EXACT_SURFACE (title / names / quantities): keep surface identity. Title: compose one natural Japanese title from title.facts only with 助詞/読点 — never invent modifiers/genres/appeal words absent from title.facts.",
-          "SEMANTIC_PRESERVE: natural grammar and editorial connection OK; no new concrete facts. Combine related facts into coherent paragraphs.",
+          "TITLE: Write a fresh article headline from ARTICLE_PLAN.editorialDecision (angle/readerHook/whyThisWork). title.facts are optional grounding — do not assemble/concatenate them into the title. Do not shorten productTitle. Prefer EXACT_SURFACE only for performer names / quantities when you choose to use them. HARD BAN in title: any use of 魅せる, が贈る, or 「注目は…｜」. Also forbidden: package-copy rephrase, performer+keyword glue, catalog shells. Prefer 描く/紹介する/味わう/軸にする/繰り広げる.",
+          "SEMANTIC_PRESERVE body: natural grammar and editorial connection OK; no new concrete facts. Combine related facts into coherent paragraphs.",
           "Write continuous adult product-intro prose. Weave short tags into the story of the product — do not explain internal labels (genre/play-style/direction categories) to the reader.",
           "End with a short grounded reader orientation when natural — optional when SOURCE is thin (THEME_LEVEL / METADATA). Forbidden unless planned: external reputation/market claims (～で知られている / 売上No.1 / 大人気 / ファンから高評価).",
           "If ARTICLE_PLAN.sourceExpansion.writerDensityNote is present, obey it as a length/expansion ceiling. Stop when planned facts are naturally covered.",

@@ -231,8 +231,13 @@ export function deriveExecutionMode(
   const f = (fact ?? "").trim();
   if (!f) return "FREE_CONNECTIVE";
 
-  // Title stays EXACT_SURFACE — prevents Evidence-外 theme drift (R151).
-  if (slot === "title") return "EXACT_SURFACE";
+  // Title: identity-critical tokens stay EXACT; descriptive themes are SEMANTIC so
+  // Writer can form an editorial headline (not mandatory fact-assembly of title.facts).
+  if (slot === "title") {
+    if (QUANTITY_MARKERS.test(f) && f.length <= 24) return "EXACT_SURFACE";
+    if (isLikelyPerformerNameToken(f)) return "EXACT_SURFACE";
+    return "SEMANTIC_PRESERVE";
+  }
 
   // Identity-critical body/lead atoms only — do NOT freeze scene/trait/theme/play nouns.
   // (R157) Blanket 2–16 kana/kanji EXACT caused checklist compression despite rich plans.

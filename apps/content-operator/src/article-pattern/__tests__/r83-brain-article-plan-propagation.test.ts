@@ -42,7 +42,7 @@ describe("r83 assignment → ArticlePlan (r114)", () => {
       assignment: feasibility.assignment,
       materialDepth: profile.materialDepth,
     });
-    expect(plan.title.job).toBe("who_plus_core");
+    expect(plan.title.job).toBe("editorial_headline");
     expect(plan.lead.job).toBe("opening_facts");
     expect(plan.schemaVersion).toBe(1);
     expect(plan.title.facts.length).toBeGreaterThan(0);

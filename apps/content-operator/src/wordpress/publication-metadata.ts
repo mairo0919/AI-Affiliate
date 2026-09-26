@@ -25,6 +25,8 @@ export type TitleAxis =
   | "highlight"
   | "series_maker";
 
+export type PublicationTitleAuthority = "content_version" | "anomaly_fallback";
+
 export type PublicationMetadata = {
   title: string;
   seoTitle: string;
@@ -35,6 +37,8 @@ export type PublicationMetadata = {
   seriesNames: string[];
   titleAxis: TitleAxis;
   productCanonicalId: string | null;
+  /** Where `title` came from. Normal path must be content_version. */
+  titleAuthority?: PublicationTitleAuthority;
   quality: PublicationMetadataQuality;
   source: "llm" | "deterministic";
   generatedAt: string;
@@ -57,7 +61,10 @@ export type PublicationMetadataEvidence = {
   labels?: string[];
   genres?: string[];
   labelsRaw?: EvidenceTaxonomyLabel[];
-  /** Existing article title (Writer) — used as signal, may be replaced for WP. */
+  /**
+   * Canonical ContentVersion / Writer title (semantic SSOT for WP post_title).
+   * Publication layer carries this; it must not invent a replacement on the normal path.
+   */
   writerTitle?: string | null;
   /** Short factual summary / lead already in article (no invention). */
   articleSummary?: string | null;
@@ -92,6 +99,27 @@ const BANNED_TAGS = new Set([
 ]);
 
 const GENERIC_TITLE_SUFFIXES = ["を紹介", "を解説", "まとめ", "レビュー"];
+
+const GENERIC_SECTION_HEADING = /^(見どころ|ポイント|概要|紹介)$/;
+
+/** Bare CID / memo guide titles — weak editorial fallbacks. */
+export function isGenericCidGuideTitle(title: string): boolean {
+  const t = title.replace(/\s+/g, " ").trim();
+  if (!t) return false;
+  if (t === "作品ガイド") return true;
+  if (/^作品ガイド｜[A-Za-z0-9_-]+$/i.test(t)) return true;
+  if (/^作品メモ｜[A-Za-z0-9_-]+$/i.test(t)) return true;
+  if (/^.+の作品メモ｜[A-Za-z0-9_-]+$/i.test(t)) return true;
+  return false;
+}
+
+function isUsableWriterTitle(writer: string | null | undefined): boolean {
+  const t = writer?.trim() ?? "";
+  if (t.length < 6) return false;
+  if (looksLikeCatalogDump(t)) return false;
+  if (isGenericCidGuideTitle(t)) return false;
+  return true;
+}
 
 export function isBannedTag(name: string): boolean {
   const t = name.replace(/\s+/g, " ").trim();
@@ -145,8 +173,11 @@ export function selectTitleAxis(evidence: PublicationMetadataEvidence): TitleAxi
     if (featureHint) return "feature";
     return "work_type";
   }
-  // Synopsis-specific story beats beat bare genre axes.
-  if (extractSynopsisTheme(official, performers)) return "feature";
+  // Synopsis-specific story beats beat bare genre axes (not long catalog dumps).
+  const synopsisBeat = extractSynopsisTheme(official, performers);
+  if (synopsisBeat && !looksLikeCatalogDump(synopsisBeat) && synopsisBeat.length <= 28) {
+    return "feature";
+  }
   if (performers.length === 1 && featureHint) return "feature";
   if (performers.length === 1 && genres.length > 0) return "highlight";
   if (performers.length >= 1 && /向け|初心者|ファン|好き/i.test(blob)) return "audience";
@@ -176,11 +207,26 @@ function primaryPerformer(evidence: PublicationMetadataEvidence): string | null 
 
 function featurePhrase(evidence: PublicationMetadataEvidence): string | null {
   const performers = evidence.performers ?? [];
-  const synopsis = extractSynopsisTheme(evidence.officialTitle ?? "", performers);
-  if (synopsis) return synopsis;
+  const textSources = [
+    evidence.officialTitle ?? "",
+    evidence.officialDescription ?? "",
+    ...(evidence.bodySnippets ?? []),
+  ];
+  for (const source of textSources) {
+    const synopsis = extractSynopsisTheme(source, performers);
+    if (synopsis && !looksLikeCatalogDump(synopsis)) return synopsis;
+  }
+  const officialBlob = [evidence.officialTitle, evidence.officialDescription]
+    .filter(Boolean)
+    .join("\n");
+  if (/主観/.test(officialBlob)) {
+    if (/周年|記念/.test(officialBlob)) return "周年記念の主観映像";
+    return "主観映像作品";
+  }
   const headings = evidence.sectionHeadings ?? [];
   for (const h of headings) {
     const t = h.replace(/\s+/g, " ").trim();
+    if (GENERIC_SECTION_HEADING.test(t)) continue;
     if (t.length >= 4 && t.length <= 24 && !/まとめ|CTA|リンク|商品/i.test(t) && !isBareGenreToken(t)) {
       return t;
     }
@@ -241,7 +287,22 @@ function clipTitle(title: string, max = 48): string {
 }
 
 /**
- * Deterministic editorial title — diverse patterns by axis.
+ * Resolve the canonical WordPress semantic title.
+ * Authority: Article Writer / Review → ContentVersion title (passed as writerTitle).
+ */
+export function resolveCanonicalArticleTitle(
+  evidence: PublicationMetadataEvidence,
+): { title: string | null; authority: PublicationTitleAuthority } {
+  const writer = evidence.writerTitle?.trim() || null;
+  if (writer && writer.length >= 2 && !isGenericCidGuideTitle(writer)) {
+    return { title: clipTitle(writer, 60), authority: "content_version" };
+  }
+  return { title: null, authority: "anomaly_fallback" };
+}
+
+/**
+ * Anomaly-only deterministic title when ContentVersion title is missing.
+ * Not a normal production title path — publish quality must fail.
  * Never invents performers/series; uses only evidence fields.
  */
 export function buildDeterministicTitle(
@@ -314,11 +375,36 @@ export function buildDeterministicTitle(
   }
 
   if (!title) {
-    if (performer && cid) title = `${performer}の作品メモ｜${cid.toUpperCase()}`;
-    else if (performer) title = `${performer}の作品メモ`;
-    else if (official && !looksLikeCatalogDump(official)) title = clipTitle(official, 40);
-    else if (cid) title = `作品ガイド｜${cid.toUpperCase()}`;
-    else title = "作品ガイド";
+    const writer = evidence.writerTitle?.trim() ?? "";
+    if (isUsableWriterTitle(writer)) {
+      title = clipTitle(writer, 48);
+    } else if (performer && workType && !isBareGenreToken(workType)) {
+      title = `${performer}で見る${workType}`;
+    } else if (performer && feature && !isBareGenreToken(feature)) {
+      title = `${performer}｜${feature}`;
+    } else if (feature && !isBareGenreToken(feature)) {
+      title = feature.length >= 10 ? feature : `${feature}に注目したい一作`;
+    } else if (official && !looksLikeCatalogDump(official)) {
+      title = clipTitle(official, 40);
+    } else if (performer && cid) {
+      title = `${performer}の作品メモ｜${cid.toUpperCase()}`;
+    } else if (performer) {
+      title = `${performer}の作品メモ`;
+    } else if (cid) {
+      title = `作品ガイド｜${cid.toUpperCase()}`;
+    } else {
+      title = "作品ガイド";
+    }
+  }
+
+  if ((looksLikeCatalogDump(title) || isGenericCidGuideTitle(title)) && performer) {
+    if (workType && !isBareGenreToken(workType)) {
+      title = `${performer}で見る${workType}`;
+    } else if (feature && !isBareGenreToken(feature)) {
+      title = `${performer}｜${feature}`;
+    } else {
+      title = `${performer}の魅力が分かる一本`;
+    }
   }
 
   // Avoid appending generic 「を紹介」 spam.
@@ -350,6 +436,7 @@ export function looksLikeCatalogDump(title: string): boolean {
 export function looksLikeWeakEditorialTitle(title: string, evidence: PublicationMetadataEvidence): boolean {
   const t = title.trim();
   if (!t) return true;
+  if (isGenericCidGuideTitle(t)) return true;
   if (looksLikeCatalogDump(t)) return true;
   const official = evidence.officialTitle?.trim();
   if (official && normalizeCompact(t) === normalizeCompact(official)) return true;
@@ -445,11 +532,24 @@ export function evaluatePublicationMetadataQuality(
 ): PublicationMetadataQuality {
   const failures: string[] = [];
   const warnings: string[] = [];
+  const authority =
+    meta.titleAuthority ??
+    (evidence.writerTitle?.trim() &&
+    normalizeCompact(meta.title) === normalizeCompact(evidence.writerTitle.trim())
+      ? "content_version"
+      : "anomaly_fallback");
+  const isCanonical = authority === "content_version";
 
   if (!meta.title?.trim()) failures.push("TITLE_MISSING");
-  if (looksLikeCatalogDump(meta.title)) failures.push("TITLE_CATALOG_DUMP");
-  if (looksLikeWeakEditorialTitle(meta.title, evidence) && meta.title === evidence.writerTitle) {
-    failures.push("TITLE_PRODUCT_COPY");
+  if (isGenericCidGuideTitle(meta.title)) failures.push("TITLE_GENERIC_FALLBACK");
+  // Catalog / product-copy heuristics apply only to anomaly fallback titles.
+  // Canonical Writer/ContentVersion titles are carried as-is (publication does not rewrite).
+  if (!isCanonical) {
+    if (looksLikeCatalogDump(meta.title)) failures.push("TITLE_CATALOG_DUMP");
+    if (looksLikeWeakEditorialTitle(meta.title, evidence)) {
+      failures.push("TITLE_PRODUCT_COPY");
+    }
+    failures.push("TITLE_ANOMALY_FALLBACK");
   }
   if (meta.title.length > 60) warnings.push("TITLE_LONG");
 
@@ -495,7 +595,14 @@ export function buildDeterministicPublicationMetadata(
 ): PublicationMetadata {
   const axis = selectTitleAxis(evidence);
   const tax = buildTaxonomyFromEvidencePack(evidence);
-  const title = buildDeterministicTitle(evidence, axis);
+  const canonical = resolveCanonicalArticleTitle(evidence);
+  // Normal path: carry ContentVersion/Writer title. Deterministic rebuild is anomaly-only.
+  const title =
+    canonical.title ??
+    buildDeterministicTitle(evidence, axis);
+  const titleAuthority: PublicationTitleAuthority = canonical.title
+    ? "content_version"
+    : "anomaly_fallback";
   const seoTitle = buildDeterministicSeoTitle(title, evidence);
   const metaDescription = buildDeterministicMetaDescription(title, evidence);
   const tags = filterMeaningfulTags([
@@ -520,6 +627,7 @@ export function buildDeterministicPublicationMetadata(
     seriesNames: tax.seriesNames,
     titleAxis: axis,
     productCanonicalId: evidence.productCanonicalId?.trim() || null,
+    titleAuthority,
   };
   const quality = evaluatePublicationMetadataQuality(base, evidence);
   return {
@@ -531,7 +639,6 @@ export function buildDeterministicPublicationMetadata(
 }
 
 type LlmMetaJson = {
-  title?: string;
   seoTitle?: string;
   metaDescription?: string;
   titleAxis?: TitleAxis;
@@ -543,20 +650,24 @@ export async function generatePublicationMetadata(input: {
   model?: string;
 }): Promise<PublicationMetadata> {
   const fallback = buildDeterministicPublicationMetadata(input.evidence);
-  if (!input.llm) return fallback;
+  // Title is never LLM-invented: ContentVersion title is SSOT; anomaly fallback is deterministic only.
+  if (!input.llm || fallback.titleAuthority !== "content_version") {
+    return fallback;
+  }
 
   try {
     const result = await input.llm.executeTask({
       taskType: "publication_metadata",
       promptIdentifier: "wp-publication-metadata-v1",
-      promptVersion: "1",
+      promptVersion: "2",
       model: input.model,
       systemInstruction:
-        "あなたは日本語アダルトアフィリエイト媒体の編集者です。JSONのみ返してください。事実の捏造禁止。Evidenceにない出演者・シリーズ・評価・人気を作らない。titleは商品名の丸コピー禁止。seoTitleはtitleと差別化しkeyword stuffing禁止。metaDescriptionは本文切り抜きではなく検索結果向けの自然文。",
+        "あなたは日本語アダルトアフィリエイト媒体の編集者です。JSONのみ返してください。事実の捏造禁止。Evidenceにない出演者・シリーズ・評価・人気を作らない。titleは変更禁止（既に確定済み）。seoTitleはtitleと差別化しkeyword stuffing禁止。metaDescriptionは本文切り抜きではなく検索結果向けの自然文。",
       userPrompt: JSON.stringify(
         {
           instruction:
-            "Return JSON {title, seoTitle, metaDescription, titleAxis}. titleAxis one of feature|performer|work_type|audience|highlight|series_maker.",
+            "Return JSON {seoTitle, metaDescription, titleAxis}. Do NOT invent or rewrite title. titleAxis one of feature|performer|work_type|audience|highlight|series_maker.",
+          lockedTitle: fallback.title,
           evidence: {
             productCanonicalId: input.evidence.productCanonicalId,
             officialTitle: input.evidence.officialTitle,
@@ -569,7 +680,8 @@ export async function generatePublicationMetadata(input: {
             sectionHeadings: input.evidence.sectionHeadings?.slice(0, 8),
             bodySnippets: input.evidence.bodySnippets?.slice(0, 2),
             suggestedAxis: selectTitleAxis(input.evidence),
-            deterministicTitleHint: fallback.title,
+            seoTitleHint: fallback.seoTitle,
+            metaDescriptionHint: fallback.metaDescription,
           },
         },
         null,
@@ -577,7 +689,7 @@ export async function generatePublicationMetadata(input: {
       ),
       outputSchema: {
         type: "object",
-        required: ["title", "seoTitle", "metaDescription"],
+        required: ["seoTitle", "metaDescription"],
       },
       input: {},
     });
@@ -590,35 +702,23 @@ export async function generatePublicationMetadata(input: {
             typeof result.metadata?.rawText === "string" ? result.metadata.rawText : "",
           )
     ) as LlmMetaJson | null;
-    if (!json?.title || !json.seoTitle || !json.metaDescription) return fallback;
-
-    const tax = buildTaxonomyFromEvidencePack(input.evidence);
-    const performers =
-      tax.performers.length > 5 ? tax.performers.slice(0, 3) : tax.performers;
-    const tags = filterMeaningfulTags([
-      ...tax.tags.filter((t) => !performers.includes(t) || performers.length <= 3),
-      ...tax.categories.filter((c) => c !== "作品紹介"),
-      ...(input.evidence.makers ?? []),
-      ...(input.evidence.genres ?? []),
-    ]);
+    if (!json?.seoTitle || !json.metaDescription) return fallback;
 
     const base = {
-      title: clipTitle(String(json.title), 48),
+      ...fallback,
+      // Locked: never replace ContentVersion semantic title.
+      title: fallback.title,
+      titleAuthority: "content_version" as const,
       seoTitle: clipTitle(String(json.seoTitle), 70),
       metaDescription: truncateMetaDescription(String(json.metaDescription), 120),
-      categories: tax.categories,
-      tags,
-      performers,
-      seriesNames: tax.seriesNames,
       titleAxis: (json.titleAxis as TitleAxis) || fallback.titleAxis,
-      productCanonicalId: input.evidence.productCanonicalId?.trim() || null,
     };
     let quality = evaluatePublicationMetadataQuality(base, input.evidence);
     if (!quality.pass) {
-      // Merge: keep LLM title if valid enough, else deterministic; always keep evidence tax.
       const merged = {
         ...fallback,
-        title: quality.failures.includes("TITLE_CATALOG_DUMP") ? fallback.title : base.title,
+        title: fallback.title,
+        titleAuthority: "content_version" as const,
         seoTitle:
           quality.failures.includes("SEO_TITLE_SAME_AS_TITLE") ||
           quality.failures.includes("SEO_TITLE_MISSING")
@@ -749,8 +849,17 @@ export function evidenceFromStructuredContent(input: {
     makers,
     genres,
     labelsRaw: input.evidenceLabels,
-    writerTitle:
-      (typeof article.title === "string" && article.title) || input.versionTitle || null,
+    writerTitle: (() => {
+      const version =
+        typeof input.versionTitle === "string" ? input.versionTitle.trim() : "";
+      const articleTitle =
+        typeof article.title === "string" ? article.title.trim() : "";
+      if (version.length >= 2 && !isGenericCidGuideTitle(version)) return version;
+      if (articleTitle.length >= 2 && !isGenericCidGuideTitle(articleTitle)) {
+        return articleTitle;
+      }
+      return version || articleTitle || null;
+    })(),
     articleSummary:
       (typeof article.summary === "string" && article.summary) ||
       (typeof article.metaDescription === "string" && article.metaDescription) ||

@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   buildDeterministicPublicationMetadata,
+  buildDeterministicTitle,
   evaluatePublicationMetadataQuality,
   filterMeaningfulTags,
   isBannedTag,
+  isGenericCidGuideTitle,
   looksLikeCatalogDump,
+  resolveCanonicalArticleTitle,
   selectTitleAxis,
 } from "./publication-metadata.js";
 import { deriveWordPressTaxonomyFromEvidence } from "./evidence-taxonomy.js";
@@ -20,17 +23,19 @@ describe("publication metadata", () => {
     ).toBe("work_type");
   });
 
-  it("builds diversified title and distinct SEO/meta", () => {
+  it("carries ContentVersion/Writer title as WP semantic title (does not regenerate)", () => {
+    const writerTitle = "神乳女優RIONの本格エステとアロマオイルエステ";
     const meta = buildDeterministicPublicationMetadata({
       productCanonicalId: "ssni00100",
       performers: ["RION"],
       genres: ["エステ"],
       seriesNames: [],
       sectionHeadings: ["オイルエステの流れ", "見どころ"],
-      writerTitle: "神乳女優RIONの本格エステとアロマオイルエステ",
+      writerTitle,
       articleSummary: "RIONのエステ作品について整理する。",
     });
-    expect(meta.title.length).toBeGreaterThan(8);
+    expect(meta.title).toBe(writerTitle);
+    expect(meta.titleAuthority).toBe("content_version");
     expect(meta.title).not.toBe(meta.seoTitle);
     expect(meta.metaDescription).not.toBe(meta.title);
     expect(meta.seoTitle).toContain("オトナセレクト");
@@ -50,6 +55,72 @@ describe("publication metadata", () => {
     expect(filterMeaningfulTags(["動画", "RION", "VR", "1"]).includes("動画")).toBe(false);
   });
 
+  it("fails quality on generic CID guide title", () => {
+    expect(isGenericCidGuideTitle("作品ガイド｜1RCTD00763")).toBe(true);
+    const q = evaluatePublicationMetadataQuality(
+      {
+        title: "作品ガイド｜1RCTD00763",
+        seoTitle: "別SEO｜1RCTD00763｜オトナセレクト",
+        metaDescription: "公開カタログの情報をもとに、作品の特徴を短く整理します。",
+        categories: ["作品紹介"],
+        tags: ["VR", "企画"],
+        performers: ["女優A"],
+        seriesNames: [],
+        titleAxis: "highlight",
+        productCanonicalId: "1rctd00763",
+        titleAuthority: "anomaly_fallback",
+      },
+      { performers: ["女優A"], productCanonicalId: "1rctd00763" },
+    );
+    expect(q.pass).toBe(false);
+    expect(q.failures).toContain("TITLE_GENERIC_FALLBACK");
+  });
+
+  it("anomaly fallback builds performer-grounded title but is not publishable", () => {
+    const title = buildDeterministicTitle(
+      {
+        productCanonicalId: "1rctd00763",
+        performers: ["天馬ゆい"],
+        genres: ["単体作品"],
+        officialTitle:
+          "【長いカタログ商品名】天馬ゆい 神業ハンドテクで絶対連続射精させてくれる追い手コキメンズエステ 八木奈々",
+      },
+      "highlight",
+    );
+    expect(isGenericCidGuideTitle(title)).toBe(false);
+    expect(title).toContain("天馬ゆい");
+    const meta = buildDeterministicPublicationMetadata({
+      productCanonicalId: "1rctd00763",
+      performers: ["天馬ゆい"],
+      genres: ["単体作品"],
+      officialTitle:
+        "【長いカタログ商品名】天馬ゆい 神業ハンドテクで絶対連続射精させてくれる追い手コキメンズエステ",
+    });
+    expect(meta.titleAuthority).toBe("anomaly_fallback");
+    expect(isGenericCidGuideTitle(meta.title)).toBe(false);
+    expect(meta.title).toContain("天馬ゆい");
+    expect(meta.quality.pass).toBe(false);
+    expect(meta.quality.failures).toContain("TITLE_ANOMALY_FALLBACK");
+  });
+
+  it("resolveCanonicalArticleTitle prefers Writer/ContentVersion title", () => {
+    expect(
+      resolveCanonicalArticleTitle({
+        writerTitle: "九井スナオの主観ホラー企画を整理",
+        officialTitle: "ROCKET18周年記念ユーザーリクエスト祭り …",
+      }),
+    ).toEqual({
+      title: "九井スナオの主観ホラー企画を整理",
+      authority: "content_version",
+    });
+    expect(
+      resolveCanonicalArticleTitle({
+        writerTitle: "作品ガイド｜1RCTD00763",
+        productCanonicalId: "1rctd00763",
+      }).authority,
+    ).toBe("anomaly_fallback");
+  });
+
   it("fails quality when SEO equals title", () => {
     const q = evaluatePublicationMetadataQuality(
       {
@@ -62,8 +133,9 @@ describe("publication metadata", () => {
         seriesNames: [],
         titleAxis: "performer",
         productCanonicalId: "x",
+        titleAuthority: "content_version",
       },
-      { performers: ["RION"] },
+      { performers: ["RION"], writerTitle: "同じタイトル" },
     );
     expect(q.pass).toBe(false);
     expect(q.failures).toContain("SEO_TITLE_SAME_AS_TITLE");

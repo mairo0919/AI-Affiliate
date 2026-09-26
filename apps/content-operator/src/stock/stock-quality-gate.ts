@@ -13,6 +13,7 @@ import {
   isMechanicalTemplateTitle,
   isPerformerGenreListTitle,
 } from "./repair-quality-guard.js";
+import { isLowValueArticleHeadline } from "../article-pattern/article-editorial-decision.js";
 
 function plainTextLength(htmlOrText: unknown): number {
   return String(htmlOrText ?? "")
@@ -90,6 +91,15 @@ export function evaluateStockArticleQualityGate(input: {
 
   if (isPerformerGenreListTitle(title, actors)) {
     return { ok: false, reason: "PERFORMER_GENRE_LIST_TITLE" };
+  }
+
+  if (
+    isLowValueArticleHeadline({
+      title,
+      productTitle: input.productTitle,
+    })
+  ) {
+    return { ok: false, reason: "LOW_VALUE_ARTICLE_HEADLINE" };
   }
 
   const synopsis = extractSynopsisTheme(input.productTitle, actors);

@@ -35,7 +35,10 @@ const EVAL_REGEN_HINT =
   "For PLAN_UNSUPPORTED_EVAL / external factual claims: remove the unsupported external claim or empty promo closer. You may keep or rewrite as editorial interpretation that stays grounded in planned facts (volume/theme/trait). Do not replace with another unsupported external claim.";
 
 const OMISSION_REGEN_HINT =
-  "For PLAN_FACT_OMISSION: realize each listed fact in its assigned slot (weave with related facts OK). Do not drop required facts.";
+  "For PLAN_FACT_OMISSION on body/lead: realize each listed fact in its assigned slot (weave with related facts OK). Do not drop required body facts. Title uses editorialDecision — do NOT force-assemble title.facts into the headline.";
+
+const TITLE_EDITORIAL_REGEN_HINT =
+  "For PLAN_TITLE_EDITORIAL_QUALITY: rewrite the title as a fresh article headline from ARTICLE_PLAN.editorialDecision (angle/readerHook/whyThisWork). HARD BAN: never write 「が魅せる」「が贈る」. Reject package-copy shortening, performer+keyword glue, catalog shells. title.facts are optional grounding only. Example direction: 「逢沢みゆのメンズエステで辿る癒しと濃密な時間」 not 「逢沢みゆが魅せる…」.";
 
 function regenInstructionForViolations(violations: PlanRegenViolation[]): string {
   const parts = [PLAN_REGEN_CORRECTION_INSTRUCTION];
@@ -44,6 +47,9 @@ function regenInstructionForViolations(violations: PlanRegenViolation[]): string
   }
   if (violations.some((v) => v.code === "PLAN_FACT_OMISSION")) {
     parts.push(OMISSION_REGEN_HINT);
+  }
+  if (violations.some((v) => v.code === "PLAN_TITLE_EDITORIAL_QUALITY" || v.slot === "title")) {
+    parts.push(TITLE_EDITORIAL_REGEN_HINT);
   }
   const needsContrastive = violations.some(
     (v) =>
@@ -140,8 +146,23 @@ export function buildStructuredPlanRegenViolations(
 
     if (
       finding.code !== "PLAN_FACT_OMISSION" &&
-      finding.code !== "PLAN_SLOT_VIOLATION"
+      finding.code !== "PLAN_SLOT_VIOLATION" &&
+      finding.code !== "PLAN_TITLE_EDITORIAL_QUALITY"
     ) {
+      continue;
+    }
+
+    if (finding.code === "PLAN_TITLE_EDITORIAL_QUALITY") {
+      const key = `${finding.code}::${finding.message}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      violations.push({
+        code: finding.code,
+        slot: "title",
+        fact: "",
+        reason:
+          "Title fails editorial headline quality — rewrite from editorialDecision; do not assemble title.facts; avoid package-copy / が魅せる / catalog shells.",
+      });
       continue;
     }
 

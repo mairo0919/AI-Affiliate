@@ -15,6 +15,7 @@ import {
   isPureUnsupportedEvaluativePadding,
 } from "../../article-pattern/plan-surface-attestation.js";
 import { validateTitleSurfaceRealization } from "../../article-pattern/title-eligibility.js";
+import { classifyArticleHeadlineDefects } from "../../article-pattern/article-editorial-decision.js";
 import { splitIntoSentences } from "./text-surface.js";
 import type { RawFailureRouting } from "./raw-failure-routing.js";
 import {
@@ -48,7 +49,8 @@ export type ArticlePlanComplianceCode =
   | "PLAN_THEME_OVERREACH"
   | "PLAN_UNSUPPORTED_EVAL"
   | "PLAN_TITLE_INVENT"
-  | "PLAN_TITLE_SURFACE";
+  | "PLAN_TITLE_SURFACE"
+  | "PLAN_TITLE_EDITORIAL_QUALITY";
 
 export type ArticlePlanComplianceFinding = {
   code: ArticlePlanComplianceCode | string;
@@ -162,15 +164,24 @@ function checkOmissions(
   const findings: ArticlePlanComplianceFinding[] = [];
   const softThemeCoverage = plan.sourceExpansion?.requireAllThemeTagCoverage === false;
 
-  for (const fact of plan.title.facts) {
-    if (isWeakPlanFact(fact)) continue;
-    if (!factRealizedIn(article.title, fact)) {
-      findings.push({
-        code: "PLAN_FACT_OMISSION",
-        message: `title slot missing plan fact: ${fact.slice(0, 80)}`,
-        severity: "BLOCKING",
-        slot: "title",
-      });
+  // title.facts are grounding hints for editorial_headline — NOT a mandatory assemble list.
+  // With editorialDecision (or job=editorial_headline), do not BLOCK on title fact omission.
+  const titleIsEditorialHeadline =
+    plan.title.job === "editorial_headline" ||
+    Boolean(
+      (plan as { editorialDecision?: { angle?: string } | null }).editorialDecision?.angle,
+    );
+  if (!titleIsEditorialHeadline) {
+    for (const fact of plan.title.facts) {
+      if (isWeakPlanFact(fact)) continue;
+      if (!factRealizedIn(article.title, fact)) {
+        findings.push({
+          code: "PLAN_FACT_OMISSION",
+          message: `title slot missing plan fact: ${fact.slice(0, 80)}`,
+          severity: "BLOCKING",
+          slot: "title",
+        });
+      }
     }
   }
 
@@ -231,6 +242,14 @@ function checkSlotFidelity(
   const findings: ArticlePlanComplianceFinding[] = [];
   const bodyText = slotText(article, "body");
 
+  // editorial_headline: title.facts may live only in body — headline is editorial, not fact dump.
+  const titleIsEditorialHeadline =
+    plan.title.job === "editorial_headline" ||
+    Boolean(
+      (plan as { editorialDecision?: { angle?: string } | null }).editorialDecision?.angle,
+    );
+  if (titleIsEditorialHeadline) return findings;
+
   for (const fact of plan.title.facts) {
     if (isWeakPlanFact(fact)) continue;
     if (!factRealizedIn(article.title, fact) && factExactlyIn(bodyText, fact)) {
@@ -250,8 +269,8 @@ const TITLE_STRUCTURAL_GLUE_RE =
   /^(?:作品|ベスト|版|編|出演|収録|記念|特集|コレクション)$/u;
 
 /**
- * Title must realize only title.facts surfaces (Plan authority).
- * Body-plan material must not spill into title (ssis 究極ピストン case).
+ * Title grounding: Evidence / plan facts / editorialDecision refs — not mandatory assemble list.
+ * With editorialDecision, Writer may paraphrase within that grounding boundary.
  */
 function checkTitleAuthority(
   plan: ArticlePlan,
@@ -271,7 +290,18 @@ function checkTitleAuthority(
     });
   }
 
-  const allowed = [...plan.title.facts, plan.productTitle ?? ""].map((f) => f.trim()).filter(Boolean);
+  const ed = (plan as { editorialDecision?: { supportingEvidenceRefs?: string[]; angle?: string } })
+    .editorialDecision;
+  const bodyFacts = plan.body.flatMap((b) => b.facts);
+  const allowed = [
+    ...plan.title.facts,
+    ...bodyFacts,
+    plan.productTitle ?? "",
+    ...(ed?.supportingEvidenceRefs ?? []),
+    ed?.angle ?? "",
+  ]
+    .map((f) => f.trim())
+    .filter(Boolean);
   const allowedBlob = allowed.join("");
   const runs = title.match(/[\u4e00-\u9fffァ-ヶーA-Za-z0-9]{2,}/gu) ?? [];
   for (const run of runs) {
@@ -283,7 +313,28 @@ function checkTitleAuthority(
     if (!backed) {
       findings.push({
         code: "PLAN_TITLE_INVENT",
-        message: `title contains material absent from title.facts: ${run}`,
+        message: `title contains material absent from plan grounding: ${run}`,
+        severity: "BLOCKING",
+        slot: "title",
+      });
+    }
+  }
+
+  // Editorial headline quality — only when production title authority is editorial_headline.
+  const titleIsEditorialHeadline =
+    plan.title.job === "editorial_headline" ||
+    Boolean(ed?.angle);
+  if (titleIsEditorialHeadline) {
+    const defects = classifyArticleHeadlineDefects({
+      title,
+      productTitle: plan.productTitle,
+      titleFacts: plan.title.facts,
+      editorialAngle: ed?.angle ?? null,
+    });
+    for (const d of defects) {
+      findings.push({
+        code: "PLAN_TITLE_EDITORIAL_QUALITY",
+        message: `title editorial defect ${d}: ${title.slice(0, 80)}`,
         severity: "BLOCKING",
         slot: "title",
       });
@@ -803,6 +854,7 @@ const ARTICLE_PLAN_STRUCTURAL_CODES = new Set([
   "PLAN_UNSUPPORTED_EVAL",
   "PLAN_TITLE_INVENT",
   "PLAN_TITLE_SURFACE",
+  "PLAN_TITLE_EDITORIAL_QUALITY",
 ]);
 
 export function routeArticlePlanFailure(input: {

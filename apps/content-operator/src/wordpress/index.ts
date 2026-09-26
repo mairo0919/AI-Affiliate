@@ -36,10 +36,13 @@ export type {
 } from "./evidence-taxonomy.js";
 export {
   buildDeterministicPublicationMetadata,
+  buildDeterministicTitle,
+  resolveCanonicalArticleTitle,
   generatePublicationMetadata,
   evaluatePublicationMetadataQuality,
   evidenceFromStructuredContent,
   filterMeaningfulTags,
+  isGenericCidGuideTitle,
   selectTitleAxis,
 } from "./publication-metadata.js";
 export type {

@@ -242,6 +242,17 @@ export {
 } from "./article-plan.js";
 export type { ArticlePlan, ArticlePlanSlot, ArticlePlanMaterialDepth } from "./article-plan.js";
 export {
+  classifyArticleHeadlineDefects,
+  decideTitleRewriteAction,
+  isLowValueArticleHeadline,
+  buildDeterministicEditorialDecisionFallback,
+  parseEditorialDecisionJson,
+} from "./article-editorial-decision.js";
+export type {
+  ArticleEditorialDecision,
+  ArticleHeadlineDefectCode,
+} from "./article-editorial-decision.js";
+export {
   resolveArticlePurpose,
   resolveCoreAngle,
   composeTitleFacts,

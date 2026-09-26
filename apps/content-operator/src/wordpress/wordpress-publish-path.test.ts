@@ -42,7 +42,7 @@ function mockPrisma(status: string) {
       findUnique: vi.fn(async () => ({
         id: "cv1",
         contentId: "c1",
-        title: "t",
+        title: "テスト記事タイトル",
         summary: "s",
         body: "plain",
         status,
@@ -76,7 +76,7 @@ function mockLifecycle() {
     findContentVersion: vi.fn(async (id: string) => ({
       id,
       contentId: "c1",
-      title: "t",
+      title: "テスト記事タイトル",
       structuredContent: sampleStructured,
     })),
     findContent: vi.fn(async () => ({ id: "c1", topicCandidateId: null })),
@@ -245,7 +245,7 @@ describe("publishContentVersionToWordPress idempotency", () => {
         findUnique: vi.fn(async () => ({
           id: "cv1",
           contentId: "c1",
-          title: "t",
+          title: "テスト記事タイトル",
           summary: "s",
           body: "plain",
           status: "APPROVED",
@@ -286,7 +286,7 @@ describe("publishContentVersionToWordPress idempotency", () => {
       findContentVersion: vi.fn(async () => ({
         id: "cv1",
         contentId: "c1",
-        title: "t",
+        title: "テスト記事タイトル",
         structuredContent: sampleStructured,
       })),
       findContent: vi.fn(async () => ({ id: "c1", topicCandidateId: null })),
@@ -342,7 +342,7 @@ describe("publishContentVersionToWordPress idempotency", () => {
           return {
             id: where.id,
             contentId: "c",
-            title: "t",
+            title: "テスト記事タイトル",
             summary: "s",
             body: "b",
             status: "APPROVED",
@@ -366,7 +366,7 @@ describe("publishContentVersionToWordPress idempotency", () => {
       findContentVersion: vi.fn(async (id: string) => ({
         id,
         contentId: "c",
-        title: "t",
+        title: "テスト記事タイトル",
         structuredContent: sampleStructured,
       })),
       findContent: vi.fn(async () => ({ id: "c", topicCandidateId: null })),
