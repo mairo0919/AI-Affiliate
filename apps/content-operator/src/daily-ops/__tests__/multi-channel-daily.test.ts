@@ -90,12 +90,25 @@ describe("multi-channel daily (LLM=0)", () => {
     expect(blockedX.blocked).toBe(false);
   });
 
-  it("X route does not force BLOG_TRAFFIC merely because blog exists", () => {
+  it("X auto route prefers BLOG_TRAFFIC when blog exists (DIRECT off by default)", () => {
     const d = chooseXPostRoute({
       affiliateUrl: "https://al.fanza.co.jp/?af_id=1",
       publishedBlogUrl: "https://blog.example/p/1",
       recentRoutes: ["BLOG_TRAFFIC", "BLOG_TRAFFIC", "BLOG_TRAFFIC"],
       affiliateLinkReady: true,
+      allowDirectAffiliate: false,
+      allowCombined: false,
+    });
+    expect(d.route).toBe("BLOG_TRAFFIC");
+  });
+
+  it("X can still choose DIRECT when allowDirectAffiliate is enabled", () => {
+    const d = chooseXPostRoute({
+      affiliateUrl: "https://al.fanza.co.jp/?af_id=1",
+      publishedBlogUrl: null,
+      affiliateLinkReady: true,
+      allowDirectAffiliate: true,
+      preferredRoute: "DIRECT_AFFILIATE",
     });
     expect(d.route).toBe("DIRECT_AFFILIATE");
   });
@@ -180,7 +193,7 @@ describe("multi-channel daily (LLM=0)", () => {
     expect(plan.blogMixSlot).toBe("OLDER_TITLE");
     expect(plan.blog.selection.selected?.canonicalId).toBe("old1");
     expect(plan.x.selection.selected).not.toBeNull();
-    expect(plan.x.route?.route).toMatch(/DIRECT_AFFILIATE|BLOG_TRAFFIC/);
+    expect(plan.x.route?.route).toBe("BLOG_TRAFFIC");
     // Soft: prefer different product than Blog
     expect(plan.x.sameProductAsBlog).toBe(false);
   });
@@ -231,12 +244,44 @@ describe("multi-channel daily (LLM=0)", () => {
   it("targets come from config (not scattered magic 1)", () => {
     const cfg = loadDailyMultiChannelConfig({
       DAILY_BLOG_ARTICLES: "1",
-      DAILY_X_POSTS: "1",
+      DAILY_X_POSTS: "2",
+      X_POST_SLOTS_JST: "15,21",
     });
-    expect(minimumDailyPublications(cfg)).toBe(2);
+    expect(minimumDailyPublications(cfg)).toBe(3);
     expect(cfg.blogArticlesPerDay).toBe(1);
-    expect(cfg.xPostsPerDay).toBe(1);
+    expect(cfg.xPostsPerDay).toBe(2);
+    expect(cfg.xPostSlotHoursJst).toEqual([15, 21]);
+    expect(cfg.xMainPostSlotHourJst).toBe(23);
     expect(cfg.mixWeights.singleProduct).toBeGreaterThan(0);
+  });
+
+  it("allows DAILY_BLOG_ARTICLES=0 for X-only daily-ops", () => {
+    const cfg = loadDailyMultiChannelConfig({
+      DAILY_BLOG_ARTICLES: "0",
+      DAILY_X_POSTS: "2",
+      X_POST_SLOTS_JST: "15,21",
+      BLOG_DAILY_ARTICLES_PER_RUN: "1",
+    });
+    expect(cfg.blogArticlesPerDay).toBe(0);
+    expect(cfg.xPostsPerDay).toBe(2);
+    expect(cfg.xExtraPostsBudget).toBe(0);
+    expect(cfg.xHardCapPerDay).toBe(2);
+    expect(minimumDailyPublications(cfg)).toBe(2);
+  });
+
+  it("EXTRA day budget is separate from DAILY_X_POSTS", () => {
+    const cfg = loadDailyMultiChannelConfig({
+      DAILY_BLOG_ARTICLES: "0",
+      DAILY_X_POSTS: "2",
+      X_POST_SLOTS_JST: "15,21",
+      X_POST_EXTRA_SLOTS_DAY_JST: "2026-09-15",
+      X_POST_EXTRA_SLOTS_TIMES_JST: "00:15,00:30",
+      X_POST_HARD_CAP_PER_DAY: "4",
+    });
+    expect(cfg.xPostsPerDay).toBe(2);
+    expect(cfg.xExtraPostsBudget).toBe(2);
+    expect(cfg.xHardCapPerDay).toBe(4);
+    expect(cfg.xPostExtraSlotsDayJst).toBe("2026-09-15");
   });
 
   it("dry orchestrator uses 0 LLM / 0 publish calls", () => {
@@ -249,12 +294,16 @@ describe("multi-channel daily (LLM=0)", () => {
         { slot: "NEW_RELEASE", at: "x" },
         { slot: "NEW_RELEASE", at: "y" },
       ],
+      config: loadDailyMultiChannelConfig({
+        DAILY_BLOG_ARTICLES: "1",
+        DAILY_X_POSTS: "2",
+      }),
     });
     expect(result.llmCalls).toBe(0);
     expect(result.wordpressPublishCalls).toBe(0);
     expect(result.bloggerPublishCalls).toBe(0);
     expect(result.xPublishCalls).toBe(0);
-    expect(result.targets.minimumTotal).toBe(2);
+    expect(result.targets.minimumTotal).toBe(3);
     expect(result.biasAudit.newnessBiasCorrected).toBe(true);
   });
 });

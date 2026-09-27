@@ -32,17 +32,18 @@ function atJst(day: string, hour: number, minute = 0): Date {
 describe("x-post-schedule", () => {
   const slots = buildXPostSlotsForDay({ dayKey: "2026-09-14" });
 
-  it("defaults to 15 and 21 JST with 21 as MAIN", () => {
+  it("defaults to 12, 18, and 23 JST with 23 as MAIN", () => {
     expect(slots.map((s) => ({ hour: s.hour, role: s.role }))).toEqual([
-      { hour: 15, role: "SECONDARY" },
-      { hour: 21, role: "MAIN" },
+      { hour: 12, role: "SECONDARY" },
+      { hour: 18, role: "SECONDARY" },
+      { hour: 23, role: "MAIN" },
     ]);
-    expect(slots[1]?.slotKey).toBe("2026-09-14T21:00:00+09:00");
+    expect(slots[2]?.slotKey).toBe("2026-09-14T23:00:00+09:00");
   });
 
   it("parses X_POST_SLOTS_JST", () => {
-    expect(parseXPostSlotHoursJst("15,21")).toEqual([15, 21]);
-    expect(parseXPostSlotHoursJst(undefined)).toEqual([15, 21]);
+    expect(parseXPostSlotHoursJst("12,18,23")).toEqual([12, 18, 23]);
+    expect(parseXPostSlotHoursJst(undefined)).toEqual([12, 18, 23]);
   });
 
   it("JST slot → UTC is fixed (not OS timezone)", () => {
@@ -52,30 +53,45 @@ describe("x-post-schedule", () => {
     expect(atJst("2026-09-14", 21).toISOString()).toBe("2026-09-14T12:00:00.000Z");
   });
 
-  it("sole PASS reserves 15:00 and leaves 21:00 open", () => {
+  it("1 PASS reserves only the earliest slot", () => {
     const plan = allocateXPostSlots({
       slots,
       candidates: [pass("only-one"), fail("thin", "SOCIAL_CONTENT_TOO_THIN")],
-      maxPostsPerDay: 2,
+      maxPostsPerDay: 3,
     });
-    expect(plan.find((p) => p.hour === 15)?.status).toBe("ASSIGNED");
-    expect(plan.find((p) => p.hour === 15)?.role).toBe("SECONDARY");
-    expect(plan.find((p) => p.hour === 15)?.candidate?.canonicalId).toBe("only-one");
-    expect(plan.find((p) => p.hour === 21)?.status).toBe("EMPTY");
-    expect(plan.find((p) => p.hour === 21)?.reason).toBe("no_pass_for_main");
+    expect(plan.find((p) => p.hour === 12)?.status).toBe("ASSIGNED");
+    expect(plan.find((p) => p.hour === 12)?.role).toBe("SECONDARY");
+    expect(plan.find((p) => p.hour === 12)?.candidate?.canonicalId).toBe("only-one");
+    expect(plan.find((p) => p.hour === 18)?.status).toBe("EMPTY");
+    expect(plan.find((p) => p.hour === 23)?.status).toBe("EMPTY");
+    expect(plan.filter((p) => p.status === "ASSIGNED")).toHaveLength(1);
   });
 
-  it("DAILY_X_POSTS=2 assigns 15:00 SECONDARY and 21:00 MAIN", () => {
+  it("2 PASS reserves the two earliest future slots", () => {
     const plan = allocateXPostSlots({
       slots,
-      candidates: [pass("best", 0), pass("second", 1), pass("third", 2)],
-      maxPostsPerDay: 2,
+      candidates: [pass("a", 0), pass("b", 1)],
+      maxPostsPerDay: 3,
     });
-    expect(plan.find((p) => p.hour === 15)?.role).toBe("SECONDARY");
-    expect(plan.find((p) => p.hour === 15)?.candidate?.canonicalId).toBe("best");
-    expect(plan.find((p) => p.hour === 21)?.role).toBe("MAIN");
-    expect(plan.find((p) => p.hour === 21)?.candidate?.canonicalId).toBe("second");
+    expect(plan.find((p) => p.hour === 12)?.candidate?.canonicalId).toBe("a");
+    expect(plan.find((p) => p.hour === 18)?.candidate?.canonicalId).toBe("b");
+    expect(plan.find((p) => p.hour === 23)?.status).toBe("EMPTY");
     expect(plan.filter((p) => p.status === "ASSIGNED")).toHaveLength(2);
+  });
+
+  it("DAILY_X_POSTS=3 assigns 12:00, 18:00, and 23:00", () => {
+    const plan = allocateXPostSlots({
+      slots,
+      candidates: [pass("a", 0), pass("b", 1), pass("c", 2), fail("thin", "SOCIAL_CONTENT_TOO_THIN")],
+      maxPostsPerDay: 3,
+    });
+    expect(plan.find((p) => p.hour === 12)?.role).toBe("SECONDARY");
+    expect(plan.find((p) => p.hour === 12)?.candidate?.canonicalId).toBe("a");
+    expect(plan.find((p) => p.hour === 18)?.role).toBe("SECONDARY");
+    expect(plan.find((p) => p.hour === 18)?.candidate?.canonicalId).toBe("b");
+    expect(plan.find((p) => p.hour === 23)?.role).toBe("MAIN");
+    expect(plan.find((p) => p.hour === 23)?.candidate?.canonicalId).toBe("c");
+    expect(plan.filter((p) => p.status === "ASSIGNED")).toHaveLength(3);
   });
 
   it("never assigns non-PASS (SOCIAL_CONTENT_TOO_THIN / WP_NOT_PUBLIC)", () => {
@@ -85,10 +101,10 @@ describe("x-post-schedule", () => {
         fail("a", "SOCIAL_CONTENT_TOO_THIN"),
         fail("b", "WP_NOT_PUBLIC"),
       ],
-      maxPostsPerDay: 2,
+      maxPostsPerDay: 3,
     });
     expect(plan.every((p) => p.status === "EMPTY")).toBe(true);
-    expect(plan.find((p) => p.hour === 21)?.reason).toBe("no_pass_candidates");
+    expect(plan.find((p) => p.hour === 23)?.reason).toBe("no_pass_candidates");
   });
 
   it("dedupes same CID and ContentVersion", () => {
@@ -107,20 +123,20 @@ describe("x-post-schedule", () => {
       candidates: [pass("a"), pass("b")],
       maxPostsPerDay: 1,
     });
-    expect(plan.find((p) => p.hour === 15)?.candidate?.canonicalId).toBe("a");
-    expect(plan.find((p) => p.hour === 21)?.status).toBe("EMPTY");
-    expect(plan.find((p) => p.hour === 21)?.reason).toBe("daily_max_reached");
+    expect(plan.find((p) => p.hour === 12)?.candidate?.canonicalId).toBe("a");
+    expect(plan.find((p) => p.hour === 18)?.status).toBe("EMPTY");
+    expect(plan.find((p) => p.hour === 18)?.reason).toBe("daily_max_reached");
   });
 
-  it("when MAIN already filled, secondary may use remaining PASS", () => {
+  it("when MAIN already filled, the earliest open slot may use the remaining PASS", () => {
     const plan = allocateXPostSlots({
       slots,
       candidates: [pass("afternoon")],
-      maxPostsPerDay: 2,
-      filledHours: [21],
+      maxPostsPerDay: 3,
+      filledHours: [23],
     });
-    expect(plan.find((p) => p.hour === 21)?.status).toBe("SKIP_SLOT");
-    expect(plan.find((p) => p.hour === 15)?.candidate?.canonicalId).toBe("afternoon");
+    expect(plan.find((p) => p.hour === 23)?.status).toBe("SKIP_SLOT");
+    expect(plan.find((p) => p.hour === 12)?.candidate?.canonicalId).toBe("afternoon");
   });
 
   it("mayConsumeCandidateForSlot allows 15:00 to take the sole PASS", () => {
@@ -141,15 +157,15 @@ describe("x-post-schedule", () => {
   });
 
   it("chooseOpenXSlotForTick never returns past slots (no late catch-up)", () => {
-    const now = atJst("2026-09-14", 22, 0);
+    const now = atJst("2026-09-14", 23, 30);
     const pick = chooseOpenXSlotForTick({ slots, now, filledHours: [] });
     expect(pick).toBeNull();
   });
 
-  it("chooseOpenXSlotForTick returns next future slot before 15:00", () => {
-    const now = atJst("2026-09-14", 14, 0);
+  it("chooseOpenXSlotForTick returns the next future slot before 12:00", () => {
+    const now = atJst("2026-09-14", 11, 0);
     const pick = chooseOpenXSlotForTick({ slots, now, filledHours: [] });
-    expect(pick?.hour).toBe(15);
+    expect(pick?.hour).toBe(12);
   });
 });
 
@@ -157,87 +173,86 @@ describe("x-post-schedule boundary cases (JST)", () => {
   const day = "2026-09-14";
   const next = "2026-09-15";
 
-  it("CASE 1: 14:00 + 2 PASS → today 15:00 and today 21:00", () => {
-    const now = atJst(day, 14, 0);
+  it("CASE 1: 11:00 + 3 PASS → today 12:00, 18:00, and 23:00", () => {
+    const now = atJst(day, 11, 0);
     const plan = planXPostScheduleHorizon({
       now,
-      candidates: [pass("a", 0), pass("b", 1)],
-      maxPostsPerDay: 2,
+      candidates: [pass("a", 0), pass("b", 1), pass("c", 2)],
+      maxPostsPerDay: 3,
       dayCount: 2,
     });
     const todayAssigned = plan.filter((p) => p.status === "ASSIGNED" && p.dayKey === day);
-    expect(todayAssigned).toHaveLength(2);
-    expect(todayAssigned.find((a) => a.hour === 15)?.candidate?.canonicalId).toBe("a");
-    expect(todayAssigned.find((a) => a.hour === 21)?.candidate?.canonicalId).toBe("b");
+    expect(todayAssigned).toHaveLength(3);
+    expect(todayAssigned.find((a) => a.hour === 12)?.candidate?.canonicalId).toBe("a");
+    expect(todayAssigned.find((a) => a.hour === 18)?.candidate?.canonicalId).toBe("b");
+    expect(todayAssigned.find((a) => a.hour === 23)?.candidate?.canonicalId).toBe("c");
     expect(todayAssigned.every((a) => isFutureXSlotInstant(a.scheduledAt, now))).toBe(true);
     expect(todayAssigned.every((a) => a.scheduledAt.getTime() > now.getTime())).toBe(true);
   });
 
-  it("CASE 2: 14:00 + 1 PASS → reserve today 15:00, leave 21:00 open", () => {
-    const now = atJst(day, 14, 0);
+  it("CASE 2: 11:00 + 1 PASS → reserve today 12:00 only", () => {
+    const now = atJst(day, 11, 0);
     const plan = planXPostScheduleHorizon({
       now,
       candidates: [pass("only")],
-      maxPostsPerDay: 2,
+      maxPostsPerDay: 3,
       dayCount: 2,
     });
     const assigned = plan.filter((p) => p.status === "ASSIGNED");
     expect(assigned).toHaveLength(1);
-    expect(assigned[0]?.hour).toBe(15);
+    expect(assigned[0]?.hour).toBe(12);
     expect(assigned[0]?.role).toBe("SECONDARY");
     expect(assigned[0]?.dayKey).toBe(day);
     expect(assigned[0]?.candidate?.canonicalId).toBe("only");
-    const main = plan.find((p) => p.dayKey === day && p.hour === 21);
-    expect(main?.status).toBe("EMPTY");
-    expect(main?.reason).toBe("no_pass_for_main");
+    expect(plan.find((p) => p.dayKey === day && p.hour === 18)?.status).toBe("EMPTY");
+    expect(plan.find((p) => p.dayKey === day && p.hour === 23)?.status).toBe("EMPTY");
     expect(plan.some((p) => p.dayKey === next && p.status === "ASSIGNED")).toBe(false);
   });
 
-  it("CASE 3: 16:00 + 2 PASS → skip past 15:00; today 21:00; rest tomorrow; no immediate", () => {
-    const now = atJst(day, 16, 0);
+  it("CASE 3: 13:00 + 2 PASS → skip past 12:00; today 18:00 and 23:00", () => {
+    const now = atJst(day, 13, 0);
     const upcoming = listUpcomingXPostSlots({ now, dayCount: 2 });
-    expect(upcoming.some((s) => s.slotKey.startsWith(`${day}T15:`))).toBe(false);
-    expect(upcoming.some((s) => s.slotKey.startsWith(`${day}T21:`))).toBe(true);
+    expect(upcoming.some((s) => s.slotKey.startsWith(`${day}T12:`))).toBe(false);
+    expect(upcoming.some((s) => s.slotKey.startsWith(`${day}T18:`))).toBe(true);
+    expect(upcoming.some((s) => s.slotKey.startsWith(`${day}T23:`))).toBe(true);
 
     const plan = planXPostScheduleHorizon({
       now,
       candidates: [pass("a", 0), pass("b", 1)],
-      maxPostsPerDay: 2,
+      maxPostsPerDay: 3,
       dayCount: 2,
     });
     const assigned = plan.filter((p) => p.status === "ASSIGNED");
-    expect(assigned.some((a) => a.dayKey === day && a.hour === 15)).toBe(false);
-    expect(assigned.find((a) => a.dayKey === day && a.hour === 21)?.candidate?.canonicalId).toBe(
+    expect(assigned.some((a) => a.dayKey === day && a.hour === 12)).toBe(false);
+    expect(assigned.find((a) => a.dayKey === day && a.hour === 18)?.candidate?.canonicalId).toBe(
       "a",
     );
-    // remainder → next day earliest open slot (15:00), not held for 21:00
-    expect(assigned.find((a) => a.dayKey === next && a.hour === 15)?.candidate?.canonicalId).toBe(
+    expect(assigned.find((a) => a.dayKey === day && a.hour === 23)?.candidate?.canonicalId).toBe(
       "b",
     );
-    expect(plan.find((a) => a.dayKey === next && a.hour === 21)?.status).toBe("EMPTY");
     expect(assigned.every((a) => a.scheduledAt.getTime() > now.getTime())).toBe(true);
-    // 16:00 is not a publish instant
-    expect(assigned.every((a) => a.hour === 15 || a.hour === 21)).toBe(true);
+    expect(assigned.every((a) => a.hour === 18 || a.hour === 23)).toBe(true);
   });
 
-  it("CASE 4: 20:00 + PASS → today 21:00 only; no immediate at 20:00", () => {
-    const now = atJst(day, 20, 0);
+  it("CASE 4: 19:00 + PASS → today 23:00 only; no immediate at 19:00", () => {
+    const now = atJst(day, 19, 0);
     const plan = planXPostScheduleHorizon({
       now,
       candidates: [pass("main-cand"), pass("extra")],
-      maxPostsPerDay: 2,
+      maxPostsPerDay: 3,
       dayCount: 2,
     });
     const assigned = plan.filter((p) => p.status === "ASSIGNED");
-    expect(assigned.find((a) => a.dayKey === day && a.hour === 21)?.candidate?.canonicalId).toBe(
+    expect(assigned.find((a) => a.dayKey === day && a.hour === 23)?.candidate?.canonicalId).toBe(
       "main-cand",
     );
+    expect(assigned.some((a) => a.dayKey === day && (a.hour === 12 || a.hour === 18))).toBe(false);
     expect(assigned.every((a) => a.scheduledAt.getTime() > now.getTime())).toBe(true);
     expect(assigned.every((a) => a.scheduledAt.getTime() !== now.getTime())).toBe(true);
   });
 
-  it("CASE 5: 22:00 + PASS → no today slots; roll to tomorrow; sole PASS → tomorrow 15:00", () => {
-    const now = atJst(day, 22, 0);
+  it("CASE 5: 23:30 + PASS → no today slots; sole PASS → tomorrow 12:00", () => {
+    const now = atJst(day, 23, 30);
     expect(tokyoDayKeyOf(now)).toBe(day);
     const upcoming = listUpcomingXPostSlots({ now, dayCount: 2 });
     expect(upcoming.every((s) => !s.slotKey.startsWith(day))).toBe(true);
@@ -245,29 +260,29 @@ describe("x-post-schedule boundary cases (JST)", () => {
     const planOne = planXPostScheduleHorizon({
       now,
       candidates: [pass("only")],
-      maxPostsPerDay: 2,
+      maxPostsPerDay: 3,
       dayCount: 2,
     });
     const one = planOne.filter((p) => p.status === "ASSIGNED");
     expect(one).toHaveLength(1);
     expect(one[0]?.dayKey).toBe(next);
-    expect(one[0]?.hour).toBe(15);
+    expect(one[0]?.hour).toBe(12);
     expect(one[0]?.candidate?.canonicalId).toBe("only");
 
     const planTwo = planXPostScheduleHorizon({
       now,
       candidates: [pass("a", 0), pass("b", 1)],
-      maxPostsPerDay: 2,
+      maxPostsPerDay: 3,
       dayCount: 2,
     });
     const two = planTwo.filter((p) => p.status === "ASSIGNED");
-    expect(two.find((a) => a.dayKey === next && a.hour === 15)?.candidate?.canonicalId).toBe("a");
-    expect(two.find((a) => a.dayKey === next && a.hour === 21)?.candidate?.canonicalId).toBe("b");
+    expect(two.find((a) => a.dayKey === next && a.hour === 12)?.candidate?.canonicalId).toBe("a");
+    expect(two.find((a) => a.dayKey === next && a.hour === 18)?.candidate?.canonicalId).toBe("b");
     expect(two.every((a) => a.scheduledAt.getTime() > now.getTime())).toBe(true);
   });
 
-  it("duplicate: same CID never on both 15 and 21", () => {
-    const now = atJst(day, 14, 0);
+  it("duplicate: same CID is reserved only once", () => {
+    const now = atJst(day, 11, 0);
     const plan = planXPostScheduleHorizon({
       now,
       candidates: [pass("same", 0, "cv-same"), pass("same", 1, "cv-other")],
@@ -276,7 +291,7 @@ describe("x-post-schedule boundary cases (JST)", () => {
     });
     const assigned = plan.filter((p) => p.status === "ASSIGNED");
     expect(assigned).toHaveLength(1);
-    expect(assigned[0]?.hour).toBe(15);
+    expect(assigned[0]?.hour).toBe(12);
   });
 
   it("duplicate: usedCanonicalIds / usedContentVersionIds block re-reserve", () => {
@@ -294,29 +309,30 @@ describe("x-post-schedule boundary cases (JST)", () => {
   });
 
   it("filledSlotKeys prevent re-booking SCHEDULED slots", () => {
-    const now = atJst(day, 14, 0);
+    const now = atJst(day, 11, 0);
     const plan = planXPostScheduleHorizon({
       now,
       candidates: [pass("a"), pass("b")],
-      maxPostsPerDay: 2,
-      filledSlotKeys: new Set([`${day}T21:00:00+09:00`]),
+      maxPostsPerDay: 3,
+      filledSlotKeys: new Set([`${day}T23:00:00+09:00`]),
       dayCount: 1,
     });
     const assigned = plan.filter((p) => p.status === "ASSIGNED");
-    expect(assigned.every((a) => a.hour !== 21)).toBe(true);
-    expect(assigned.find((a) => a.hour === 15)?.candidate?.canonicalId).toBe("a");
+    expect(assigned.every((a) => a.hour !== 23)).toBe(true);
+    expect(assigned.find((a) => a.hour === 12)?.candidate?.canonicalId).toBe("a");
+    expect(assigned.find((a) => a.hour === 18)?.candidate?.canonicalId).toBe("b");
   });
 
-  it("daily max 2 never exceeded across assigned slots for a day", () => {
-    const now = atJst(day, 14, 0);
+  it("daily max 3 never exceeded across assigned slots for a day", () => {
+    const now = atJst(day, 11, 0);
     const plan = planXPostScheduleHorizon({
       now,
       candidates: [pass("a"), pass("b"), pass("c"), pass("d")],
-      maxPostsPerDay: 2,
+      maxPostsPerDay: 3,
       dayCount: 1,
     });
     const todayAssigned = plan.filter((p) => p.status === "ASSIGNED" && p.dayKey === day);
-    expect(todayAssigned).toHaveLength(2);
+    expect(todayAssigned).toHaveLength(3);
   });
 
   it("parses extra HH:MM times", () => {
@@ -346,8 +362,9 @@ describe("x-post-schedule boundary cases (JST)", () => {
     expect(today.every((s) => s.kind === "EXTRA")).toBe(true);
     expect(today.at(-1)?.role).toBe("MAIN");
     expect(tomorrow.map((s) => ({ hour: s.hour, role: s.role, kind: s.kind }))).toEqual([
-      { hour: 15, role: "SECONDARY", kind: "STANDARD" },
-      { hour: 21, role: "MAIN", kind: "STANDARD" },
+      { hour: 12, role: "SECONDARY", kind: "STANDARD" },
+      { hour: 18, role: "SECONDARY", kind: "STANDARD" },
+      { hour: 23, role: "MAIN", kind: "STANDARD" },
     ]);
   });
 
@@ -392,8 +409,8 @@ describe("x-post-schedule boundary cases (JST)", () => {
     expect(assigned).toHaveLength(4);
     expect(assigned.filter((a) => a.kind === "EXTRA")).toHaveLength(2);
     expect(assigned.filter((a) => a.kind === "STANDARD")).toHaveLength(2);
-    expect(assigned.some((a) => a.slotKey.includes("T15:00:00"))).toBe(true);
-    expect(assigned.some((a) => a.slotKey.includes("T21:00:00"))).toBe(true);
+    expect(assigned.some((a) => a.slotKey.includes("T12:00:00"))).toBe(true);
+    expect(assigned.some((a) => a.slotKey.includes("T18:00:00"))).toBe(true);
     expect(new Set(assigned.map((a) => a.candidate?.canonicalId)).size).toBe(4);
   });
 
@@ -419,6 +436,6 @@ describe("x-post-schedule boundary cases (JST)", () => {
     const assigned = plan.filter((p) => p.status === "ASSIGNED");
     expect(assigned).toHaveLength(2);
     expect(assigned.every((a) => a.kind === "STANDARD")).toBe(true);
-    expect(assigned.map((a) => a.hour).sort((x, y) => x - y)).toEqual([15, 21]);
+    expect(assigned.map((a) => a.hour).sort((x, y) => x - y)).toEqual([12, 18]);
   });
 });

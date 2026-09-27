@@ -575,7 +575,7 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
       : plan.blog.selection.reason || "no_blog_selection";
   }
 
-  // ——— X (fixed JST slots: MAIN 21:00 + SECONDARY ~15:00; WP_TRAFFIC only) ———
+  // ——— X (fixed JST slots: 12:00 / 18:00 SECONDARY + 23:00 MAIN; WP_TRAFFIC only) ———
   if (xNeeded > 0 || deps.forceSmoke) {
     x.attempted = true;
     x.route = "BLOG_TRAFFIC";

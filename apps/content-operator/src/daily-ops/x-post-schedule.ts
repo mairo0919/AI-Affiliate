@@ -1,17 +1,17 @@
 /**
  * Fixed X posting schedule (JST):
- * - Regular: max DAILY_X_POSTS (default 2) — SECONDARY 15:00 + MAIN 21:00
+ * - Regular: max DAILY_X_POSTS (default 3) — 12:00 / 18:00 SECONDARY + 23:00 MAIN
  * - Optional date-scoped EXTRA HH:MM slots with a separate quota
  * - Hard cap = regular + extra (default 4 when extras present)
- * - Fill open future slots in wall-clock order so 15:00 is not skipped to save a PASS for 21:00
+ * - Fill open future slots in wall-clock order (earliest future slot first)
  * - SKIP thin / non-public — never force-post
  * - Past slots are never backfilled
  * - Same CID / ContentVersion must not be assigned twice
  */
 
-export const DEFAULT_X_POST_SLOT_HOURS_JST = [15, 21] as const;
-export const DEFAULT_X_MAIN_POST_SLOT_HOUR_JST = 21;
-export const DEFAULT_X_POSTS_PER_DAY = 2;
+export const DEFAULT_X_POST_SLOT_HOURS_JST = [12, 18, 23] as const;
+export const DEFAULT_X_MAIN_POST_SLOT_HOUR_JST = 23;
+export const DEFAULT_X_POSTS_PER_DAY = 3;
 
 export type XPostSlotRole = "MAIN" | "SECONDARY";
 export type XPostSlotKind = "STANDARD" | "EXTRA";
@@ -208,7 +208,7 @@ function sortPass(candidates: XScheduleCandidate[]): XScheduleCandidate[] {
 
 /**
  * Core allocation:
- * 1. Open slots are filled in wall-clock order (15:00 SECONDARY before 21:00 MAIN)
+ * 1. Open slots are filled in wall-clock order (12:00, then 18:00, then 23:00 MAIN)
  * 2. Each open slot takes the next PASS while its quota remains
  * 3. A sole PASS is reserved on the earliest open slot, not held back for a later MAIN
  * 4. Non-PASS never assigned (SKIP / force-post forbidden)
@@ -370,8 +370,8 @@ export function allocateXPostSlots(input: {
 }
 
 /**
- * A PASS may be reserved on the slot being planned, including 15:00 SECONDARY.
- * Holding the only PASS for a later MAIN is what left same-day 15:00 without a reservation.
+ * A PASS may be reserved on the earliest open future slot.
+ * Holding the only PASS for a later MAIN is what left earlier slots without a reservation.
  */
 export function mayConsumeCandidateForSlot(input: {
   targetRole: XPostSlotRole;
@@ -491,7 +491,7 @@ export type XHorizonAssignment = XSlotAssignment & {
  * Multi-day horizon allocation (boundary-aware):
  * - Never assigns past slots
  * - Never implies immediate backfill
- * - Per Tokyo day: earliest open slot first (15:00 SECONDARY, then 21:00 MAIN)
+ * - Per Tokyo day: earliest open slot first (12:00, 18:00, then 23:00 MAIN)
  * - Sole PASS reserves the earliest open future slot
  * - Leftover PASS rolls to later days' earliest upcoming slots
  */
