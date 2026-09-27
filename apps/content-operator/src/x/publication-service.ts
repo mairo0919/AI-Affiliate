@@ -8,6 +8,7 @@ import type {
   XPublicationStrategyType,
 } from "@ai-affiliate/database";
 import {
+  computeXProductReservationExpiresAt,
   hashNormalizedBody,
   hashProductKey,
 } from "@ai-affiliate/database";
@@ -26,6 +27,8 @@ import {
   buildProductKey,
   extractProviderProductId,
 } from "./ops/product-key.js";
+import { selectXMediaFromArticleImages } from "./x-article-media.js";
+import { composeXThreadPublication } from "./x-thread-publication.js";
 
 export interface XPublicationServiceDeps {
   logger: Logger;
@@ -111,6 +114,8 @@ export class XPublicationService {
   private readonly checkApiBudget?: XPublicationServiceDeps["checkApiBudget"];
   private readonly allowSchedulerLivePublish: boolean;
   private readonly livePublishConfirmed: boolean;
+  /** Cache uploaded media ids across createPost retries within one process. */
+  private readonly mediaIdByUploadKey = new Map<string, string>();
 
   constructor(deps: XPublicationServiceDeps) {
     this.logger = deps.logger;
@@ -201,7 +206,9 @@ export class XPublicationService {
     });
 
     if (this.ops) {
-      await this.ops.expireDueReservations(this.now());
+      await this.ops.expireDueReservations(this.now(), {
+        publishGraceMinutes: this.config.xProductReservationPublishGraceMinutes,
+      });
       await this.ops.upsertProductState({
         productKey,
         provider: "fanza",
@@ -265,6 +272,7 @@ export class XPublicationService {
 
     let bestRelated: PublicationWithPosts | null = null;
     let bestScore = -1;
+    let bestReasons: string[] = [];
     for (const candidate of relatedCandidates) {
       const candidateTags =
         (await this.loadItemTags?.(candidate.researchItemId)) ?? {
@@ -289,10 +297,13 @@ export class XPublicationService {
       if (scored.score > bestScore) {
         bestScore = scored.score;
         bestRelated = candidate;
+        bestReasons = scored.reasons;
       }
     }
 
-    const hasRelated = bestRelated != null && bestScore > 0 && !!bestRelated.rootPostUrl;
+    const hasRelated =
+      bestRelated != null &&
+      this.related.isAttachable(bestReasons, bestRelated.rootPostUrl);
 
     const selection = await this.selector.select({
       hasRelated,
@@ -324,24 +335,86 @@ export class XPublicationService {
             sequence: number;
             role: "ROOT" | "REPLY" | "CTA" | "HUB";
             body: string;
+            replyToSequence?: number;
+            threadRole?: string;
+            relatedPublicationId?: string;
           }>;
           threadShape?: string;
+          publicationStrategy?: string;
+          parentBody?: string;
+          publicationIntent?: {
+            needsArticleReply?: boolean;
+            relatedPostUseful?: boolean;
+            preferredReplyOrder?: string | null;
+          };
+          wpUrl?: string | null;
         }
       | undefined;
 
     let built: GeneratedXPublication;
     if (adapted?.posts && adapted.posts.length > 0) {
-      const posts = adapted.posts.map((post, index) => ({
+      // Recompose navigation replies with live related candidate when available.
+      // Never rewrite parent introduction copy.
+      const parentBody =
+        adapted.parentBody?.trim() ||
+        adapted.posts
+          .find((p) => p.sequence === 1)
+          ?.body.replace(/\s*https?:\/\/\S+/gu, "")
+          .trim() ||
+        "";
+      const intent = adapted.publicationIntent ?? {
+        needsArticleReply: true,
+        relatedPostUseful: hasRelated,
+        preferredReplyOrder: null,
+      };
+      const strategy =
+        adapted.publicationStrategy === "AFFILIATE_THREAD"
+          ? "AFFILIATE_THREAD"
+          : "WP_TRAFFIC_EMBED";
+      const wpUrl =
+        adapted.wpUrl?.trim() ||
+        (typeof content.callToAction === "string" ? content.callToAction : null) ||
+        null;
+      const composed = composeXThreadPublication({
+        strategy,
+        parentBody,
+        wpUrl,
+        fanzaUrl: strategy === "AFFILIATE_THREAD" ? content.affiliateUrl : null,
+        disclosure: this.config.xAffiliateDisclosure,
+        intent: {
+          needsArticleReply: intent.needsArticleReply !== false,
+          relatedPostUseful: intent.relatedPostUseful === true && hasRelated,
+          preferredReplyOrder:
+            (intent.preferredReplyOrder as
+              | "parent_only"
+              | "wp_only"
+              | "related_only"
+              | "wp_then_related"
+              | "related_then_wp"
+              | null) ?? null,
+        },
+        related: hasRelated
+          ? {
+              postUrl: bestRelated!.rootPostUrl!,
+              publicationId: bestRelated!.id,
+              reasons: bestReasons,
+            }
+          : null,
+        navSeed: content.id,
+      });
+      const posts = composed.map((post, index) => ({
         sequence: post.sequence || index + 1,
         role: post.role,
         body: post.body,
-        replyToSequence: index === 0 ? undefined : index,
+        replyToSequence: post.replyToSequence ?? (index === 0 ? undefined : index),
+        relatedPublicationId: post.relatedPublicationId,
       }));
       this.builder.validateStructure(posts);
       for (const post of posts) {
         this.builder.assertPostValid(
           post,
           posts.length > 1 ? "THREAD" : "SINGLE_POST",
+          { requireAffiliateDisclosure: false },
         );
       }
       strategyType = posts.length > 1 ? "THREAD" : "SINGLE_POST";
@@ -396,19 +469,22 @@ export class XPublicationService {
     });
 
     if (this.ops) {
-      const nextEligibleAt = new Date(
-        this.now().getTime() + this.config.xProductCooldownHours * 60 * 60 * 1000,
-      );
-      const expiresAt = new Date(
-        this.now().getTime() + this.config.xProductReservationTtlMinutes * 60 * 1000,
-      );
+      // Formal invariant: expiresAt = max(now+TTL, scheduledAt+publishGrace)
+      // so STANDARD/EXTRA future slots cannot expire before the publish attempt.
+      // Cooldown (nextEligibleAt) is applied on successful publish, not at schedule time.
+      const expiresAt = computeXProductReservationExpiresAt({
+        now: this.now(),
+        scheduledAt,
+        ttlMinutes: this.config.xProductReservationTtlMinutes,
+        publishGraceMinutes: this.config.xProductReservationPublishGraceMinutes,
+      });
       try {
         await this.ops.reserveProduct({
           productKey,
           publicationId: created.id,
           expiresAt,
           scheduledAt,
-          nextEligibleAt,
+          nextEligibleAt: null,
           reason: options.cooldownOverrideReason ?? "publication-create",
         });
       } catch (error) {
@@ -504,6 +580,32 @@ export class XPublicationService {
         publication.contentCandidateId,
       );
 
+      // One-shot live smoke: only the allowlisted CID may publish; others hard-skip.
+      const oneShotCid = this.config.xOneShotLiveSmokeCid?.trim().toLowerCase();
+      if (oneShotCid) {
+        const cid =
+          (typeof externalId === "string" && externalId.trim().toLowerCase()) ||
+          extractProviderProductId({
+            externalId,
+            affiliateUrl: content?.affiliateUrl,
+          })?.toLowerCase() ||
+          "";
+        if (cid !== oneShotCid) {
+          await this.ops?.writeAudit({
+            action: "PUBLISH_SKIPPED",
+            actorType: options?.actorType ?? "SYSTEM",
+            actorId: options?.actorId ?? null,
+            publicationId: publication.id,
+            productKeyHash: hashProductKey(productKey),
+            releaseMode: this.config.xReleaseMode,
+            result: "SKIPPED",
+            reason: "ONESHOT_CID_MISMATCH",
+            metadata: { allowedCid: oneShotCid, actualCid: cid || null },
+          });
+          return publication;
+        }
+      }
+
       // ALLOWLIST: scheduler must not live-post; CLI must pass --live confirmation
       if (
         this.config.xReleaseMode === "ALLOWLIST" &&
@@ -527,7 +629,9 @@ export class XPublicationService {
       }
 
       if (this.ops) {
-        await this.ops.expireDueReservations(this.now());
+        await this.ops.expireDueReservations(this.now(), {
+          publishGraceMinutes: this.config.xProductReservationPublishGraceMinutes,
+        });
       }
 
       if (this.guard && this.ops) {
@@ -695,9 +799,33 @@ export class XPublicationService {
         }
 
         try {
+          let mediaIds: string[] | undefined;
+          // Attach article hero/sample image on ROOT only (reply/thread structure unchanged).
+          if (
+            (post.sequence === 1 || post.role === "ROOT") &&
+            this.provider.uploadMedia
+          ) {
+            const mediaUrl = resolvePublicationMediaUrl(content);
+            if (mediaUrl) {
+              const uploadKey = `${publication.idempotencyKey}:media:${mediaUrl}`;
+              const cachedId = this.mediaIdByUploadKey.get(uploadKey);
+              if (cachedId) {
+                mediaIds = [cachedId];
+              } else {
+                const uploaded = await this.provider.uploadMedia({
+                  sourceUrl: mediaUrl,
+                  idempotencyKey: uploadKey,
+                });
+                this.mediaIdByUploadKey.set(uploadKey, uploaded.mediaId);
+                mediaIds = [uploaded.mediaId];
+              }
+            }
+          }
+
           const result = await this.provider.createPost({
             text: post.body,
             replyToPostId,
+            mediaIds,
             idempotencyKey: `${publication.idempotencyKey}:seq:${post.sequence}`,
           });
           if (result.verified === false) {
@@ -787,6 +915,15 @@ export class XPublicationService {
       if (this.ops) {
         if (finalStatus === "PUBLISHED" || finalStatus === "PUBLISHED_UNVERIFIED") {
           await this.ops.consumeReservation(completed.id);
+          await this.ops.upsertProductState({
+            productKey,
+            provider: "fanza",
+            researchItemId: refreshed.researchItemId,
+            contentCandidateId: refreshed.contentCandidateId,
+            nextEligibleAt: new Date(
+              this.now().getTime() + this.config.xProductCooldownHours * 60 * 60 * 1000,
+            ),
+          });
         } else if (finalStatus === "FAILED") {
           await this.ops.releaseReservation(completed.id, "RELEASED");
         }
@@ -850,7 +987,9 @@ export class XPublicationService {
 
   async runDue(limit = 20): Promise<PublicationWithPosts[]> {
     if (this.ops) {
-      await this.ops.expireDueReservations(this.now());
+      await this.ops.expireDueReservations(this.now(), {
+        publishGraceMinutes: this.config.xProductReservationPublishGraceMinutes,
+      });
     }
     const due = await this.publications.listDueForPublish(this.now(), limit);
     const results: PublicationWithPosts[] = [];
@@ -954,3 +1093,37 @@ export class XPublicationService {
     return scheduled;
   }
 }
+
+function resolvePublicationMediaUrl(
+  content:
+    | {
+        inputSnapshot?: unknown;
+        affiliateUrl?: string | null;
+      }
+    | null
+    | undefined,
+): string | null {
+  if (!content) return null;
+  const snapshot =
+    content.inputSnapshot && typeof content.inputSnapshot === "object"
+      ? (content.inputSnapshot as Record<string, unknown>)
+      : {};
+  const adapted = snapshot.xSocialAdaptation as
+    | { mediaUrl?: string | null; mediaMode?: string }
+    | undefined;
+  if (
+    adapted?.mediaMode === "SAFE_IMAGE" &&
+    typeof adapted.mediaUrl === "string" &&
+    adapted.mediaUrl.trim()
+  ) {
+    return adapted.mediaUrl.trim();
+  }
+  if (typeof adapted?.mediaUrl === "string" && adapted.mediaUrl.trim()) {
+    return adapted.mediaUrl.trim();
+  }
+  const images = snapshot.articleImages ?? snapshot.images;
+  const pick = selectXMediaFromArticleImages({ articleImages: images });
+  if (pick.decision === "SAFE_IMAGE" && pick.selectedUrl) return pick.selectedUrl;
+  return null;
+}
+

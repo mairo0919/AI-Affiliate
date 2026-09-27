@@ -46,6 +46,21 @@ export interface XPrePublishGuardDeps {
   now?: () => Date;
 }
 
+/**
+ * Disclosure is required on the publication unit (parent + replies), not on the parent alone.
+ * Returns true when a configured disclosure is absent from every post.
+ */
+export function publicationUnitDisclosureMissing(input: {
+  disclosure: string | null | undefined;
+  bodies: string[];
+}): boolean {
+  const disclosure = input.disclosure?.trim() ?? "";
+  if (!disclosure || input.bodies.length === 0) return false;
+  const unitText = input.bodies.join("\n");
+  if (unitText.includes(disclosure)) return false;
+  return !/アフィリエイト|広告|#PR/i.test(unitText);
+}
+
 export class XPrePublishGuard {
   private readonly now: () => Date;
   private readonly counter: XCharacterCounter;
@@ -86,21 +101,26 @@ export class XPrePublishGuard {
           blocking: true,
         });
       }
-      for (const post of ctx.publication.posts) {
-        if (!post.body.includes(content.affiliateUrl)) {
-          issues.push({
-            code: "AFFILIATE_URL_MISMATCH",
-            message: "affiliateUrl missing or changed in post body",
-            blocking: true,
-          });
-          break;
-        }
+      const affiliateUrl = content.affiliateUrl?.trim() ?? "";
+      if (
+        affiliateUrl &&
+        !ctx.publication.posts.some((post) => post.body.includes(affiliateUrl))
+      ) {
+        issues.push({
+          code: "AFFILIATE_URL_MISMATCH",
+          message: "affiliateUrl missing from publication unit",
+          blocking: true,
+        });
       }
     }
 
     const disclosure = this.deps.config.xAffiliateDisclosure;
-    const root = ctx.publication.posts.find((p) => p.sequence === 1);
-    if (root && disclosure && !root.body.includes(disclosure) && !/アフィリエイト|広告|#PR/i.test(root.body)) {
+    if (
+      publicationUnitDisclosureMissing({
+        disclosure,
+        bodies: ctx.publication.posts.map((post) => post.body),
+      })
+    ) {
       issues.push({ code: "DISCLOSURE_MISSING", message: "disclosure missing", blocking: true });
     }
 
@@ -138,10 +158,12 @@ export class XPrePublishGuard {
       });
     }
 
-    // product cooldown
+    // product cooldown — skip when this publication is the one that reserved the product
+    // (scheduled path previously set nextEligibleAt at create time, which blocked due publish).
     const state = await this.deps.ops.findProductState(ctx.productKey);
     if (state?.nextEligibleAt && state.nextEligibleAt.getTime() > this.now().getTime()) {
-      if (!ctx.cooldownOverrideReason) {
+      const ownsReservation = state.lastPublicationId === ctx.publication.id;
+      if (!ownsReservation && !ctx.cooldownOverrideReason) {
         issues.push({
           code: "PRODUCT_COOLDOWN",
           message: `nextEligibleAt=${state.nextEligibleAt.toISOString()}`,

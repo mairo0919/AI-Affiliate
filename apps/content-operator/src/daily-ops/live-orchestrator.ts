@@ -6,7 +6,6 @@
 
 import type { AppConfig } from "@ai-affiliate/config";
 import {
-  ContentRepository,
   P6Repository,
   ResearchRepository,
   type DatabaseClient,
@@ -14,7 +13,7 @@ import {
 } from "@ai-affiliate/database";
 import type { Logger } from "@ai-affiliate/shared";
 import type { PublisherAdapter } from "../adapters/types.js";
-import { requireApiLLMProvider } from "../adapters/llm/create-llm-provider.js";
+import { createLLMProvider, requireApiLLMProvider } from "../adapters/llm/create-llm-provider.js";
 import { buildFanzaCanonicalProductUrl } from "../adapters/affiliate/fanza-affiliate-provider.js";
 import {
   wordpressCredentialsPresent,
@@ -42,12 +41,8 @@ import {
   publishContentVersionToWordPress,
 } from "../wordpress/wordpress-publish-path.js";
 import { XPublicationService } from "../x/publication-service.js";
-import {
-  adaptLoadedCanonicalToX,
-  loadCanonicalXSource,
-} from "../x/canonical-x-source.js";
 import { loadDailyCandidatePool } from "./candidate-pool.js";
-import { planDailyChannels } from "./channel-selection.js";
+import { listRankedXCandidates, planDailyChannels } from "./channel-selection.js";
 import {
   loadDailyMultiChannelConfig,
   type DailyMultiChannelConfig,
@@ -55,13 +50,22 @@ import {
 import {
   BLOG_PUBLICATION_PLATFORMS,
   countBlogPublishedOnTokyoDay,
-  countXPublishedOnTokyoDay,
+  countXPublishedByKindOnTokyoDay,
   loadChannelPublicationHistory,
+  loadFilledXSlotKeys,
+  loadPostedXCanonicalIds,
+  loadPostedXContentVersionIds,
   loadRecentBlogActressKeys,
   loadRecentMixHistory,
   loadRecentXMixHistory,
   loadRecentXRoutes,
 } from "./publication-history.js";
+import {
+  executeAssignedXSlots,
+  planXHorizonFromProbes,
+  probeXScheduleCandidates,
+  type XSlotLiveOutcome,
+} from "./x-slot-live.js";
 
 export interface DailyLiveResult {
   dayKey: string;
@@ -89,6 +93,8 @@ export interface DailyLiveResult {
     externalId: string | null;
     url: string | null;
     note: string | null;
+    /** Fixed JST slot outcomes (15 / 21). */
+    slots: XSlotLiveOutcome[];
   };
   ranking: { productionReady: false; deferred: true };
   llmCalls: number;
@@ -143,6 +149,7 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
     externalId: null as string | null,
     url: null as string | null,
     note: null as string | null,
+    slots: [] as XSlotLiveOutcome[],
   };
 
   if (!daily.enabled && !deps.forceSmoke) {
@@ -170,9 +177,18 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
     dayKey,
     daily.timezone,
   );
-  const xDone = await countXPublishedOnTokyoDay(deps.database.prisma, dayKey, daily.timezone);
+  const xCounts = await countXPublishedByKindOnTokyoDay(
+    deps.database.prisma,
+    dayKey,
+    daily.timezone,
+  );
   const blogNeeded = Math.max(0, daily.blogArticlesPerDay - blogDone);
-  const xNeeded = Math.max(0, daily.xPostsPerDay - xDone);
+  const extraBudgetToday =
+    daily.xPostExtraSlotsDayJst === dayKey ? daily.xExtraPostsBudget : 0;
+  const regularNeeded = Math.max(0, daily.xPostsPerDay - xCounts.standard);
+  const extraNeeded = Math.max(0, extraBudgetToday - xCounts.extra);
+  const xRoom = Math.max(0, daily.xHardCapPerDay - xCounts.total);
+  const xNeeded = Math.min(regularNeeded + extraNeeded, xRoom);
 
   if (!deps.forceSmoke && blogNeeded <= 0 && xNeeded <= 0) {
     return {
@@ -181,7 +197,10 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
       skipReason: "DAILY_TARGETS_ALREADY_MET",
       dryRun: daily.dryRun,
       blog: { ...emptyBlog, note: `blogDone=${blogDone}` },
-      x: { ...emptyX, note: `xDone=${xDone}` },
+      x: {
+        ...emptyX,
+        note: `xDone=${xCounts.total} standard=${xCounts.standard} extra=${xCounts.extra}`,
+      },
       ranking: { productionReady: false, deferred: true },
       llmCalls: 0,
       wordpressPublishCalls: 0,
@@ -234,6 +253,8 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
     minSampleImages: deps.forceSmoke ? 0 : 3,
     minEvidenceRichness: deps.forceSmoke ? 0 : 0.25,
     now,
+    allowDirectAffiliateRoute: deps.config.xAllowDirectAffiliateRoute === true,
+    allowCombinedRoute: deps.config.xAllowCombinedRoute === true,
   });
 
   const blog = { ...emptyBlog };
@@ -317,6 +338,7 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
         const llm = requireApiLLMProvider(deps.config);
         const generation = new ContentGenerationService(deps.lifecycle, llm, {
           generation: deps.config.llmModelGeneration,
+          writer: deps.config.llmModelWriter,
           review: deps.config.llmModelReview,
           revision: deps.config.llmModelRevision,
         });
@@ -553,248 +575,113 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
       : plan.blog.selection.reason || "no_blog_selection";
   }
 
-  // ——— X (distribution channel; never skips WordPress generation above) ———
-  if ((xNeeded > 0 || deps.forceSmoke) && plan.x.selection.selected && !plan.x.blocked) {
+  // ——— X (fixed JST slots: MAIN 21:00 + SECONDARY ~15:00; WP_TRAFFIC only) ———
+  if (xNeeded > 0 || deps.forceSmoke) {
     x.attempted = true;
-    const selected = plan.x.selection.selected;
-    x.canonicalId = selected.canonicalId;
-    x.route = plan.x.route?.route ?? null;
-    const destinationUrl = plan.x.route?.destinationUrl ?? selected.affiliateUrl ?? "";
+    x.route = "BLOG_TRAFFIC";
+    const filledSlotKeys = await loadFilledXSlotKeys(deps.database.prisma, {
+      fromDayKey: dayKey,
+      dayCount: 3,
+      timeZone: daily.timezone,
+    });
+    const usedCids = await loadPostedXCanonicalIds(deps.database.prisma);
+    const usedCvs = await loadPostedXContentVersionIds(deps.database.prisma);
 
-    if (daily.dryRun && !deps.forceSmoke) {
-      x.held = true;
-      x.note = "DAILY_OPS_DRY_RUN";
-    } else if (!deps.config.xApiEnabled && deps.config.xApiProvider !== "mock") {
-      x.held = true;
-      x.note = "X_API_DISABLED";
-    } else if (
-      deps.config.xReleaseMode !== "LIMITED" &&
-      deps.config.xReleaseMode !== "FULL" &&
-      deps.config.xApiProvider !== "mock"
-    ) {
-      x.held = true;
-      x.note = `X_RELEASE_MODE_${deps.config.xReleaseMode}`;
-    } else {
-      try {
-        // Prefer canonical ContentVersion + Evidence social adaptation (not WP scrape).
-        const canonicalSource = await loadCanonicalXSource(
-          deps.database.prisma,
-          selected.canonicalId,
-        );
-        let contentId: string | null = null;
-        const contents = new ContentRepository(deps.database.prisma);
+    const ranked = listRankedXCandidates({
+      pool: deps.smokeCanonicalId
+        ? pool.filter((c) => c.canonicalId.toLowerCase() === deps.smokeCanonicalId!.toLowerCase())
+        : pool,
+      mixWeights: daily.mixWeights,
+      releaseAge: daily.releaseAge,
+      recentBlogMix: recentMix,
+      recentXMix,
+      channelHistory,
+      channelDuplicate: daily.channelDuplicate,
+      dayKey,
+      blogRecentActressKeys,
+      xRecentActressKeys: blogRecentActressKeys,
+      xRecentRoutes,
+      minTotalScore: deps.forceSmoke ? 1 : 20,
+      minSampleImages: deps.forceSmoke ? 0 : 3,
+      minEvidenceRichness: deps.forceSmoke ? 0 : 0.25,
+      now,
+      allowDirectAffiliateRoute: deps.config.xAllowDirectAffiliateRoute === true,
+      allowCombinedRoute: deps.config.xAllowCombinedRoute === true,
+      limit: Math.max((daily.xPostsPerDay + daily.xExtraPostsBudget) * 20, 80),
+      excludeCanonicalIds: usedCids,
+      blogCanonicalId: plan.blog.selection.selected?.canonicalId ?? null,
+    });
 
-        if (canonicalSource?.contentVersionId) {
-          const adapted = adaptLoadedCanonicalToX(canonicalSource, {
-            preferredRoute: (plan.x.route?.route as
-              | "DIRECT_AFFILIATE"
-              | "BLOG_TRAFFIC"
-              | "COMBINED"
-              | null) ?? null,
-            // Composer must not inject #PR / disclosure into social copy.
-            disclosure: "",
-          });
-          x.route = adapted.linkMode === "WP_TRAFFIC"
-            ? "BLOG_TRAFFIC"
-            : adapted.linkMode === "COMBINED"
-              ? "COMBINED"
-              : "DIRECT_AFFILIATE";
-          if (adapted.skip || adapted.posts.length === 0) {
-            x.held = true;
-            x.note = adapted.skip?.reason ?? "SOCIAL_CONTENT_TOO_THIN";
-          } else {
-          const primaryUrl =
-            adapted.linkMode === "DIRECT_AFFILIATE"
-              ? adapted.fanzaUrl
-              : adapted.wpUrl ?? adapted.fanzaUrl;
-          if (!primaryUrl) {
-            x.held = true;
-            x.note = "x_adaptation_no_destination_url";
-          } else {
-            let candidateId: string | null = null;
-            if (analysisRunId) {
-              const cand = await deps.database.prisma.contentCandidate.findFirst({
-                where: {
-                  analysisRunId,
-                  researchItemId: selected.researchItemId,
-                },
-                orderBy: { rank: "asc" },
-              });
-              candidateId = cand?.id ?? null;
-            }
-            if (!candidateId) {
-              x.held = true;
-              x.note = "NO_CONTENT_CANDIDATE_FOR_RESEARCH_ITEM";
-            } else {
-              const { createHash } = await import("node:crypto");
-              const rootBody = adapted.posts[0]?.body ?? "";
-              const created = await contents.createGeneratedContent({
-                contentCandidateId: candidateId,
-                researchItemId: selected.researchItemId,
-                contentType: "X_POST",
-                targetChannel: "X",
-                status: "READY_TO_PUBLISH",
-                title: adapted.canonicalTitleUsed.slice(0, 120),
-                body: rootBody,
-                summary: adapted.hooks.slice(0, 3).join(" / "),
-                hashtags: [],
-                callToAction: primaryUrl,
-                affiliateUrl: primaryUrl,
-                promptVersion: "x-social-adaptation-v1",
-                generationProvider: "canonical-adapt",
-                generationModel: "none",
-                inputSnapshot: {
-                  source: "canonical_content_version",
-                  contentVersionId: canonicalSource.contentVersionId,
-                  dailyXRoute: x.route,
-                  destinationUrl: primaryUrl,
-                  secondaryUrl: adapted.fanzaUrl,
-                  xSocialAdaptation: {
-                    threadShape: adapted.threadShape,
-                    linkMode: adapted.linkMode,
-                    posts: adapted.posts,
-                    tracking: adapted.tracking,
-                    warnings: adapted.warnings,
-                    mediaMode: adapted.mediaMode,
-                    mediaUrl: adapted.mediaUrl,
-                    mediaReason: adapted.mediaReason,
-                    mediaRole: adapted.mediaRole,
-                  },
-                },
-                contentHash: createHash("sha256").update(rootBody).digest("hex"),
-                version: 1,
-                generatedAt: now,
-              });
-              contentId = created.id;
-              llmCalls += 0;
-            }
-          }
-          }
-        }
-
-        if (!x.held && !contentId) {
-          // Fallback: existing ContentEngine X_POST path (Evidence-based, not WP body).
-          let candidateId: string | null = null;
-          if (analysisRunId) {
-            const cand = await deps.database.prisma.contentCandidate.findFirst({
-              where: {
-                analysisRunId,
-                researchItemId: selected.researchItemId,
-              },
-              orderBy: { rank: "asc" },
-            });
-            candidateId = cand?.id ?? null;
-          }
-          if (!candidateId) {
-            x.held = true;
-            x.note = "NO_CONTENT_CANDIDATE_FOR_RESEARCH_ITEM";
-          } else {
-            const gen = await deps.contentEngine.generate({
-              contentType: "X_POST",
-              candidateId,
-              limit: 1,
-              force: true,
-              skipExistingSameType: false,
-              minScore: 0,
-              includeRequiresConfirmation: true,
-            });
-            llmCalls += gen.generatedCount > 0 ? 1 : 0;
-            const created = gen.items.find((i) => i.contentId && !i.skipped);
-            if (!created?.contentId) {
-              x.held = true;
-              x.note = `x_generate_${gen.items[0]?.skipReason ?? "failed"}`;
-            } else {
-              contentId = created.contentId;
-              const row = await contents.findGeneratedContentById(contentId);
-              if (!row) throw new Error("generated content missing");
-              if (destinationUrl && row.affiliateUrl !== destinationUrl) {
-                await deps.database.prisma.generatedContent.update({
-                  where: { id: contentId },
-                  data: {
-                    affiliateUrl: destinationUrl,
-                    callToAction: destinationUrl,
-                    inputSnapshot: {
-                      ...((row.inputSnapshot as object) ?? {}),
-                      dailyXRoute: x.route,
-                      destinationUrl,
-                    },
-                  },
-                });
-              }
-              let status = row.status;
-              if (status === "REVIEW_REQUIRED" || status === "DRAFT") {
-                await contents.approveContent(contentId, "daily-ops");
-                status = "APPROVED";
-              }
-              if (status === "APPROVED") {
-                await contents.markReadyToPublish(contentId);
-                status = "READY_TO_PUBLISH";
-              }
-              if (status !== "READY_TO_PUBLISH") {
-                x.held = true;
-                x.note = `content_not_ready:${status}`;
-                contentId = null;
-              }
-            }
-          }
-        }
-
-        if (!x.held && contentId) {
-          const idempotencyKey = `x-daily:${dayKey}:${selected.canonicalId}:${x.route ?? "DIRECT"}`;
-          const existing = await deps.database.prisma.xPublication.findUnique({
-            where: { idempotencyKey },
-          });
-          if (existing?.status === "PUBLISHED" || existing?.status === "PARTIALLY_PUBLISHED") {
-            x.held = true;
-            x.note = "idempotent_already_published";
-            x.publicationId = existing.id;
-            x.url = existing.rootPostUrl;
-            x.externalId = existing.rootPostId;
-          } else {
-            const pub = await deps.xPublicationService.createFromContent({
-              contentId,
-              strategy: "AUTO",
-              publishNow: true,
-            });
-            x.publicationId = pub.id;
-            await deps.database.prisma.xPublication
-              .update({
-                where: { id: pub.id },
-                data: {
-                  strategyVersion: `${plan.xMixSlot}|AUTO`,
-                  idempotencyKey,
-                },
-              })
-              .catch(() => undefined);
-            const due = await deps.xPublicationService.runDue(5);
-            xPublishCalls += due.filter(
-              (p) => p.status === "PUBLISHED" || p.status === "PARTIALLY_PUBLISHED",
-            ).length;
-            const refreshed = await deps.database.prisma.xPublication.findUnique({
-              where: { id: pub.id },
-            });
-            if (
-              refreshed?.status === "PUBLISHED" ||
-              refreshed?.status === "PARTIALLY_PUBLISHED"
-            ) {
-              x.published = true;
-              x.url = refreshed.rootPostUrl;
-              x.externalId = refreshed.rootPostId;
-              x.note = "live_published";
-            } else {
-              x.held = true;
-              x.note = `x_status_${refreshed?.status ?? "unknown"}`;
-            }
-          }
-        }
-      } catch (error) {
-        x.held = true;
-        x.note = error instanceof Error ? error.message.slice(0, 240) : String(error);
-        deps.logger.warn(`daily x phase error: ${x.note}`);
-      }
+    // X copy Writer prefers API LLM (same as WP). Fallback to createLLMProvider (mock/synthesize).
+    let xCopyLlm;
+    try {
+      xCopyLlm = requireApiLLMProvider(deps.config);
+    } catch {
+      xCopyLlm = createLLMProvider(deps.config);
     }
-  } else if (xNeeded > 0) {
-    x.note = plan.x.blocked ? plan.x.blockReason : plan.x.selection.reason || "no_x_selection";
+
+    const probes = await probeXScheduleCandidates({
+      prisma: deps.database.prisma,
+      ranked,
+      config: deps.config,
+      usedCanonicalIds: usedCids,
+      usedContentVersionIds: usedCvs,
+      llm: xCopyLlm,
+    });
+
+    // Horizon plan: future slots only (no past-slot backfill / no late publishNow).
+    // STANDARD and EXTRA use separate quotas; hard-capped for the extra day.
+    const assignments = planXHorizonFromProbes({
+      now,
+      probes,
+      maxPostsPerDay: deps.forceSmoke ? Math.max(1, daily.xPostsPerDay) : daily.xPostsPerDay,
+      maxStandardPostsPerDay: daily.xPostsPerDay,
+      maxExtraPostsPerDay: daily.xExtraPostsBudget,
+      hardCapPerDay: daily.xHardCapPerDay,
+      hours: daily.xPostSlotHoursJst,
+      mainHour: daily.xMainPostSlotHourJst,
+      filledSlotKeys,
+      usedCanonicalIds: usedCids,
+      usedContentVersionIds: usedCvs,
+      dayCount: 3,
+      extraDayKey: daily.xPostExtraSlotsDayJst,
+      extraTimes: daily.xPostExtraSlotTimesJst,
+    }).filter((a) => a.status === "ASSIGNED");
+
+    const rankedByCid = new Map(
+      ranked.map((c) => [c.canonicalId.trim().toLowerCase(), c] as const),
+    );
+
+    const executed = await executeAssignedXSlots({
+      assignments,
+      rankedByCid,
+      prisma: deps.database.prisma,
+      config: deps.config,
+      xPublicationService: deps.xPublicationService,
+      logger: deps.logger,
+      dayKey,
+      xMixSlot: plan.xMixSlot,
+      analysisRunId,
+      now,
+      dryRun: daily.dryRun && !deps.forceSmoke,
+      llm: xCopyLlm,
+    });
+
+    x.slots = executed.outcomes;
+    xPublishCalls += executed.xPublishCalls;
+    const primary = executed.primary;
+    if (primary) {
+      x.canonicalId = primary.canonicalId;
+      x.publicationId = primary.publicationId;
+      x.published = primary.published;
+      x.held = primary.held || executed.outcomes.every((o) => !o.published);
+      x.note = executed.outcomes
+        .map((o) => `h${o.hour}:${o.status}:${o.reason}${o.canonicalId ? `:${o.canonicalId}` : ""}`)
+        .join("|");
+    } else {
+      x.held = true;
+      x.note = "no_x_slot_outcomes";
+    }
   }
 
   return {

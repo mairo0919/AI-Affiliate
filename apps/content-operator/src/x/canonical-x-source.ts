@@ -60,43 +60,103 @@ export async function loadCanonicalXSource(
   const key = cid.trim().toLowerCase();
   if (!key) return null;
 
-  const targets = await prisma.publicationTarget.findMany({
+  const metaCidOr = [
+    { platformMetadata: { path: ["canonicalId"], equals: key } },
+    { platformMetadata: { path: ["canonicalId"], equals: cid.trim() } },
+    { platformMetadata: { path: ["productCanonicalId"], equals: key } },
+    { platformMetadata: { path: ["productCanonicalId"], equals: cid.trim() } },
+    { platformMetadata: { path: ["productKey"], equals: key } },
+    { platformMetadata: { path: ["productKey"], equals: cid.trim() } },
+    { platformMetadata: { path: ["contentId"], equals: key } },
+    { platformMetadata: { path: ["contentId"], equals: cid.trim() } },
+  ] as const;
+
+  // Prefer PUBLISHED explicitly — a take:N over all statuses can bury the live
+  // public target under newer SCHEDULED/DRAFT rows for the same CID.
+  const published = await prisma.publicationTarget.findFirst({
     where: {
       platform: "WORDPRESS",
-      OR: [
-        { platformMetadata: { path: ["canonicalId"], equals: key } },
-        { platformMetadata: { path: ["canonicalId"], equals: cid.trim() } },
-      ],
+      status: "PUBLISHED",
+      OR: [...metaCidOr],
     },
     orderBy: { updatedAt: "desc" },
-    take: 5,
   });
-
-  const published = targets.find((t) => t.status === "PUBLISHED");
-  const any = published ?? targets[0] ?? null;
+  const fallback = published
+    ? null
+    : await prisma.publicationTarget.findFirst({
+        where: {
+          platform: "WORDPRESS",
+          OR: [...metaCidOr],
+        },
+        orderBy: { updatedAt: "desc" },
+      });
+  const any = published ?? fallback;
 
   const researchItem = await prisma.researchItem.findFirst({
     where: {
-      OR: [{ externalId: key }, { externalId: cid.trim() }],
+      OR: [
+        { externalId: key },
+        { externalId: cid.trim() },
+        { externalId: { equals: key, mode: "insensitive" } },
+      ],
     },
     include: {
       tags: { include: { researchTag: true } },
     },
   });
 
+  // Production WP targets often store CID only in ctaUrl (?id=...).
+  let resolvedTarget: {
+    status: string;
+    contentVersionId: string;
+    platformMetadata: unknown;
+    publishedUrl: string | null;
+  } | null = any;
+  if (!resolvedTarget) {
+    const recent = await prisma.publicationTarget.findMany({
+      where: {
+        platform: "WORDPRESS",
+        status: { in: ["PUBLISHED", "SCHEDULED"] },
+        publishedExternalId: { not: null },
+      },
+      orderBy: { updatedAt: "desc" },
+      take: 120,
+      select: {
+        contentVersionId: true,
+        platformMetadata: true,
+        publishedUrl: true,
+        status: true,
+      },
+    });
+    resolvedTarget =
+      recent.find((t) => {
+        const m = asRecord(t.platformMetadata);
+        const cta = String(m.ctaUrl || m.offerUrl || "");
+        const id = cta.match(/[?&]id=([a-z0-9_]+)/i)?.[1]?.toLowerCase();
+        return id === key;
+      }) ?? null;
+  }
   let version =
-    any?.contentVersionId != null
-      ? await prisma.contentVersion.findUnique({ where: { id: any.contentVersionId } })
+    resolvedTarget?.contentVersionId != null
+      ? await prisma.contentVersion.findUnique({ where: { id: resolvedTarget.contentVersionId } })
       : null;
   if (!version && researchItem) {
-    const fallback = await prisma.publicationTarget.findFirst({
+    const fallbackPt = await prisma.publicationTarget.findFirst({
       where: {
-        platformMetadata: { path: ["canonicalId"], equals: researchItem.externalId },
+        OR: [
+          { platformMetadata: { path: ["canonicalId"], equals: researchItem.externalId } },
+          {
+            platformMetadata: {
+              path: ["productCanonicalId"],
+              equals: researchItem.externalId,
+            },
+          },
+        ],
       },
       orderBy: { updatedAt: "desc" },
     });
-    version = fallback?.contentVersionId
-      ? await prisma.contentVersion.findUnique({ where: { id: fallback.contentVersionId } })
+    version = fallbackPt?.contentVersionId
+      ? await prisma.contentVersion.findUnique({ where: { id: fallbackPt.contentVersionId } })
       : null;
   }
 
@@ -104,7 +164,7 @@ export async function loadCanonicalXSource(
     return null;
   }
 
-  const meta = asRecord(any?.platformMetadata);
+  const meta = asRecord(resolvedTarget?.platformMetadata);
   const sc = asRecord(version?.structuredContent);
   const article = asRecord(sc.article);
   const canonicalTitle =
@@ -170,11 +230,11 @@ export async function loadCanonicalXSource(
     (typeof meta.wordpressStatus === "string" && meta.wordpressStatus) ||
     null;
   const wpStatus =
-    any?.status === "PUBLISHED"
+    resolvedTarget?.status === "PUBLISHED"
       ? "publish"
-      : any?.status === "SCHEDULED"
+      : resolvedTarget?.status === "SCHEDULED"
         ? "future"
-        : any?.status === "DRAFT"
+        : resolvedTarget?.status === "DRAFT"
           ? "draft"
           : wpStatusFromMeta;
 
@@ -192,7 +252,7 @@ export async function loadCanonicalXSource(
     canonicalTitle,
     wordpressTitle: typeof meta.wordpressTitle === "string" ? meta.wordpressTitle : null,
     wpStatus,
-    publishedBlogUrl: published?.publishedUrl ?? null,
+    publishedBlogUrl: resolvedTarget?.publishedUrl ?? published?.publishedUrl ?? null,
     affiliateUrl: offer.url,
     affiliateLinkReady: offer.affiliateLinkReady && affiliateCheck.ok,
     performerNames: performers,
@@ -206,18 +266,23 @@ export async function loadCanonicalXSource(
   };
 }
 
-export function adaptLoadedCanonicalToX(
+export async function adaptLoadedCanonicalToX(
   source: CanonicalXSource,
   opts?: {
     preferredRoute?: XPostRoute | null;
     /** Composer does not inject disclosure; leave unset/empty. */
     disclosure?: string | null;
     preferWpTraffic?: boolean;
+    allowDirectAffiliate?: boolean;
+    allowCombined?: boolean;
+    affiliateThreadMode?: boolean;
+    llm?: import("../adapters/types.js").LLMProvider | null;
+    llmModel?: string;
   },
-): XSocialAdaptationResult {
+): Promise<XSocialAdaptationResult> {
   const preferredLinkMode = opts?.preferredRoute
     ? xPostRouteToLinkMode(opts.preferredRoute)
-    : null;
+    : "WP_TRAFFIC";
   return adaptCanonicalToXSocial({
     canonicalTitle: source.canonicalTitle,
     wordpressTitle: source.wordpressTitle,
@@ -235,6 +300,11 @@ export function adaptLoadedCanonicalToX(
     affiliateLinkReady: source.affiliateLinkReady,
     preferredLinkMode,
     disclosure: opts?.disclosure ?? "",
-    preferWpTraffic: opts?.preferWpTraffic,
+    preferWpTraffic: opts?.preferWpTraffic ?? true,
+    allowDirectAffiliate: opts?.allowDirectAffiliate ?? false,
+    allowCombined: opts?.allowCombined ?? false,
+    affiliateThreadMode: opts?.affiliateThreadMode ?? false,
+    llm: opts?.llm,
+    llmModel: opts?.llmModel,
   });
 }
