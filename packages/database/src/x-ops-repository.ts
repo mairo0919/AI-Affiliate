@@ -10,6 +10,7 @@ import type {
   XProductReservationStatus,
   XRuntimeControl,
 } from "@prisma/client";
+import type { BodyDuplicateCandidate } from "./x-body-duplicate.js";
 import {
   DEFAULT_X_PRODUCT_RESERVATION_PUBLISH_GRACE_MINUTES,
   assertReservationExpiresAtInvariant,
@@ -425,6 +426,11 @@ export class XOpsRepository {
     });
   }
 
+  /**
+   * Strict body-hash match against posts that were actually sent.
+   * Future SCHEDULED rows are not duplicates here; reservation ordering
+   * lives in findPublicationBodyDuplicate.
+   */
   async findBodyHashDuplicate(options: {
     bodyHash: string;
     since: Date;
@@ -433,14 +439,76 @@ export class XOpsRepository {
     return this.prisma.xPublicationPost.findFirst({
       where: {
         bodyHash: options.bodyHash,
-        createdAt: { gte: options.since },
+        ...(options.excludePublicationId
+          ? { publicationId: { not: options.excludePublicationId } }
+          : {}),
+        OR: [
+          { status: "PUBLISHED", publishedAt: { gte: options.since } },
+          { xPostId: { not: null }, createdAt: { gte: options.since } },
+          {
+            publication: {
+              status: { in: ["PUBLISHED", "PUBLISHED_UNVERIFIED"] },
+              publishedAt: { gte: options.since },
+            },
+          },
+        ],
+      },
+      select: { id: true, publicationId: true },
+    });
+  }
+
+  async listBodyDuplicateCandidates(options: {
+    since: Date;
+    excludePublicationId?: string;
+  }): Promise<BodyDuplicateCandidate[]> {
+    const rows = await this.prisma.xPublicationPost.findMany({
+      where: {
         ...(options.excludePublicationId
           ? { publicationId: { not: options.excludePublicationId } }
           : {}),
         publication: { status: { notIn: ["CANCELLED", "DELETED"] } },
+        OR: [
+          { createdAt: { gte: options.since } },
+          { publishedAt: { gte: options.since } },
+          { publication: { publishedAt: { gte: options.since } } },
+          { publication: { createdAt: { gte: options.since } } },
+        ],
       },
-      select: { id: true, publicationId: true },
+      select: {
+        id: true,
+        publicationId: true,
+        role: true,
+        body: true,
+        bodyHash: true,
+        status: true,
+        xPostId: true,
+        publishedAt: true,
+        publication: {
+          select: {
+            status: true,
+            scheduledAt: true,
+            createdAt: true,
+            publishedAt: true,
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 2000,
     });
+    return rows.map((row) => ({
+      postId: row.id,
+      publicationId: row.publicationId,
+      role: row.role,
+      body: row.body,
+      bodyHash: row.bodyHash,
+      postStatus: row.status,
+      xPostId: row.xPostId,
+      postPublishedAt: row.publishedAt,
+      publicationStatus: row.publication.status,
+      publicationScheduledAt: row.publication.scheduledAt,
+      publicationCreatedAt: row.publication.createdAt,
+      publicationPublishedAt: row.publication.publishedAt,
+    }));
   }
 
   async findActivePublicationForContent(

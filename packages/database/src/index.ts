@@ -80,6 +80,17 @@ export {
   normalizePostBody,
 } from "./x-ops-repository.js";
 export {
+  canonicalNavigationDestination,
+  findPublicationBodyDuplicate,
+  postBodyFingerprint,
+} from "./x-body-duplicate.js";
+export type {
+  BodyDuplicateCandidate,
+  BodyDuplicateMatch,
+  BodyDuplicateRole,
+  BodyDuplicateSubjectPost,
+} from "./x-body-duplicate.js";
+export {
   DEFAULT_X_PRODUCT_RESERVATION_PUBLISH_GRACE_MINUTES,
   DEFAULT_X_PRODUCT_RESERVATION_TTL_FLOOR_MINUTES,
   X_RESERVATION_TERMINAL_PUBLICATION_STATUSES,

@@ -15,7 +15,7 @@ describe("publication unit disclosure", () => {
     ).toBe(false);
   });
 
-  it("blocks when the whole unit has no disclosure", () => {
+  it("CASE F: disclosure guard still blocks a unit with no #PR", () => {
     expect(
       publicationUnitDisclosureMissing({
         disclosure: "#PR",

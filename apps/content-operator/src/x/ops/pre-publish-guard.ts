@@ -6,7 +6,7 @@ import type {
   XOptimizationRepository,
   XPublicationRepository,
 } from "@ai-affiliate/database";
-import { hashNormalizedBody, hashProductKey } from "@ai-affiliate/database";
+import { findPublicationBodyDuplicate, hashProductKey } from "@ai-affiliate/database";
 import { XCharacterCounter } from "../character-counter.js";
 import { tokyoParts } from "../optimization/feature-extractor.js";
 
@@ -191,25 +191,31 @@ export class XPrePublishGuard {
       }
     }
 
-    // duplicate body
+    // ROOT keeps strict body identity. CTA navigation replies match on
+    // destination URL, not the URL-collapsed template hash.
     const since = new Date(
       this.now().getTime() -
         this.deps.config.xPostBodyDuplicateLookbackDays * 24 * 60 * 60 * 1000,
     );
-    for (const post of ctx.publication.posts) {
-      const hash = post.bodyHash ?? hashNormalizedBody(post.body);
-      const dup = await this.deps.ops.findBodyHashDuplicate({
-        bodyHash: hash,
-        since,
-        excludePublicationId: ctx.publication.id,
+    const candidates = await this.deps.ops.listBodyDuplicateCandidates({
+      since,
+      excludePublicationId: ctx.publication.id,
+    });
+    const duplicate = findPublicationBodyDuplicate({
+      publicationId: ctx.publication.id,
+      scheduledAt: ctx.publication.scheduledAt,
+      createdAt: ctx.publication.createdAt,
+      now: this.now(),
+      lookbackSince: since,
+      posts: ctx.publication.posts,
+      candidates,
+    });
+    if (duplicate) {
+      issues.push({
+        code: "DUPLICATE_BODY",
+        message: `duplicate ${duplicate.kind} with publication=${duplicate.publicationId}`,
+        blocking: true,
       });
-      if (dup) {
-        issues.push({
-          code: "DUPLICATE_BODY",
-          message: `duplicate bodyHash with publication=${dup.publicationId}`,
-          blocking: true,
-        });
-      }
     }
 
     // recommendation
