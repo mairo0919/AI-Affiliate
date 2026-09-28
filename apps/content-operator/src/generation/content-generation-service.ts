@@ -121,12 +121,6 @@ import {
   validateEditorialDecisionGrounding,
   type ArticleEditorialDecision,
 } from "../article-pattern/article-editorial-decision.js";
-import {
-  buildSeoReviewPrompt,
-  decideSeoSearchIntent,
-  evaluateSeoIntentReview,
-  readSeoSearchIntent,
-} from "../article-pattern/seo-search-intent.js";
 import type { ArticlePatternRepository } from "@ai-affiliate/database";
 import {
   toWritingSkeletonPromptContract,
@@ -224,9 +218,8 @@ export class ContentGenerationService {
     private readonly llm: LLMProvider,
     private readonly models: {
       generation: string;
-      writer: string;
+      writer?: string;
       review: string;
-      /** Kept for non-writer REVISION callers; Article Rewrite uses `writer`. */
       revision: string;
     },
     /**
@@ -757,23 +750,11 @@ export class ContentGenerationService {
       .filter(Boolean)
       .slice(0, 8);
     const planBodyFacts = articlePlanBase.body.flatMap((b) => b.facts).slice(0, 20);
-    const seoSearchIntent = decideSeoSearchIntent({
-      productTitle: input.productTitle,
-      contentId: input.productCanonicalId ?? pageEvidenceMeta?.contentId ?? null,
-      performers,
-      maker: pageEvidenceMeta?.catalog?.maker?.value ?? null,
-      series: pageEvidenceMeta?.catalog?.series?.value ?? null,
-      genres: (pageEvidenceMeta?.catalog?.genres ?? [])
-        .map((genre) => genre.value)
-        .filter((value): value is string => Boolean(value?.trim())),
-      attestedFacts: evidenceSurfaces,
-    });
     let editorialDecision: ArticleEditorialDecision =
       buildDeterministicEditorialDecisionFallback({
         productTitle: input.productTitle,
         evidenceSurfaces,
         performers,
-        seoSearchIntent,
       });
     try {
       const edPrompt = buildEditorialDecisionPlannerPrompt({
@@ -781,7 +762,6 @@ export class ContentGenerationService {
         evidenceSurfaces,
         planBodyFacts,
         performers,
-        seoSearchIntent,
       });
       const edLlm = await this.llm.executeTask({
         taskType: "GENERATION_BLOGGER",
@@ -813,7 +793,6 @@ export class ContentGenerationService {
     const articlePlanWithDecision = {
       ...articlePlanBase,
       editorialDecision,
-      seoSearchIntent,
     };
     const articlePlanExecution = toWriterExecutionContractView(
       buildArticlePlanExecutionContract(articlePlanWithDecision),
@@ -1102,7 +1081,7 @@ export class ContentGenerationService {
 
     const modelRun = await this.repo.createModelRun({
       provider: this.llm.providerKey,
-      model: this.models.writer,
+      model: this.models.generation,
       taskType: "GENERATION_BLOGGER",
       promptIdentifier: prompt.identifier,
       promptVersion: prompt.version,
@@ -1227,7 +1206,7 @@ export class ContentGenerationService {
             systemInstruction,
             userPrompt,
             outputSchema,
-            model: this.models.writer,
+            model: this.models.generation,
             input: {
               productTitle: input.productTitle,
               ctaUrl: input.ctaUrl ?? null,
@@ -1845,10 +1824,6 @@ export class ContentGenerationService {
             title: article.seoTitle,
             metaDescription: article.metaDescription,
             labels: article.labels,
-            primaryQuery: seoSearchIntent.primaryQuery,
-            secondaryQueries: seoSearchIntent.secondaryQueries,
-            searchIntent: seoSearchIntent.searchIntent,
-            queryRationale: seoSearchIntent.queryRationale,
           },
         },
         status: "REVIEWING",
@@ -2449,42 +2424,6 @@ export class ContentGenerationService {
         title: version.title,
         body: version.body,
       });
-      const structuredSeo =
-        version.structuredContent &&
-        typeof version.structuredContent === "object" &&
-        !Array.isArray(version.structuredContent)
-          ? ((version.structuredContent as Record<string, unknown>).seo as
-              | Record<string, unknown>
-              | undefined)
-          : undefined;
-      const articleSeo =
-        version.structuredContent &&
-        typeof version.structuredContent === "object" &&
-        !Array.isArray(version.structuredContent)
-          ? ((
-              (version.structuredContent as Record<string, unknown>).article as
-                | Record<string, unknown>
-                | undefined
-            ) ?? {})
-          : {};
-      const lockedIntent = readSeoSearchIntent(structuredSeo);
-      const seoReviewPrompt =
-        reviewType === "seo-basic"
-          ? buildSeoReviewPrompt({
-              intent: lockedIntent,
-              title: version.title,
-              body: version.body,
-              seoTitle:
-                (typeof structuredSeo?.title === "string" && structuredSeo.title) ||
-                (typeof articleSeo.seoTitle === "string" && articleSeo.seoTitle) ||
-                null,
-              metaDescription:
-                (typeof structuredSeo?.metaDescription === "string" &&
-                  structuredSeo.metaDescription) ||
-                (typeof articleSeo.metaDescription === "string" && articleSeo.metaDescription) ||
-                null,
-            })
-          : null;
       await this.budget.assertCanSpend(0.5);
 
       const modelRun = await this.repo.createModelRun({
@@ -2501,8 +2440,8 @@ export class ContentGenerationService {
         taskType: "REVIEW",
         promptIdentifier: prompt.identifier,
         promptVersion: prompt.version,
-        systemInstruction: seoReviewPrompt?.system ?? rendered.systemInstruction,
-        userPrompt: seoReviewPrompt?.user ?? rendered.userPrompt,
+        systemInstruction: rendered.systemInstruction,
+        userPrompt: rendered.userPrompt,
         model: this.models.review,
         input: { title: version.title, body: version.body, reviewType },
       });
@@ -2530,7 +2469,7 @@ export class ContentGenerationService {
       });
 
       const resultRaw = String(llm.output.result ?? "passed").toUpperCase();
-      let mapped: ReviewResult =
+      const mapped =
         resultRaw === "FAILED"
           ? "FAILED"
           : resultRaw === "WARNING"
@@ -2538,24 +2477,6 @@ export class ContentGenerationService {
             : resultRaw === "MANUAL_REVIEW_REQUIRED"
               ? "MANUAL_REVIEW_REQUIRED"
               : "PASSED";
-      const seoHard =
-        reviewType === "seo-basic"
-          ? evaluateSeoIntentReview({
-              intent: lockedIntent,
-              title: version.title,
-              body: version.body,
-              seoTitle:
-                (typeof structuredSeo?.title === "string" && structuredSeo.title) ||
-                (typeof articleSeo.seoTitle === "string" && articleSeo.seoTitle) ||
-                null,
-              metaDescription:
-                (typeof structuredSeo?.metaDescription === "string" &&
-                  structuredSeo.metaDescription) ||
-                (typeof articleSeo.metaDescription === "string" && articleSeo.metaDescription) ||
-                null,
-            })
-          : { hardFail: false, findings: [] as string[] };
-      if (seoHard.hardFail) mapped = "FAILED";
 
       const review = await this.repo.createReview({
         reviewType,
@@ -2571,10 +2492,7 @@ export class ContentGenerationService {
         },
         result: mapped,
         score: typeof llm.output.score === "number" ? llm.output.score : null,
-        findings: [
-          ...(Array.isArray(llm.output.findings) ? llm.output.findings : []),
-          ...seoHard.findings,
-        ],
+        findings: Array.isArray(llm.output.findings) ? llm.output.findings : [],
         requiredActions: Array.isArray(llm.output.requiredActions)
           ? llm.output.requiredActions
           : [],
@@ -2705,7 +2623,7 @@ export class ContentGenerationService {
     });
     const modelRun = await this.repo.createModelRun({
       provider: this.llm.providerKey,
-      model: this.models.writer,
+      model: this.models.revision,
       taskType: "REVISION",
       promptIdentifier: prompt.identifier,
       promptVersion: prompt.version,
@@ -2718,7 +2636,7 @@ export class ContentGenerationService {
       promptVersion: prompt.version,
       systemInstruction: rendered.systemInstruction,
       userPrompt: rendered.userPrompt,
-      model: this.models.writer,
+      model: this.models.revision,
       input: {
         title: source.title,
         body: source.body,
