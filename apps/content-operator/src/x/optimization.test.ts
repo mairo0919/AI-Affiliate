@@ -835,7 +835,16 @@ describe("X Optimization scheduler", () => {
       },
       now: () => new Date(),
     });
-    const result = await pipeline.run();
+    const previousStock = process.env.STOCK_GENERATION_ENABLED;
+    process.env.STOCK_GENERATION_ENABLED = "false";
+    let result: Awaited<ReturnType<SchedulerPipeline["run"]>>;
+    try {
+      result = await pipeline.run();
+    } catch (error) {
+      if (previousStock === undefined) delete process.env.STOCK_GENERATION_ENABLED;
+      else process.env.STOCK_GENERATION_ENABLED = previousStock;
+      throw error;
+    }
     expect("skipReason" in result.xOptimization).toBe(true);
     expect("skipReason" in result.xOptimizationImpact).toBe(true);
 
@@ -869,7 +878,13 @@ describe("X Optimization scheduler", () => {
       },
       now: () => new Date(Date.now() + 60_000),
     });
-    const result2 = await pipeline2.run();
+    let result2: Awaited<ReturnType<SchedulerPipeline["run"]>>;
+    try {
+      result2 = await pipeline2.run();
+    } finally {
+      if (previousStock === undefined) delete process.env.STOCK_GENERATION_ENABLED;
+      else process.env.STOCK_GENERATION_ENABLED = previousStock;
+    }
     expect(
       "skipReason" in result2.xOptimization &&
         result2.xOptimization.skipReason === "X_OPTIMIZATION_MIN_INTERVAL_NOT_ELAPSED",

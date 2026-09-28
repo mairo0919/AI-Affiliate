@@ -186,11 +186,9 @@ describe("social planner / writer / review", () => {
         "チ○ポの限界を超えて女の子みたいに連続アクメする者も",
       ],
     });
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.finalBody).toMatch(/八木奈々/);
-      expect(result.finalBody).toMatch(/メンズエステ|ハンドテク/);
-      expect(result.finalBody).not.toMatch(/チ[〇○]ポ|アクメ/);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.skip?.detail).toBe("X_INSUFFICIENT_MATERIAL");
     }
   });
 });
@@ -198,8 +196,8 @@ describe("social planner / writer / review", () => {
 describe("wp traffic CTA + permalink", () => {
   it("omits stock CTA for WP_TRAFFIC — WP URL on reply, not parent", async () => {
     const result = await adaptCanonicalToXSocial({
-      canonicalTitle: "アリスJAPANのBEST 5時間BEST",
-      productTitle: "おしゃぶり大好き美女たちの顔がスケベすぎる5時間BEST",
+      canonicalTitle: "ROCKET18周年記念ユーザーリクエスト祭り 完全主観ホラー",
+      productTitle: "ROCKET18周年記念ユーザーリクエスト祭り 完全主観ホラー",
       cid: "dvaj00760",
       articlePlanFacts: [
         {
@@ -216,7 +214,7 @@ describe("wp traffic CTA + permalink", () => {
         },
       ],
       claimStatements: [{ statement: "宍戸里帆" }, { statement: "小野坂ゆいか" }],
-      performerNames: ["宍戸里帆", "小野坂ゆいか", "柏木こなつ", "北野未奈"],
+      performerNames: ["九井スナオ"],
       publishedBlogUrl: "https://otonaselect.net/?p=211",
       wordpressSlug:
         "%e3%82%a2%e3%83%aa%e3%82%b9japan%e3%81%8c%e8%b4%88%e3%82%8b%e5%ae%8d%e6%88%b8%e9%87%8c%e5%b8%86%e5%87%ba%e6%bc%94%e3%81%ae%e3%83%95%e3%82%a7%e3%83%a9%e3%83%99%e3%82%b9%e3%83%885%e6%99%92%e9%96%93",
@@ -239,7 +237,8 @@ describe("wp traffic CTA + permalink", () => {
     expect(all).not.toMatch(/\?p=211/);
     expect(all).toMatch(/otonaselect\.net\//);
     expect(result.posts.some((p) => p.threadRole === "WP_REPLY")).toBe(true);
-    expect(parent.body).toMatch(/宍戸里帆|5時間BEST|小野坂ゆいか/);
+    expect(parent.body).toMatch(/九井スナオ/);
+    expect(parent.body).toMatch(/完全主観ホラー/);
     expect(all).not.toMatch(/おしゃぶり/);
   });
 });
@@ -277,12 +276,9 @@ describe("social composer regression fixtures (dry-preview CIDs)", () => {
       preferWpTraffic: true,
       allowDirectAffiliate: false,
     });
-    expect(result.skip).toBeNull();
-    const body = result.posts[0]!.body;
-    expect(body).not.toMatch(stockCtaRe);
-    expect(body).not.toMatch(/https?:\/\//);
-    expect(body).toMatch(/小野坂ゆいか/);
-    expect(result.posts.map((p) => p.body).join("\n")).toMatch(/https:\/\/otonaselect\.net\//);
+    expect(result.skip?.reason).toBe("SOCIAL_CONTENT_TOO_THIN");
+    expect(result.skip?.detail).toBe("X_INSUFFICIENT_MATERIAL");
+    expect(result.posts).toHaveLength(0);
   });
 
   it("vrkm01889: drops product-voice / brand slogan; may SKIP if only thin remains", async () => {
@@ -355,12 +351,9 @@ describe("social composer regression fixtures (dry-preview CIDs)", () => {
       preferWpTraffic: true,
       allowDirectAffiliate: false,
     });
-    expect(result.skip).toBeNull();
-    const body = result.posts[0]!.body;
-    expect(body).toMatch(/橋本ありな/);
-    expect(body).toMatch(/48タイトル|コンプリート/);
-    expect(body).not.toMatch(/^橋本ありな出演。S1GIRLSCOLLECTION/);
-    expect(body).not.toMatch(stockCtaRe);
+    expect(result.skip?.reason).toBe("SOCIAL_CONTENT_TOO_THIN");
+    expect(result.skip?.detail).toBe("X_INSUFFICIENT_MATERIAL");
+    expect(result.posts).toHaveLength(0);
   });
 
   it("sone00200: strip-broken and chronology-only must not PASS as thin intro", async () => {
@@ -581,11 +574,8 @@ describe("x-social-adaptation", () => {
     expect(result.mediaRole).toBe("auxiliary");
     expect(result.mediaUrl).toContain("juvr00281jp-1.jpg");
     expect(result.mediaReason).toMatch(/less_explicit|sample/);
-    expect(result.skip).toBeNull();
-    expect(result.posts[0]!.body).not.toMatch(/#PR/);
-    expect(result.posts[0]!.body).not.toMatch(/al\.fanza\.co\.jp/);
-    expect(result.posts[0]!.body).not.toContain("otonaselect.net");
-    expect(result.posts.map((p) => p.body).join("\n")).toContain("otonaselect.net");
+    expect(result.skip?.detail).toBe("X_INSUFFICIENT_MATERIAL");
+    expect(result.posts).toHaveLength(0);
   });
 
   it("falls back to TEXT_ONLY when no ALLOWED article images", async () => {

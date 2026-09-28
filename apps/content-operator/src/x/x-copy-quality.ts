@@ -79,6 +79,19 @@ export function hasSemanticRoleMismatch(text: string): boolean {
   return !/が[^。]{0,30}(?:する|した|している|いる|される)/u.test(body);
 }
 
+/**
+ * The post only reads back a package spec or an appearance, with no primary fact in the sentence.
+ */
+export function isSpecReadout(text: string, primaryValues: string[]): boolean {
+  const body = text.replace(/\s+/gu, "");
+  const hasPrimary = primaryValues.some((value) => {
+    const token = value.replace(/\s+/gu, "");
+    return token.length >= 4 && body.includes(token);
+  });
+  if (hasPrimary) return false;
+  return /収録|出演して|ベスト|配信限定|枚組|時間|タイトル/u.test(body);
+}
+
 /** Mass-produced explainer frames. A normal clause with a subject and predicate does not match. */
 export function isTemplateExplainer(text: string): boolean {
   if (
@@ -90,7 +103,7 @@ export function isTemplateExplainer(text: string): boolean {
   }
   if (/では[、，][^。]{0,80}が特徴です/u.test(text)) return true;
   if (
-    /が特徴です|点が特徴|登場して|が登場した|タイトル通り|公式設定が紹介|をまとめて楽しめる|からリリースされて|進化を続ける|まとめられています|振り返ることが|ほか、|といった作品|(?:vol\.?\s*\d+|[一-龯ァ-ヶー]{6,})な作品/iu.test(
+    /が特徴です|点が特徴|登場して|が登場した|タイトル通り|公式設定が紹介|をまとめて楽しめる|からリリースされて|進化を続ける|まとめられています|振り返ることが|ほか、|といった作品|焦点を当てて|も焦点だ|が焦点だ|、(?:約)?\d+(?:\.\d+)?時間。?$|は(?:約)?\d+(?:\.\d+)?時間。?$|(?:vol\.?\s*\d+|[一-龯ァ-ヶー]{6,})な作品/iu.test(
       text,
     )
   ) {

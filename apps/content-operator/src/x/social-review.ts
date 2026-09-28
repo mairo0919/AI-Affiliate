@@ -10,6 +10,7 @@ import {
   hasQuotedTitleFragment,
   hasSemanticRoleMismatch,
   isLoneWorkCopula,
+  isSpecReadout,
   isTemplateExplainer,
   isTitleFragmentRun,
   ungroundedContentWord,
@@ -307,10 +308,14 @@ export function reviewXSocialCopy(
     }
   }
 
+  const primaryValues = (plan.semanticFacts ?? [])
+    .filter((fact) => fact.salience === "primary")
+    .map((fact) => fact.value);
   if (
     isTemplateExplainer(text) ||
     isLoneWorkCopula(text) ||
     hasSemanticRoleMismatch(text) ||
+    ((plan.semanticFacts?.length ?? 0) > 0 && isSpecReadout(text, primaryValues)) ||
     (plan.productTitle ? hasAwkwardTitleSubject(text, plan.productTitle) : false)
   ) {
     fail(
@@ -367,7 +372,7 @@ export function reviewXSocialCopy(
     compactLen >= 16 &&
     /収録している|収録されている|出演している/u.test(text);
 
-  if (/という作品です|という設定が|という独特な舞台設定|という設定も|という設定を/u.test(text)) {
+  if (/という作品です|という設定が|という独特な舞台設定|という設定も|という設定を|という企画|を描く|描いて/u.test(text)) {
     fail("VOICE", "GENERIC_FRAME", "generic 「という作品／設定」 frame concentration");
   }
 
@@ -654,7 +659,7 @@ function findingsToHints(findings: SocialReviewFinding[]): string[] {
     codes.has("PACKAGE_FRAGMENT_GLUE")
   ) {
     hints.push(
-      "Use the performer as a person and at least two SEMANTIC_FACTS when they exist. Attach a count or runtime with を or で, and use a verb such as 収録している. Do not write 「の作品は、〜だ」. Do not treat the work as a person or a student. Do not put a title clause before は. Do not use 特徴, 制作されています, 展開されます, 登場しています, タイトル通り, or 振り返ることができます.",
+      "Write only a relation that is already in RELATIONS. Put the primary fact in the sentence. Do not make the post a runtime, disc count, BEST, or 配信限定 readout. Do not write 「の作品は、〜だ」. Do not treat a campaign as something that 収録される, or a person as the work.",
     );
   }
   if (codes.has("UNSUPPORTED_SWEEP")) {

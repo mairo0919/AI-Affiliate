@@ -12,10 +12,10 @@ export const X_SOCIAL_LLM_TEMPERATURE = 0.2;
 
 export const X_SOCIAL_WRITER_SYSTEM = [
   "You write one Japanese X post as a third party, not as the performer or the maker.",
-  "SEMANTIC_FACTS are the only facts you may use. Each has a role: who (a person), what (the work), attribute (a count, runtime, or format), premise (what the work is about).",
-  "Say what kind of work it is. When two or more facts exist, use at least two of them in one or two sentences.",
-  "A person is not the work. A premise clause is not the grammatical subject. An attribute is not the name of the work.",
-  "Acceptable shapes: 「出演者の作品名は、枚数で作品数を時間収録している。」 「出演者は、人物の説明で、作品名に出演している。」 「作品名は、公式の内容を時間収録した別称だ。」 Replace every piece with SUBJECT and SEMANTIC_FACTS. Do not invent numbers.",
+  "RELATIONS are the only connections you may write. Do not join two facts unless a relation says so.",
+  "A campaign is not something that 収録される. A person is not the work. A runtime is not the point of the post.",
+  "Say the primary relation: a premise, a feature, or the project name. Runtime, disc count, BEST, and 配信限定 may only sit beside that primary.",
+  "If the only true relation is performer plus a runtime, BEST, or 配信限定, return {\"body\":\"\"}.",
   "Do not write a post that is only 「の作品は、〜だ」, 「のシリーズ作品は、〜だ」, or 「AはBだ」. Do not end with 「がある」 after a number, a person, or する.",
   "Do not write 「出演作では」, 「が出演する作品では」, 「作品では」, 「という状況設定」, 「として制作されています」, 「が特徴」, or 「展開されます」.",
   "Do not add rankings or evaluations such as 魅力, 圧巻, 必見, 世界観, 話題, 楽しめる, 迫力, 濃密, 際立って, 没入, or 注目.",
@@ -105,6 +105,15 @@ function salvageNonAdultBody(raw: string): string | null {
  * Offline / unit-test weave only. Not used as production publish fallback when LLM is available.
  */
 export function synthesizeXSocialFromPlan(plan: XSocialPlan): SocialWriteResult {
+  if (plan.viability === "X_POSTABLE") {
+    const grounded = composeGroundedIntro(plan);
+    if (grounded) {
+      return { body: grounded, sentences: [grounded], mode: "editorial_synthesize" };
+    }
+  }
+  if (plan.viability === "X_INSUFFICIENT_MATERIAL") {
+    return { body: "", sentences: [], mode: "editorial_synthesize" };
+  }
   const safe = (raw: string | null | undefined): string | null => {
     if (!raw) return null;
     const t = softNormalize(raw);
@@ -211,9 +220,9 @@ export function buildXSocialWriterPrompts(
 } {
   const writerPlan = {
     SUBJECT: plan.subject,
-    SEMANTIC_FACTS: (plan.semanticFacts ?? []).length
-      ? plan.semanticFacts?.map((fact) => ({ role: fact.role, value: fact.value }))
-      : plan.allowedClaims.map((value) => ({ role: "premise", value })),
+    RELATIONS: plan.semanticRelations ?? [],
+    PRIMARY: (plan.semanticFacts ?? []).filter((fact) => fact.salience === "primary").map((fact) => fact.value),
+    SUPPORTING: (plan.semanticFacts ?? []).filter((fact) => fact.salience === "supporting").map((fact) => fact.value),
   };
   const hints = (opts?.revisionHints ?? []).filter(Boolean);
   const prev = (opts?.previousBody ?? "").trim();
@@ -383,196 +392,51 @@ export async function writeXSocialCopy(
   return synthesizeXSocialFromPlan(plan);
 }
 
-/** Sync helper for tests that inject synthesize only. */
-
-function readHours(value: string): string | null {
-  const match = /((?:約)?\d+(?:\.\d+)?)時間/u.exec(value);
-  return match ? `${match[1]}時間` : null;
-}
-
-function readCount(value: string, unit: "作品" | "タイトル" | "枚組"): string | null {
-  const match = new RegExp(`(\\d+)${unit}`, "u").exec(value);
-  return match ? `${match[1]}${unit}` : null;
-}
-
-function unwrapWhat(value: string): { format: string | null; name: string } {
-  const match = /^(配信限定|VR|8K)\s*[:：]\s*(.+)$/u.exec(value.trim());
-  if (!match?.[2]) return { format: null, name: value.trim() };
-  return { format: match[1] ?? null, name: match[2].trim() };
-}
-
-function isPersonClause(value: string): boolean {
-  return /(?:学生|男性|女性|男子|女子|女優|男優|素人)$/u.test(value);
-}
-
-function isBareMeasure(value: string): boolean {
-  return (
-    /^(?:約)?\d+(?:\.\d+)?(?:時間|分|ヶ月|枚組|作品|タイトル|人|名)$/u.test(value) ||
-    /^(?:撮影期間|応募人数|収録時間)/u.test(value)
-  );
-}
-
-function topic(who: string, work: string): string {
-  if (who && work && !/^\d/u.test(work)) return `${who}の${work}`;
-  if (work) return work;
-  return who;
-}
-
-function isVolumeLabel(value: string): boolean {
-  return /^vol\.?\s*\d+$/iu.test(value);
-}
-
-function isWorkTitle(value: string): boolean {
-  return !isVolumeLabel(value) && (value.length >= 8 || /の/u.test(value));
-}
-
-function qualityClause(qualities: string[]): string {
-  const ordered = [...qualities].sort((a, b) => b.length - a.length);
-  if (ordered.length === 1) {
-    const only = ordered[0] ?? "";
-    return /(?:作品|ホラー|祭り)$/u.test(only)
-      ? `${only}の作品として収録されている`
-      : `${only}な作品として収録されている`;
-  }
-  const [first, ...rest] = ordered;
-  const tail = rest
-    .map((item) => (/(?:作品|ホラー|祭り)$/u.test(item) ? item : `${item}な`))
-    .join("、");
-  return `${first}で、${tail}作品として収録されている`;
-}
-
-/**
- * Builds one sentence from typed facts when the model adds words the facts do not contain.
- * Predicates follow the fact role. No new nouns beyond the fact values and 収録 / 出演 / 作品.
- */
+/** Relation sentence. Returns null when the only possible sentence is a spec readout. */
 export function composeGroundedIntro(plan: XSocialPlan): string | null {
-  const facts = (plan.semanticFacts ?? []).filter((fact) => fact.role !== "who");
-  if (facts.length === 0) return null;
+  if (plan.viability === "X_INSUFFICIENT_MATERIAL") return null;
+  const relations = plan.semanticRelations ?? [];
+  const primary = (plan.semanticFacts ?? []).filter((fact) => fact.salience === "primary");
+  if (primary.length === 0 || relations.length === 0) return null;
   const who = plan.subject?.trim() || "";
-  const formats: string[] = [];
-  const whatNames: string[] = [];
-  const labels: string[] = [];
-  let hours: string | null = null;
-  let works: string | null = null;
-  let titles: string | null = null;
-  let discs: string | null = null;
-  let premise: string | null = null;
+  const rel = (type: string) => relations.filter((item) => item.type === type);
+  const described = rel("described_as")[0];
+  const premise = rel("has_premise")[0];
+  const feature = rel("has_feature")[0];
+  const belongs = rel("belongs_to")[0];
+  const appears = rel("appears_in")[0];
+  const formats = rel("has_format").map((item) => item.to);
+  const runtimes = rel("has_runtime").map((item) => item.to);
+  const volumes = rel("has_volume").map((item) => item.to);
 
-  for (const fact of facts) {
-    const value = fact.value.trim();
-    if (!value) continue;
-    if (fact.role === "premise") {
-      if (!premise || value.length > premise.length) premise = value;
-      continue;
+  if (described && appears) {
+    const format = formats.includes("配信限定") ? "配信限定の" : "";
+    return `${described.from}は、${described.to}として、${format}${appears.to}に出演している。`;
+  }
+  if (premise) {
+    const work = who && appears ? `${who}の${premise.from}` : premise.from;
+    const extra = [...runtimes, ...volumes].slice(0, 2);
+    if (/参加$/u.test(premise.to)) {
+      const label = extra.length ? `${extra.join("、")}で、` : "";
+      return `${work}は、${label}${premise.to}する。`;
     }
-    const foundHours = readHours(value);
-    if (foundHours) hours = foundHours;
-    works = readCount(value, "作品") ?? works;
-    titles = readCount(value, "タイトル") ?? titles;
-    discs = readCount(value, "枚組") ?? discs;
-    if (fact.role === "attribute") {
-      if (/^(?:配信限定|VR|8K)$/u.test(value)) formats.push(value);
-      if (/^(?:撮影期間|応募人数|収録時間)/u.test(value) || /^(?:\d{1,3}(?:[,，]\d{3})+|\d+)(?:人|名)$/u.test(value)) {
-        labels.push(value);
-      }
-      continue;
-    }
-    const unwrapped = unwrapWhat(value);
-    if (unwrapped.format) formats.push(unwrapped.format);
-    if (unwrapped.name && !isBareMeasure(unwrapped.name)) whatNames.push(unwrapped.name);
+    const runtime = runtimes[0] ? `${runtimes[0]}で` : "";
+    return `${work}は、${premise.to}を${runtime}収録している。`;
   }
-
-  const formatPrefix = [...new Set(formats)].join("、");
-  const compilation = whatNames.find((name) => name.endsWith("をまとめた作品")) ?? null;
-  const nameScore = (name: string) =>
-    (name.match(/[ァ-ヶーA-Za-z0-9]/gu) ?? []).length * 3 + name.length;
-  const descriptive = whatNames
-    .filter((name) => name !== compilation)
-    .sort((a, b) => nameScore(b) - nameScore(a) || b.length - a.length);
-  const work = descriptive.find((name) => !/^\d/u.test(name)) ?? compilation ?? descriptive[0] ?? "";
-  const extras = descriptive.filter((name) => name !== work);
-  const withFormat = (name: string) =>
-    formatPrefix && name && !name.includes(formatPrefix) ? `${formatPrefix}の${name}` : name;
-
-  const countPredicate = (): string => {
-    const head = discs ? `${discs}で` : "";
-    if (titles && hours) return `${head}${titles}を${hours}で収録している`;
-    if (works && hours) return `${head}${works}を${hours}で収録している`;
-    if (titles) return `${head}${titles}を収録している`;
-    if (works) return `${head}${works}を収録している`;
-    if (hours) return `${head}${hours}を収録している`;
-    return head.replace(/で$/u, "");
-  };
-
-  if (premise && isPersonClause(premise) && who) {
-    const named = withFormat(work);
-    if (named) {
-      const modifier = extras[0] && extras[0].length <= 16 ? `${extras[0]}の` : "";
-      return `${who}は、${premise}として、${modifier}${named}に出演している。`;
-    }
-    return `${who}は、${premise}だ。`;
+  if (feature) {
+    const campaign = belongs?.to || feature.from;
+    const person = who || appears?.from || "";
+    if (!person) return null;
+    return `${person}は、${feature.to}の${campaign}に出演している。`;
   }
-
-  if (premise && (hours || works || titles) && !isPersonClause(premise)) {
-    const episode = extras.find((name) => name.length <= 8) ?? "";
-    const main = work && work !== episode ? work : (descriptive[0] ?? work);
-    const head = topic(who, withFormat(main));
-    if (head && episode && hours) return `${head}は、${premise}を${hours}で収録した${episode}だ。`;
-    if (head && hours) return `${head}は、${premise}を${hours}で収録している。`;
-    if (head && works) return `${head}は、${premise}を${works}収録している。`;
+  const project = primary.find((fact) => fact.role === "what" && !/完全主観|周年|祭り/u.test(fact.value));
+  if (project && (who || appears)) {
+    const person = who || appears?.from || "";
+    const campaign = belongs?.to;
+    const name = campaign ? `${campaign}の${project.value}` : project.value;
+    return `${person}は、${name}に出演している。`;
   }
-
-  const counted = countPredicate();
-  if (counted && !premise) {
-    const headWork = work && !/^\d/u.test(work) ? work : (compilation ?? "");
-    if (headWork) {
-      const head = topic(who, withFormat(headWork));
-      if (head) return `${head}は、${counted}。`;
-    }
-    if (who) return `${who}の作品は、${counted}。`;
-  }
-
-  if ((labels.length || premise) && (work || who)) {
-    const verb = premise
-      ? /参加$/u.test(premise)
-        ? `${premise}する`
-        : /(?:する|した|している)$/u.test(premise)
-          ? premise
-          : `${premise}を収録している`
-      : "";
-    const head = topic(who, withFormat(work));
-    const labelText = [...new Set(labels)].join("、");
-    if (head && labelText && verb) return `${head}は、${labelText}で、${verb}。`;
-    if (head && verb) return `${head}は、${verb}。`;
-    if (head && labelText && hours) return `${head}は、${labelText}で、${hours}を収録している。`;
-    if (head && labelText) return `${head}は、${labelText}で収録している。`;
-  }
-
-  if (work && extras.length) {
-    const volumes = extras.filter(isVolumeLabel);
-    const subtitles = extras.filter(isWorkTitle);
-    const qualities = extras.filter((name) => !isVolumeLabel(name) && !isWorkTitle(name));
-    if (volumes.length && subtitles.length === 0 && qualities.length === 0) {
-      const label = `${work}の${volumes[0]}`;
-      return who ? `${who}は、${label}に出演している。` : `${label}を収録している。`;
-    }
-    if (subtitles.length && qualities.length === 0) {
-      const subtitle = [...subtitles].sort((a, b) => b.length - a.length)[0] ?? "";
-      return who ? `${who}は、${work}の${subtitle}に出演している。` : `${work}の${subtitle}を収録している。`;
-    }
-    const head = topic(who, withFormat(work));
-    if (head && qualities.length) return `${head}は、${qualityClause(qualities)}。`;
-  }
-
-  if (who && work) {
-    const named = withFormat(work);
-    if (/[るた]$/u.test(work)) return `${who}は、${named}として収録されている。`;
-    return `${who}は、${named}に出演している。`;
-  }
-  if (who && formats.length) return `${who}は、${[...new Set(formats)].join("、")}の作品に出演している。`;
-  if (work && hours) return `${topic("", work)}は、${hours}を収録している。`;
-  if (who && hours) return `${who}の作品は、${hours}を収録している。`;
-  return work ? `${work}を収録している。` : null;
+  return null;
 }
 
 export function writeXSocialCopySync(plan: XSocialPlan): SocialWriteResult {

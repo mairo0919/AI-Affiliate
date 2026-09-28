@@ -1,13 +1,21 @@
 /**
- * SOURCE span → semantic fact.
+ * SOURCE span → semantic fact with a determined role.
+ * A contiguous safe string is not a fact until its role is known.
  * Readings are closed patterns with provenance. They are not free summaries.
  */
 
 import { detectXAdultExpressions } from "./x-social-content-policy.js";
 import { hasParticleHole } from "./x-copy-quality.js";
-import type { SemanticFact, SemanticFactRole } from "./social-plan.js";
+import type {
+  FactSalience,
+  SemanticFact,
+  SemanticFactRole,
+  SemanticRelation,
+  XViability,
+} from "./social-plan.js";
 
-const PHRASE_SPLIT = /[！!？?。．…／/|｜＆&「」『』]+|\s+|【|】/u;
+const PHRASE_SPLIT = /[！!？?。．…／/|｜＆&「」『』~～]+|\s+|【|】/u;
+const FEATURE_TOKENS = ["完全主観ホラー", "完全主観"] as const;
 
 function isAdultSurface(value: string): boolean {
   return detectXAdultExpressions(value).hit || /エロ|下品|変態|精液|ヌキ|センズリ|中出し/u.test(value);
@@ -16,6 +24,7 @@ function isAdultSurface(value: string): boolean {
 function pushFact(
   facts: SemanticFact[],
   role: SemanticFactRole,
+  salience: FactSalience,
   value: string,
   source: string,
   evidence: string,
@@ -25,6 +34,7 @@ function pushFact(
   if (facts.some((fact) => fact.value === next)) return;
   facts.push({
     role,
+    salience,
     value: next,
     provenance: { source: source.slice(0, 120), evidence },
   });
@@ -32,153 +42,235 @@ function pushFact(
 
 function isMeasurementDump(phrase: string): boolean {
   const rest = phrase
-    .replace(/\d+\s*(?:時間|分|作品|枚組|人|名|ヶ月)/gu, "")
+    .replace(/\d+\s*(?:時間|分|作品|枚組|人|名|ヶ月|タイトル)/gu, "")
     .replace(/豪華|収録|約/gu, "")
     .trim();
   return rest.length < 4 && /\d/u.test(phrase);
 }
 
+function isPersonPremise(value: string): boolean {
+  return /(?:学生|男性|女性|男子|女子|女優|男優)$/u.test(value);
+}
+
+function isCampaign(value: string): boolean {
+  return value.length >= 8 && /周年|祭り/u.test(value);
+}
+
+/** A long official segment that names the project, not a brand, a runtime, or BEST. */
+function isContentWorkTitle(value: string): boolean {
+  if (value.length < 10 || value.length > 36) return false;
+  if (/シリーズ\s*\d*$/u.test(value)) return false;
+  if (/ベスト|BEST|総集|枚組|時間|収録|タイトル|コンプリート|vol\.?/iu.test(value)) return false;
+  if (/^[A-Za-z0-9ァ-ヶー・\s.]+$/u.test(value)) return false;
+  if (isCampaign(value)) return false;
+  const kanji = value.match(/[一-龯]{2,}/gu) ?? [];
+  return kanji.some((token) => !/^(?:作品|収録|時間|配信|限定|シリーズ)$/u.test(token));
+}
+
+function isSupportingSpec(value: string): boolean {
+  return (
+    /^(?:約)?\d+(?:\.\d+)?(?:時間|分)$/u.test(value) ||
+    /^\d+(?:枚組|作品収録|作品|タイトル|ヶ月|人|名)$/u.test(value) ||
+    /^(?:撮影期間|応募人数|収録時間)/u.test(value) ||
+    /^(?:配信限定|VR|8K)$/u.test(value) ||
+    /^vol\.?\s*\d+$/iu.test(value) ||
+    value === "ベストをまとめた作品" ||
+    /BEST$/iu.test(value)
+  );
+}
+
 export function extractSemanticFacts(input: {
   sources: string[];
   performers?: string[];
+  seriesName?: string | null;
 }): SemanticFact[] {
   const facts: SemanticFact[] = [];
-  const performers = new Set((input.performers ?? []).map((name) => name.trim()).filter(Boolean));
+  const performers = (input.performers ?? []).map((name) => name.trim()).filter((name) => name.length >= 2);
+  const performerSet = new Set(performers);
   const blob = input.sources.join("\n");
 
   for (const name of performers) {
-    pushFact(facts, "who", name, name, name);
+    pushFact(facts, "who", "entity", name, name, name);
+  }
+  const series = input.seriesName?.trim() ?? "";
+  if (
+    series.length >= 8 &&
+    !isAdultSurface(series) &&
+    !performerSet.has(series) &&
+    !isSupportingSpec(series) &&
+    !/\d+\s*(?:時間|分|枚組|タイトル|作品)/u.test(series)
+  ) {
+    pushFact(facts, "what", "entity", series, series, series);
   }
 
   const hour = blob.match(/(?<![\d.])(約)?\s*(\d+(?:\.\d+)?)\s*時間/u);
-  if (hour?.[2]) pushFact(facts, "attribute", `${hour[1] ?? ""}${hour[2]}時間`, blob, hour[0]);
+  if (hour?.[2]) pushFact(facts, "attribute", "supporting", `${hour[1] ?? ""}${hour[2]}時間`, blob, hour[0]);
   const minute = blob.match(/(?<![\d.])(\d+)\s*分/u);
-  if (minute?.[1]) pushFact(facts, "attribute", `${minute[1]}分`, blob, minute[0]);
-  const month = blob.match(/(?<![\d.])(\d+)\s*ヶ?月/u);
-  if (month?.[1] && /ヶ月|ヵ月|か月/u.test(blob)) {
-    pushFact(facts, "attribute", `${month[1]}ヶ月`, blob, month[0]);
+  if (minute?.[1] && !/時間/u.test(blob)) {
+    pushFact(facts, "attribute", "supporting", `${minute[1]}分`, blob, minute[0]);
   }
-  const shoot = blob.match(/撮影期間\s*(\d+)\s*ヶ?月/u);
-  if (shoot?.[1]) pushFact(facts, "attribute", `撮影期間${shoot[1]}ヶ月`, blob, shoot[0]);
+  const month = blob.match(/撮影期間\s*(\d+)\s*ヶ?月/u);
+  if (month?.[1]) pushFact(facts, "attribute", "supporting", `撮影期間${month[1]}ヶ月`, blob, month[0]);
   const applicants = blob.match(/応募人数\s*(\d{1,3}(?:[,，]\d{3})+|\d+)\s*人/u);
-  if (applicants?.[1]) pushFact(facts, "attribute", `応募人数${applicants[1]}人`, blob, applicants[0]);
-  const runtimeLabel = blob.match(/収録時間\s*(約)?\s*(\d+(?:\.\d+)?)\s*時間/u);
-  if (runtimeLabel?.[2]) {
-    pushFact(facts, "attribute", `収録時間${runtimeLabel[1] ?? ""}${runtimeLabel[2]}時間`, blob, runtimeLabel[0]);
+  if (applicants?.[1]) {
+    pushFact(facts, "attribute", "supporting", `応募人数${applicants[1]}人`, blob, applicants[0]);
   }
   const titleCount = blob.match(/(?<![\d.])(\d+)\s*タイトル/u);
-  if (titleCount?.[1]) pushFact(facts, "attribute", `${titleCount[1]}タイトル`, blob, titleCount[0]);
+  if (titleCount?.[1]) pushFact(facts, "attribute", "supporting", `${titleCount[1]}タイトル`, blob, titleCount[0]);
   const works = blob.match(/(?<![\d.])(\d+)\s*作品/u);
   if (works?.[1]) {
     const recorded = blob.includes(`${works[1]}作品収録`);
-    pushFact(facts, "attribute", recorded ? `${works[1]}作品収録` : `${works[1]}作品`, blob, works[0]);
+    pushFact(
+      facts,
+      "attribute",
+      "supporting",
+      recorded ? `${works[1]}作品収録` : `${works[1]}作品`,
+      blob,
+      works[0],
+    );
   }
   const discs = blob.match(/(?<![\d.])(\d+)\s*枚組/u);
-  if (discs?.[1]) pushFact(facts, "attribute", `${discs[1]}枚組`, blob, discs[0]);
+  if (discs?.[1]) pushFact(facts, "attribute", "supporting", `${discs[1]}枚組`, blob, discs[0]);
   const people = blob.match(/(?<![\d.,，])(\d{1,3}(?:[,，]\d{3})+|\d+)\s*(?:人|名)/u);
-  if (people?.[1]) pushFact(facts, "attribute", `${people[1]}${blob.includes(`${people[1]}名`) ? "名" : "人"}`, blob, people[0]);
+  if (people?.[1] && !facts.some((fact) => fact.value.includes(`${people[1]}人`) || fact.value.includes(`${people[1]}名`))) {
+    pushFact(
+      facts,
+      "attribute",
+      "supporting",
+      `${people[1]}${blob.includes(`${people[1]}名`) ? "名" : "人"}`,
+      blob,
+      people[0],
+    );
+  }
+  const volume = blob.match(/vol\.?\s*(\d+)/iu);
+  if (volume?.[0]) pushFact(facts, "attribute", "supporting", volume[0].replace(/\s+/gu, ""), blob, volume[0]);
 
-  for (const token of ["配信限定", "完全主観ホラー", "完全主観", "ベストBOX"]) {
-    if (blob.includes(token)) {
-      pushFact(facts, token === "配信限定" ? "attribute" : "what", token, blob, token);
-    }
+  if (blob.includes("配信限定")) pushFact(facts, "attribute", "supporting", "配信限定", blob, "配信限定");
+  for (const token of FEATURE_TOKENS) {
+    if (blob.includes(token)) pushFact(facts, "what", "primary", token, blob, token);
   }
   if (/【\s*VR\s*】|(?:^|[^A-Za-z])VR(?:[^A-Za-z]|$)/u.test(blob)) {
-    pushFact(facts, "attribute", "VR", blob, "VR");
+    pushFact(facts, "attribute", "supporting", "VR", blob, "VR");
   }
   if (/【\s*8K\s*】|(?:^|[^A-Za-z0-9])8K(?:[^A-Za-z0-9]|$)/u.test(blob)) {
-    pushFact(facts, "attribute", "8K", blob, "8K");
+    pushFact(facts, "attribute", "supporting", "8K", blob, "8K");
   }
   if (/ベスト|BEST|総集編/iu.test(blob) && !/ベストBOX|BEST\s*BOX/iu.test(blob)) {
-    pushFact(facts, "what", "ベストをまとめた作品", blob, /ベスト/u.test(blob) ? "ベスト" : "BEST");
+    pushFact(facts, "what", "supporting", "ベストをまとめた作品", blob, /ベスト/u.test(blob) ? "ベスト" : "BEST");
   }
 
   for (const source of input.sources) {
     for (const raw of source.split(PHRASE_SPLIT)) {
       const part = raw.trim();
-      if (part.length < 4 || part.length > 36 || isAdultSurface(part) || hasParticleHole(part)) continue;
-      if (performers.has(part) || isMeasurementDump(part)) continue;
-      const detached = part
+      if (part.length < 8 || part.length > 36 || isAdultSurface(part) || hasParticleHole(part)) continue;
+      if (performerSet.has(part) || isMeasurementDump(part) || isSupportingSpec(part)) continue;
+      let phrase = part
         .replace(/(?:約)?\s*\d+(?:\.\d+)?\s*時間$/u, "")
         .replace(/\d+\s*分$/u, "")
-        .replace(/\d+\s*ヶ?月$/u, "")
         .trim();
-      let phrase = detached.length >= 4 ? detached : part;
-      if (phrase !== part && (isMeasurementDump(phrase) || phrase.length < 4)) continue;
       for (const name of performers) {
-        if (name.length >= 2 && phrase.startsWith(name)) {
+        if (phrase.startsWith(name)) {
           const rest = phrase.slice(name.length).replace(/^[の\s]+/u, "").trim();
-          if (rest.length >= 4) phrase = rest;
+          if (rest.length >= 8) phrase = rest;
         }
       }
-      if (phrase.length < 4 || (phrase.length <= 4 && !/[一-龯]/u.test(phrase))) continue;
-      if (
-        [...performers].some((name) => {
-          if (!phrase.includes(name)) return false;
-          const rest = phrase.replace(name, "").replace(/[:：REC\s]/gu, "").trim();
-          return rest.length === 0;
-        })
-      ) {
+      if (phrase.length < 8 || isAdultSurface(phrase) || hasParticleHole(phrase)) continue;
+      if (performers.some((name) => phrase === name)) continue;
+
+      const limited = phrase.match(/^配信限定\s*[:：]\s*(.{2,16})$/u);
+      if (limited?.[1] && !isAdultSurface(limited[1])) {
+        pushFact(facts, "what", "entity", limited[1], source, phrase);
+        continue;
+      }
+      if (/[がを]/u.test(phrase) && !isMeasurementDump(phrase)) {
+        pushFact(facts, "premise", "primary", phrase, source, phrase);
+        continue;
+      }
+      if (isCampaign(phrase)) {
+        pushFact(facts, "what", "primary", phrase, source, phrase);
         continue;
       }
       const boxAt = phrase.indexOf("ベストBOX");
       if (boxAt > 0) {
         const prefix = phrase.slice(0, boxAt).trim();
-        if (prefix.length >= 4 && blob.includes(prefix)) {
-          pushFact(facts, "what", prefix, source, prefix);
-          pushFact(facts, "what", `${prefix}をまとめた作品`, source, `${prefix} / ベストBOX`);
+        if (prefix.length >= 4) {
+          pushFact(facts, "what", "supporting", `${prefix}をまとめた作品`, source, `${prefix} / ベストBOX`);
         }
+        continue;
       }
-      if (/ベスト|BEST|総集編/iu.test(phrase) && !phrase.includes("ベストBOX") && phrase.length <= 12) {
-        pushFact(facts, "what", phrase, source, phrase);
+      if (isContentWorkTitle(phrase)) {
+        pushFact(facts, "what", "primary", phrase, source, phrase);
+        continue;
       }
-      if (phrase.includes("ベスト") && !phrase.includes("ベストBOX") && /BEST|ベスト|総集編/iu.test(blob)) {
-        const label = phrase.replace(/ベスト|BEST|総集編/giu, "").replace(/\d+\s*時間/gu, "").trim();
-        if (label.length >= 4 && blob.includes(label)) {
-          pushFact(facts, "what", `${label}をまとめた作品`, source, label);
-        } else if (!facts.some((fact) => fact.value.endsWith("をまとめた作品"))) {
-          pushFact(facts, "what", "ベストをまとめた作品", source, "ベスト");
-        }
+      if (/\d|ベスト|BEST|時間|枚組|タイトル/iu.test(phrase)) continue;
+      if (/[ァ-ヶーA-Za-z]{4,}/u.test(phrase) && phrase.length >= 8 && !/[がを]/u.test(phrase)) {
+        pushFact(facts, "what", "entity", phrase, source, phrase);
       }
-      const role: SemanticFactRole = /[がを]/u.test(phrase)
-        ? "premise"
-        : /\d+\s*(?:時間|分|ヶ月|枚組|作品|人|名|タイトル)/u.test(phrase)
-          ? "attribute"
-          : "what";
-      pushFact(facts, role, phrase, source, phrase === part ? part : `${phrase} / ${part}`);
     }
   }
 
   return facts;
 }
 
-/** Keep a handful of grounded facts. Do not pad with guesses. */
 function overlaps(a: string, b: string): boolean {
   return a === b || a.includes(b) || b.includes(a);
 }
 
+/** Prefer a primary fact. Do not fill the list with specs. */
 export function selectSemanticFacts(facts: SemanticFact[], limit = 4): SemanticFact[] {
-  const content = facts.filter((fact) => fact.role !== "who");
-  const whats = content
-    .filter((fact) => fact.role === "what")
-    .sort((a, b) => b.value.length - a.value.length);
-  const hasHours = content.some((fact) => /時間/u.test(fact.value));
-  const attributes = content
-    .filter((fact) => fact.role === "attribute")
-    .filter((fact) => !(hasHours && /分$/u.test(fact.value)))
-    .sort((a, b) => b.value.length - a.value.length);
-  const premises = content
-    .filter((fact) => fact.role === "premise")
-    .sort((a, b) => b.value.length - a.value.length);
+  const rank = (fact: SemanticFact) =>
+    fact.salience === "primary" ? 0 : fact.salience === "entity" ? 1 : 2;
+  const content = facts
+    .filter((fact) => fact.role !== "who")
+    .sort((a, b) => rank(a) - rank(b) || b.value.length - a.value.length);
   const picked: SemanticFact[] = [];
-  const take = (fact: SemanticFact | undefined) => {
-    if (!fact || picked.length >= limit) return;
-    if (picked.some((item) => overlaps(item.value, fact.value))) return;
+  for (const fact of content) {
+    if (picked.length >= limit) break;
+    if (picked.some((item) => overlaps(item.value, fact.value))) continue;
     picked.push(fact);
+  }
+  const who = facts.find((fact) => fact.role === "who");
+  return who ? [who, ...picked].slice(0, limit + 1) : picked;
+}
+
+export function buildSemanticRelations(input: {
+  facts: SemanticFact[];
+  subject: string | null;
+}): SemanticRelation[] {
+  const facts = input.facts;
+  const performer = input.subject?.trim() || facts.find((fact) => fact.role === "who")?.value || "";
+  const campaign = facts.find((fact) => fact.salience === "primary" && isCampaign(fact.value))?.value ?? null;
+  const feature = facts.find((fact) => fact.salience === "primary" && FEATURE_TOKENS.includes(fact.value as (typeof FEATURE_TOKENS)[number]))?.value ?? null;
+  const premise = facts.find((fact) => fact.role === "premise" && fact.salience === "primary")?.value ?? null;
+  const project =
+    facts.find((fact) => fact.salience === "primary" && fact.role === "what" && !isCampaign(fact.value) && fact.value !== feature)?.value ??
+    null;
+  const work =
+    facts.find((fact) => fact.salience === "entity" && fact.role === "what")?.value ??
+    project ??
+    campaign ??
+    null;
+  const relations: SemanticRelation[] = [];
+  const add = (type: SemanticRelation["type"], from: string | null, to: string | null) => {
+    if (!from || !to || from === to) return;
+    if (relations.some((relation) => relation.type === type && relation.from === from && relation.to === to)) return;
+    relations.push({ type, from, to });
   };
-  take(whats[0]);
-  take(premises[0]);
-  for (const fact of attributes) take(fact);
-  for (const fact of [...whats.slice(1), ...premises.slice(1)]) take(fact);
-  return picked.slice(0, limit);
+  if (performer && work) add("appears_in", performer, work);
+  if (work && campaign && work !== campaign) add("belongs_to", work, campaign);
+  if (feature && (project || campaign || work)) add("has_feature", project ?? work ?? campaign, feature);
+  if (premise && isPersonPremise(premise) && performer) add("described_as", performer, premise);
+  else if (premise && work) add("has_premise", work, premise);
+  for (const fact of facts.filter((item) => item.salience === "supporting")) {
+    if (!work) continue;
+    if (fact.value.endsWith("をまとめた作品")) add("compilation_of", work, fact.value);
+    else if (/^(?:配信限定|VR|8K)$/u.test(fact.value)) add("has_format", work, fact.value);
+    else if (/時間|ヶ月/u.test(fact.value)) add("has_runtime", work, fact.value);
+    else if (/枚組|作品|タイトル|人|名|vol/iu.test(fact.value)) add("has_volume", work, fact.value);
+  }
+  return relations;
+}
+
+export function assessXViability(facts: SemanticFact[]): XViability {
+  return facts.some((fact) => fact.salience === "primary") ? "X_POSTABLE" : "X_INSUFFICIENT_MATERIAL";
 }

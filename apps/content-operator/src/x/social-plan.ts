@@ -14,7 +14,7 @@ import {
   isParticleFreeTitleStack,
   isTitleFragmentRun,
 } from "./x-copy-quality.js";
-import { extractSemanticFacts, selectSemanticFacts } from "./semantic-facts.js";
+import { assessXViability, buildSemanticRelations, extractSemanticFacts, selectSemanticFacts } from "./semantic-facts.js";
 import { detectXAdultExpressions, stripXAdultSpans } from "./x-social-content-policy.js";
 
 export type XPlanSkip = {
@@ -41,11 +41,34 @@ export type XSocialPublicationIntent = {
 /** Role of a fact the Writer may use. who = person, what = the work, attribute = count/runtime/format, premise = official situation. */
 export type SemanticFactRole = "who" | "what" | "attribute" | "premise";
 
+/** primary = enough to post. supporting = spec only. entity = a name, not the point of the post. */
+export type FactSalience = "primary" | "supporting" | "entity";
+
 export type SemanticFact = {
   role: SemanticFactRole;
+  salience: FactSalience;
   value: string;
   provenance: { source: string; evidence: string };
 };
+
+export type SemanticRelationType =
+  | "appears_in"
+  | "belongs_to"
+  | "has_format"
+  | "has_runtime"
+  | "has_premise"
+  | "described_as"
+  | "compilation_of"
+  | "has_volume"
+  | "has_feature";
+
+export type SemanticRelation = {
+  type: SemanticRelationType;
+  from: string;
+  to: string;
+};
+
+export type XViability = "X_POSTABLE" | "X_INSUFFICIENT_MATERIAL";
 
 /** Writer-visible plan — editorial intent, not a fact dump list. */
 export type XSocialPlan = {
@@ -72,6 +95,10 @@ export type XSocialPlan = {
   allowedClaims: string[];
   /** Typed facts. Absent on older fixtures; Writer then treats allowedClaims as premises. */
   semanticFacts?: SemanticFact[];
+  /** Allowed connections between facts. Writer may not invent others. */
+  semanticRelations?: SemanticRelation[];
+  /** Whether this work has enough primary material for an X root. */
+  viability?: XViability;
   /** Soft publication intent — not a fixed thread template. */
   publicationIntent: XSocialPublicationIntent;
   productTitle: string;
@@ -689,13 +716,15 @@ export function planXSocial(input: XPlannerInput): XPlanResult {
     .map((source) => source.trim())
     .filter((source, index, all) => source.length > 0 && all.indexOf(source) === index);
   const semanticFacts = selectSemanticFacts(
-    extractSemanticFacts({ sources: semanticSources, performers }).filter((fact) =>
+    extractSemanticFacts({ sources: semanticSources, performers, seriesName: input.seriesName }).filter((fact) =>
       fact.role === "who"
         ? true
         : faithful(fact.value) &&
           !/魅力|妖艶|珠玉|凝縮|官能|濃密|圧巻|必見|世界観|話題|楽しめる|迫力/u.test(fact.value),
     ),
   );
+  const semanticRelations = buildSemanticRelations({ facts: semanticFacts, subject });
+  const viability = assessXViability(semanticFacts);
   const semanticValues = semanticFacts.map((fact) => fact.value);
   if (semanticValues.length > 0) {
     const rest = allowedClaims.filter(
@@ -820,6 +849,8 @@ export function planXSocial(input: XPlannerInput): XPlanResult {
       concreteDetails,
       allowedClaims,
       semanticFacts,
+      semanticRelations,
+      viability,
       publicationIntent: {
         needsArticleReply,
         relatedPostUseful,

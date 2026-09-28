@@ -129,6 +129,20 @@ export async function runXSocialPipeline(
   }
 
   const plan = planned.plan;
+  if (plan.viability === "X_INSUFFICIENT_MATERIAL") {
+    return {
+      ok: false,
+      skip: {
+        reason: "SOCIAL_CONTENT_TOO_THIN",
+        detail: "X_INSUFFICIENT_MATERIAL",
+        failureClass: "SOURCE_INSUFFICIENT",
+      },
+      plan,
+      reviewFindings: [],
+      review: null,
+    };
+  }
+
   let draft = await writeXSocialCopy(plan, { llm: input.llm, model: input.model });
   let review = reviewXSocialCopy(draft.body, plan, { maxChars: input.maxBodyChars ?? 240 });
   let rewritten = false;
@@ -186,7 +200,7 @@ export async function runXSocialPipeline(
           failureClass === "SOURCE_INSUFFICIENT"
             ? "SOCIAL_CONTENT_TOO_THIN"
             : "SOCIAL_REVIEW_FAILED",
-        detail: blockingCodes.join(",") || "review_failed",
+        detail: blockingCodes.join(",") || "X_INSUFFICIENT_MATERIAL",
         failureClass,
       },
       plan,

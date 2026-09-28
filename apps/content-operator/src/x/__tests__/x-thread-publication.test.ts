@@ -275,7 +275,7 @@ describe("parent copy quality (Planner → synthesize)", () => {
     expect(plan.plan.whatIsInteresting).toBeTruthy();
     expect(plan.plan.publicationIntent).toBeTruthy();
     const written = synthesizeXSocialFromPlan(plan.plan);
-    expect(written.sentences.length).toBeGreaterThanOrEqual(2);
+    expect(written.body).toContain("完全主観ホラー");
     expect(written.body).toContain("九井スナオ");
     expect(written.body).not.toMatch(/作品はこちら|詳しい紹介はこちら|https?:\/\//);
   });
