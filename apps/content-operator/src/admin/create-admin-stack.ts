@@ -171,6 +171,7 @@ export async function createAdminStack(options?: {
   });
   const generation = new ContentGenerationService(lifecycleRepo, llm, {
     generation: config.llmModelGeneration,
+    writer: config.llmModelWriter,
     review: config.llmModelReview,
     revision: config.llmModelRevision,
   });

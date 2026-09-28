@@ -120,16 +120,256 @@ export async function countXPublishedOnTokyoDay(
   dayKey: string,
   timeZone: string,
 ): Promise<number> {
+  const byKind = await countXPublishedByKindOnTokyoDay(prisma, dayKey, timeZone);
+  return byKind.total;
+}
+
+export type XDayQuotaCounts = {
+  total: number;
+  standard: number;
+  extra: number;
+};
+
+/** Classify a booked publication as STANDARD vs EXTRA via strategyVersion / slotKey. */
+export function classifyXPublicationSlotKind(
+  strategyVersion: string | null | undefined,
+  at: Date | null | undefined,
+  timeZone = "Asia/Tokyo",
+): "STANDARD" | "EXTRA" {
+  const kindMatch = /(?:^|\|)slotKind=(EXTRA|STANDARD)(?:\||$)/.exec(strategyVersion ?? "");
+  if (kindMatch?.[1] === "EXTRA" || kindMatch?.[1] === "STANDARD") {
+    return kindMatch[1];
+  }
+  const keyMatch = /(?:^|\|)slotKey=([^|]+)(?:\||$)/.exec(strategyVersion ?? "");
+  const slotKey = keyMatch?.[1];
+  if (slotKey) {
+    const minuteMatch = /T\d{2}:(\d{2}):00\+09:00$/.exec(slotKey);
+    if (minuteMatch && minuteMatch[1] !== "00") return "EXTRA";
+    return "STANDARD";
+  }
+  if (!at) return "STANDARD";
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(at);
+  const bag: Record<string, string> = {};
+  for (const p of parts) {
+    if (p.type !== "literal") bag[p.type] = p.value;
+  }
+  return Number(bag.minute ?? "0") === 0 ? "STANDARD" : "EXTRA";
+}
+
+/** Split Tokyo-day X bookings into regular vs date-scoped EXTRA quota buckets. */
+export async function countXPublishedByKindOnTokyoDay(
+  prisma: DatabaseClient["prisma"],
+  dayKey: string,
+  timeZone: string,
+): Promise<XDayQuotaCounts> {
   const { start, end } = dayBoundsUtc(dayKey, timeZone);
   const rows = await prisma.xPublication.findMany({
     where: {
-      status: { in: ["PUBLISHED", "PARTIALLY_PUBLISHED"] },
-      publishedAt: { gte: start, lt: end },
+      status: {
+        in: ["PUBLISHED", "PARTIALLY_PUBLISHED", "PUBLISHED_UNVERIFIED", "SCHEDULED"],
+      },
+      OR: [
+        { publishedAt: { gte: start, lt: end } },
+        { scheduledAt: { gte: start, lt: end } },
+      ],
     },
-    select: { publishedAt: true },
+    select: { publishedAt: true, scheduledAt: true, strategyVersion: true },
   });
-  return rows.filter((r) => r.publishedAt && tokyoDateString(r.publishedAt, timeZone) === dayKey)
-    .length;
+  let standard = 0;
+  let extra = 0;
+  for (const r of rows) {
+    const at = r.publishedAt ?? r.scheduledAt;
+    if (!at || tokyoDateString(at, timeZone) !== dayKey) continue;
+    if (classifyXPublicationSlotKind(r.strategyVersion, at, timeZone) === "EXTRA") {
+      extra += 1;
+    } else {
+      standard += 1;
+    }
+  }
+  return { total: standard + extra, standard, extra };
+}
+
+/** Hours (JST) already booked for X on dayKey via scheduledAt / publishedAt. */
+export async function loadFilledXSlotHoursForDay(
+  prisma: DatabaseClient["prisma"],
+  dayKey: string,
+  timeZone: string,
+): Promise<Set<number>> {
+  const { start, end } = dayBoundsUtc(dayKey, timeZone);
+  const rows = await prisma.xPublication.findMany({
+    where: {
+      status: {
+        in: [
+          "PUBLISHED",
+          "PARTIALLY_PUBLISHED",
+          "PUBLISHED_UNVERIFIED",
+          "SCHEDULED",
+          "DRAFT",
+          "PUBLISHING",
+        ],
+      },
+      OR: [
+        { publishedAt: { gte: start, lt: end } },
+        { scheduledAt: { gte: start, lt: end } },
+      ],
+    },
+    select: { publishedAt: true, scheduledAt: true, strategyVersion: true },
+  });
+  const hours = new Set<number>();
+  for (const r of rows) {
+    const at = r.publishedAt ?? r.scheduledAt;
+    if (!at || tokyoDateString(at, timeZone) !== dayKey) continue;
+    const fromVersion = /(?:^|\|)slotHour=(\d{1,2})(?:\||$)/.exec(r.strategyVersion ?? "");
+    if (fromVersion?.[1]) {
+      hours.add(Number(fromVersion[1]));
+      continue;
+    }
+    const fmt = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      hour: "2-digit",
+      hourCycle: "h23",
+    });
+    hours.add(Number(fmt.format(at)));
+  }
+  return hours;
+}
+
+/** CIDs already used on X (any terminal/active status) — hard duplicate ban.
+ * Includes FAILED so retry does not create a second reservation as a "new" post.
+ */
+export async function loadPostedXCanonicalIds(
+  prisma: DatabaseClient["prisma"],
+  options?: { limit?: number },
+): Promise<Set<string>> {
+  const limit = Math.max(1, Math.min(options?.limit ?? 500, 2000));
+  const rows = await prisma.xPublication.findMany({
+    where: {
+      status: {
+        in: [
+          "PUBLISHED",
+          "PARTIALLY_PUBLISHED",
+          "PUBLISHED_UNVERIFIED",
+          "SCHEDULED",
+          "DRAFT",
+          "PUBLISHING",
+          "FAILED",
+          "BLOCKED",
+        ],
+      },
+    },
+    orderBy: { createdAt: "desc" },
+    take: limit,
+    select: { researchItem: { select: { externalId: true } } },
+  });
+  return new Set(
+    rows
+      .map((r) => r.researchItem.externalId?.trim().toLowerCase())
+      .filter((v): v is string => Boolean(v)),
+  );
+}
+
+/** ContentVersion ids already referenced by X publications (hard ban). */
+export async function loadPostedXContentVersionIds(
+  prisma: DatabaseClient["prisma"],
+  options?: { limit?: number },
+): Promise<Set<string>> {
+  const limit = Math.max(1, Math.min(options?.limit ?? 500, 2000));
+  const rows = await prisma.xPublication.findMany({
+    where: {
+      status: {
+        in: [
+          "PUBLISHED",
+          "PARTIALLY_PUBLISHED",
+          "PUBLISHED_UNVERIFIED",
+          "SCHEDULED",
+          "DRAFT",
+          "PUBLISHING",
+          "FAILED",
+          "BLOCKED",
+        ],
+      },
+    },
+    orderBy: { createdAt: "desc" },
+    take: limit,
+    select: {
+      generatedContent: { select: { inputSnapshot: true } },
+    },
+  });
+  const out = new Set<string>();
+  for (const r of rows) {
+    const snap = asRecord(r.generatedContent.inputSnapshot);
+    const cv = snap.contentVersionId;
+    if (typeof cv === "string" && cv.trim()) out.add(cv.trim());
+  }
+  return out;
+}
+
+/**
+ * Booked X slotKeys across a short horizon (OS timezone independent).
+ * Keys look like 2026-09-14T21:00:00+09:00.
+ */
+export async function loadFilledXSlotKeys(
+  prisma: DatabaseClient["prisma"],
+  options?: { fromDayKey?: string; dayCount?: number; timeZone?: string },
+): Promise<Set<string>> {
+  const timeZone = options?.timeZone ?? "Asia/Tokyo";
+  const dayCount = Math.max(1, Math.min(options?.dayCount ?? 7, 14));
+  const fromDay = options?.fromDayKey ?? tokyoDateString(new Date(), timeZone);
+  const start = new Date(`${fromDay}T00:00:00+09:00`);
+  const end = new Date(start.getTime() + dayCount * 86_400_000);
+  const rows = await prisma.xPublication.findMany({
+    where: {
+      status: {
+        in: [
+          "PUBLISHED",
+          "PARTIALLY_PUBLISHED",
+          "PUBLISHED_UNVERIFIED",
+          "SCHEDULED",
+          "DRAFT",
+          "PUBLISHING",
+        ],
+      },
+      OR: [
+        { publishedAt: { gte: start, lt: end } },
+        { scheduledAt: { gte: start, lt: end } },
+      ],
+    },
+    select: { publishedAt: true, scheduledAt: true, strategyVersion: true },
+  });
+  const keys = new Set<string>();
+  for (const r of rows) {
+    const fromKey = /(?:^|\|)slotKey=([^|]+)(?:\||$)/.exec(r.strategyVersion ?? "");
+    if (fromKey?.[1]?.includes("T") && fromKey[1].includes("+09:00")) {
+      keys.add(fromKey[1]);
+      continue;
+    }
+    const at = r.publishedAt ?? r.scheduledAt;
+    if (!at) continue;
+    const day = tokyoDateString(at, timeZone);
+    const fromVersion = /(?:^|\|)slotHour=(\d{1,2})(?:\||$)/.exec(r.strategyVersion ?? "");
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(at);
+    const bag: Record<string, string> = {};
+    for (const p of parts) {
+      if (p.type !== "literal") bag[p.type] = p.value;
+    }
+    const hour = fromVersion?.[1] ? Number(fromVersion[1]) : Number(bag.hour);
+    const minute = fromVersion?.[1] ? 0 : Number(bag.minute ?? "0");
+    if (!Number.isFinite(hour)) continue;
+    const p = (n: number) => String(n).padStart(2, "0");
+    const [y, m, d] = day.split("-");
+    keys.add(`${y}-${m}-${d}T${p(hour)}:${p(minute)}:00+09:00`);
+  }
+  return keys;
 }
 
 export async function loadRecentMixHistory(

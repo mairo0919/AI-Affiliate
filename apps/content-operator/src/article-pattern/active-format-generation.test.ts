@@ -83,7 +83,7 @@ describe("ACTIVE Format → Generation wiring (SSOT resolveActiveFormat)", () =>
     const generation = new ContentGenerationService(
       lifecycleRepo,
       llm,
-      { generation: "mock", review: "mock", revision: "mock" },
+      { generation: "mock", writer: "mock", review: "mock", revision: "mock" },
       resolve,
     );
     const topic = await lifecycleRepo.createTopicCandidate({
@@ -165,7 +165,7 @@ describe("ACTIVE Format → Generation wiring (SSOT resolveActiveFormat)", () =>
     const generation = new ContentGenerationService(
       lifecycleRepo,
       llm,
-      { generation: "mock", review: "mock", revision: "mock" },
+      { generation: "mock", writer: "mock", review: "mock", revision: "mock" },
       resolve,
     );
     const topic = await lifecycleRepo.createTopicCandidate({
@@ -224,7 +224,7 @@ describe("ACTIVE Format → Generation wiring (SSOT resolveActiveFormat)", () =>
     const generation = new ContentGenerationService(
       lifecycleRepo,
       llm,
-      { generation: "mock", review: "mock", revision: "mock" },
+      { generation: "mock", writer: "mock", review: "mock", revision: "mock" },
       createResolveActiveFormat(service()),
     );
     const topic = await lifecycleRepo.createTopicCandidate({

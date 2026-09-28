@@ -3,6 +3,8 @@ import type {
   XCreatePostRequest,
   XCreatePostResult,
   XPostMetricsResult,
+  XUploadMediaRequest,
+  XUploadMediaResult,
 } from "../types.js";
 import { XPublishError } from "../types.js";
 
@@ -12,6 +14,8 @@ export interface XPublishingProvider {
   createPost(request: XCreatePostRequest): Promise<XCreatePostResult>;
   getPostMetrics(postIds: string[]): Promise<XPostMetricsResult[]>;
   deletePost?(postId: string): Promise<void>;
+  /** Upload image bytes/URL to X; returns media id for createPost.mediaIds. */
+  uploadMedia?(request: XUploadMediaRequest): Promise<XUploadMediaResult>;
 }
 
 export type MockXBehavior =
@@ -38,6 +42,8 @@ export class MockXPublishingProvider implements XPublishingProvider {
   private createCalls = 0;
   private readonly posts = new Map<string, { text: string; replyTo?: string }>();
   private readonly idempotency = new Map<string, XCreatePostResult>();
+  private readonly mediaIdempotency = new Map<string, XUploadMediaResult>();
+  private mediaSeq = 0;
   behavior: MockXBehavior;
   private readonly accountId: string;
   private readonly username?: string;
@@ -57,6 +63,20 @@ export class MockXPublishingProvider implements XPublishingProvider {
       accountId: this.accountId,
       ...(this.username ? { username: this.username } : {}),
     };
+  }
+
+  async uploadMedia(request: XUploadMediaRequest): Promise<XUploadMediaResult> {
+    const existing = this.mediaIdempotency.get(request.idempotencyKey);
+    if (existing) return existing;
+    this.mediaSeq += 1;
+    const result: XUploadMediaResult = {
+      mediaId: `mock-media-${this.mediaSeq}`,
+      mimeType: request.mimeType ?? "image/jpeg",
+      byteLength: request.bytes?.byteLength ?? 0,
+      sourceUrl: request.sourceUrl,
+    };
+    this.mediaIdempotency.set(request.idempotencyKey, result);
+    return result;
   }
 
   async createPost(request: XCreatePostRequest): Promise<XCreatePostResult> {
@@ -213,6 +233,14 @@ class UnconfiguredXApiPublishingProvider implements XPublishingProvider {
   }
 
   async createPost(): Promise<XCreatePostResult> {
+    throw new XPublishError(
+      "XApiPublishingProvider requires createLiveStack() wiring",
+      "Configuration",
+      { retryable: false },
+    );
+  }
+
+  async uploadMedia(): Promise<never> {
     throw new XPublishError(
       "XApiPublishingProvider requires createLiveStack() wiring",
       "Configuration",

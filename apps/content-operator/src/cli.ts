@@ -105,6 +105,7 @@ import {
   runXLiveDiagnose,
   runXLiveMetrics,
   runXLivePublish,
+  runXLiveSmokeOneShot,
   runXLiveStatus,
   runXUsageReport,
   runXUsageStatus,
@@ -1228,6 +1229,14 @@ async function runSchedulerRun(): Promise<void> {
     } else {
       console.log(`xPublishProcessed: ${result.xPublish.published}`);
     }
+    if ("skipped" in result.dailyOps && result.dailyOps.skipped) {
+      console.log(`dailyOps: SKIPPED (${result.dailyOps.skipReason})`);
+    } else if ("dayKey" in result.dailyOps) {
+      const d = result.dailyOps;
+      console.log(
+        `dailyOps: day=${d.dayKey} dryRun=${d.dryRun} blogAttempted=${d.blog.attempted} xAttempted=${d.x.attempted} xNote=${d.x.note ?? "-"} slots=${d.x.slots.map((s) => `${s.hour}:${s.status}:${s.reason}:${s.canonicalId ?? ""}`).join("|") || "none"}`,
+      );
+    }
     if ("skipReason" in result.xMetrics) {
       console.log(`xMetrics: SKIPPED (${result.xMetrics.skipReason})`);
     } else {
@@ -2219,6 +2228,9 @@ async function main(): Promise<void> {
       break;
     case "x-live-publish":
       await runXLivePublish(rest);
+      break;
+    case "x-live-smoke-oneshot":
+      await runXLiveSmokeOneShot(rest);
       break;
     case "x-live-metrics":
       await runXLiveMetrics(rest);

@@ -101,8 +101,10 @@ export function createLiveStack(options: CreateLiveStackOptions): XLiveStack {
     tokens,
     usage,
     budget,
+    live,
     now: options.now,
     sleep: options.sleep,
+    fetchImpl: options.fetchImpl,
     allowWrites: options.allowWrites,
     notifications: {
       emitXEvent: (eventType, payload) =>

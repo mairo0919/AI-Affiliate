@@ -148,7 +148,11 @@ export class XPublicationBuilder {
     }
   }
 
-  assertPostValid(post: GeneratedXPostSpec, strategyType: XPublicationStrategyType): void {
+  assertPostValid(
+    post: GeneratedXPostSpec,
+    strategyType: XPublicationStrategyType,
+    options?: { requireAffiliateDisclosure?: boolean },
+  ): void {
     const counted = this.counter.count(post.body);
     if (counted.weightedLength > this.config.xMaxWeightedLength) {
       throw new XPublicationValidationError(
@@ -165,13 +169,16 @@ export class XPublicationBuilder {
         `hashtag count ${hashtagCountExcludingDisclosure} exceeds ${this.config.xMaxHashtags}`,
       );
     }
+    const requireDisclosure = options?.requireAffiliateDisclosure !== false;
     if (
+      requireDisclosure &&
       (post.role === "ROOT" || post.role === "HUB") &&
       !post.body.includes(this.config.xAffiliateDisclosure)
     ) {
       throw new XPublicationValidationError("ROOT missing affiliate disclosure");
     }
     if (
+      requireDisclosure &&
       post.body.includes("http") &&
       !post.body.includes(this.config.xAffiliateDisclosure) &&
       strategyType !== "HUB_POST"

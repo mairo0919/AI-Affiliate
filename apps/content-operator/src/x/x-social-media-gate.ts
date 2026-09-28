@@ -704,7 +704,7 @@ export function evaluateXSocialMedia(input: {
         sourceUrl: c.sourceUrl,
         sourceKind: c.role === "hero" ? "article_hero" : "article_sample",
         imageType: c.imageType,
-        earlyPreferred: c.role === "hero",
+        earlyPreferred: c.role === "auxiliary",
         rightsStatus:
           c.usageStatus === "ALLOWED"
             ? ("ALLOWED" as const)
@@ -721,9 +721,10 @@ export function evaluateXSocialMedia(input: {
           c.usageStatus === "ALLOWED" ? ("X_SOCIAL_SAFE" as const) : ("SKIPPED_RIGHTS" as const),
         xSocialReasons:
           c.usageStatus === "ALLOWED"
-            ? ["reuse_article_pipeline_image"]
+            ? ["reuse_article_pipeline_image", "prefer_less_explicit"]
             : [`article_usage_${c.usageStatus}`],
-        suitabilityScore: c.role === "hero" ? 100 : 80,
+        suitabilityScore:
+          typeof c.exposureProxyScore === "number" ? Math.max(0, 100 - c.exposureProxyScore) : 50,
         adopted: c.adopted,
         excludeReason: c.excludeReason,
       })),

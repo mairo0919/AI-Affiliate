@@ -66,6 +66,7 @@ export async function runProductionDiagnose(): Promise<void> {
             usingMock: stack.usingMockLlm,
             models: {
               generation: config.llmModelGeneration,
+              writer: config.llmModelWriter,
               review: config.llmModelReview,
               revision: config.llmModelRevision,
               strategy: config.llmModelStrategy,

@@ -122,6 +122,7 @@ export async function repairApiArticleQualityInPlace(input: {
   const llm = requireApiLLMProvider(input.config);
   const generation = new ContentGenerationService(input.lifecycle, llm, {
     generation: input.config.llmModelGeneration,
+    writer: input.config.llmModelWriter,
     review: input.config.llmModelReview,
     revision: input.config.llmModelRevision,
   });

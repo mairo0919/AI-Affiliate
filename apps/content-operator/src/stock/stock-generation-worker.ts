@@ -231,6 +231,7 @@ export async function runStockGenerationBatch(deps: {
   const llm = requireApiLLMProvider(deps.config);
   const generation = new ContentGenerationService(deps.lifecycle, llm, {
     generation: deps.config.llmModelGeneration,
+    writer: deps.config.llmModelWriter,
     review: deps.config.llmModelReview,
     revision: deps.config.llmModelRevision,
   });

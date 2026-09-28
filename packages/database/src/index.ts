@@ -79,6 +79,15 @@ export {
   hashNormalizedBody,
   normalizePostBody,
 } from "./x-ops-repository.js";
+export {
+  DEFAULT_X_PRODUCT_RESERVATION_PUBLISH_GRACE_MINUTES,
+  DEFAULT_X_PRODUCT_RESERVATION_TTL_FLOOR_MINUTES,
+  X_RESERVATION_TERMINAL_PUBLICATION_STATUSES,
+  assertReservationExpiresAtInvariant,
+  computeXProductReservationExpiresAt,
+  isXReservationTerminalPublicationStatus,
+  shouldExpireReservationForPublication,
+} from "./x-reservation-lifecycle.js";
 export { XLiveRepository } from "./x-live-repository.js";
 export { LifecycleRepository } from "./lifecycle-repository.js";
 export type {

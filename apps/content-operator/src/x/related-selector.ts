@@ -2,6 +2,7 @@ import type {
   PublicationWithPosts,
   XPublicationRepository,
 } from "@ai-affiliate/database";
+import { isPublishedXPostUrl, isStrongRelatedRelation } from "./x-thread-publication.js";
 
 export interface RelatedCandidateContext {
   researchItemId: string;
@@ -42,15 +43,11 @@ export class XRelatedPostSelector {
       return null;
     }
 
-    // Diversify: avoid always picking the same publication by soft-penalizing repeats
     const scored: RelatedSelection[] = [];
     for (const publication of candidates) {
-      // Tag matching requires loading research item tags externally — score by candidateType in experimentGroup/strategy for now
-      // Caller should pass precomputed tag overlaps via enrichment; here we use available fields.
       let score = 0;
       const reasons: string[] = [];
 
-      // Prefer recent published
       if (publication.publishedAt) {
         const ageDays =
           (Date.now() - publication.publishedAt.getTime()) / (24 * 60 * 60 * 1000);
@@ -63,16 +60,11 @@ export class XRelatedPostSelector {
         score += 5;
       }
 
-      // Lightweight diversification: hash id into small jitter
       const jitter = (publication.id.charCodeAt(0) % 7) - 3;
       score += jitter;
 
       scored.push({ publication, score, reasons });
     }
-
-    // Enrichment pass: if tags provided, boost via researchItemId match done by caller
-    // Apply tag-based boosts when caller attached meta on experimentGroup as JSON — skip.
-    // Instead accept optional external scorer via tag overlaps on research items fetched by repo.
 
     scored.sort((a, b) => b.score - a.score);
     return scored[0] ?? null;
@@ -115,5 +107,10 @@ export class XRelatedPostSelector {
       reasons.push("sameCandidateType");
     }
     return { score, reasons };
+  }
+
+  /** True when relation is strong enough to attach as a RELATED_REPLY. */
+  isAttachable(reasons: string[], rootPostUrl?: string | null): boolean {
+    return isStrongRelatedRelation(reasons) && isPublishedXPostUrl(rootPostUrl);
   }
 }

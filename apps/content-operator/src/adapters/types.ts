@@ -172,6 +172,8 @@ export interface LLMTaskRequest {
   outputSchema?: Record<string, unknown> | null;
   model?: string;
   timeoutMs?: number;
+  /** Optional sampling temperature (provider default when omitted). */
+  temperature?: number;
 }
 
 export type LLMErrorClass =

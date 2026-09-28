@@ -21,6 +21,7 @@ export interface MockLLMUsageRecord {
 function readArticlePlan(input: Record<string, unknown>): {
   titleFacts: string[];
   bodyFacts: string[];
+  editorialDecision?: { angle?: string; readerHook?: string } | null;
 } | null {
   const authority = (input.generationAuthority ?? input.brainGenerationContract ?? {}) as Record<
     string,
@@ -46,7 +47,8 @@ function readArticlePlan(input: Record<string, unknown>): {
       )
     : [];
   if (titleFacts.length === 0 && bodyFacts.length === 0) return null;
-  return { titleFacts, bodyFacts };
+  const ed = plan.editorialDecision as { angle?: string; readerHook?: string } | undefined;
+  return { titleFacts, bodyFacts, editorialDecision: ed ?? null };
 }
 
 /** Leadless ArticlePlan-faithful mock article for OPTION B compliance tests. */
@@ -59,12 +61,20 @@ function buildMockArticleFromArticlePlan(
   const plan = readArticlePlan(input);
   const titleFacts = plan?.titleFacts?.length ? plan.titleFacts : [fallbackTitle];
   const bodyFacts = plan?.bodyFacts?.length ? plan.bodyFacts : [`${fallbackTitle}の公開情報`];
+  const ed = plan?.editorialDecision ?? null;
+  // Prefer editorial angle over fact-assembly when present (production title authority).
   const title =
-    titleFacts.length === 1
-      ? titleFacts[0]!
-      : titleFacts.length >= 2
-        ? `${titleFacts[0]}の${titleFacts.slice(1).join("・")}`
-        : fallbackTitle;
+    ed?.angle && ed.angle.length >= 8
+      ? ed.angle.length <= 48
+        ? ed.angle
+        : `${ed.angle.slice(0, 40)}を紹介`
+      : titleFacts.length === 1
+        ? titleFacts[0]!
+        : ed?.readerHook && ed.readerHook.length >= 8
+          ? ed.readerHook.slice(0, 48)
+          : titleFacts.length >= 2
+            ? `${titleFacts[0]}を軸にした作品紹介`
+            : fallbackTitle;
   // One paragraph per body fact (exact surface) so plan-fact matching stays EXACT.
   const paragraphs = bodyFacts.map((f) => `${f}。`);
   return {
@@ -161,6 +171,39 @@ export class MockLLMProvider implements LLMProvider {
       const planArticle = buildMockArticleFromArticlePlan(request.input, title, ctaUrl, claimIds);
       return this.record(request, {
         output: planArticle,
+        structuredOutputValid: true,
+      });
+    }
+
+    if (id.includes("x.social") || request.taskType === "GENERATION_X_SOCIAL") {
+      const xPlan = request.input.xPlan as
+        | {
+            subject?: string | null;
+            corePremise?: string | null;
+            primaryAppeal?: string | null;
+            secondaryAppeal?: string | null;
+            contentType?: string | null;
+          }
+        | undefined;
+      const subject = xPlan?.subject?.trim() || null;
+      const premise = (xPlan?.corePremise || "").replace(/[。．]+$/u, "").trim();
+      const appeal = (xPlan?.primaryAppeal || "").replace(/[。．]+$/u, "").trim();
+      let body = "";
+      if (subject && premise && !premise.includes(subject)) {
+        body = `${subject}が出演する作品で、${premise}。`;
+        if (appeal && appeal !== premise) body += `${appeal}。`;
+      } else if (subject && appeal) {
+        if (/^\d/u.test(appeal)) {
+          body = `${subject}が出演する企画として、${appeal}が軸になっている。`;
+        } else {
+          body = `${subject}を取り上げるなら、${appeal}という点に触れておきたい。`;
+        }
+      } else {
+        body = premise || appeal || `${title}の見どころを紹介。`;
+        if (!/[。！？]$/u.test(body)) body += "。";
+      }
+      return this.record(request, {
+        output: { body },
         structuredOutputValid: true,
       });
     }

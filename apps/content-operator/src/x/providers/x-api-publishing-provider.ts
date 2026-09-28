@@ -1,19 +1,24 @@
 import { createHash } from "node:crypto";
 import type { AppConfig } from "@ai-affiliate/config";
+import type { XLiveRepository } from "@ai-affiliate/database";
 import type { XApiBudgetService } from "../live/budget-service.js";
 import type { TokenRefreshService } from "../live/token-refresh-service.js";
 import type { XApiUsageService } from "../live/usage-service.js";
 import type { XApiHttpClient } from "../live/x-api-http-client.js";
+import { prepareArticleImageForXUpload, X_IMAGE_MAX_BYTES } from "../live/x-media-prepare.js";
 import type {
   XAccountIdentity,
   XCreatePostRequest,
   XCreatePostResult,
   XPostMetricsResult,
+  XUploadMediaRequest,
+  XUploadMediaResult,
 } from "../types.js";
 import { XPublishError } from "../types.js";
 import type { XPublishingProvider } from "./mock-provider.js";
 
 const PRIVATE_METRICS_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const MEDIA_CHUNK_SIZE = 1_000_000;
 
 export interface XApiPublishingProviderDeps {
   config: AppConfig;
@@ -21,8 +26,10 @@ export interface XApiPublishingProviderDeps {
   tokens: TokenRefreshService;
   usage: XApiUsageService;
   budget: XApiBudgetService;
+  live?: XLiveRepository;
   now?: () => Date;
   sleep?: (ms: number) => Promise<void>;
+  fetchImpl?: typeof fetch;
   /** When false, createPost is a no-op throw (DISABLED/DRY_RUN handled upstream). */
   allowWrites?: boolean;
   notifications?: {
@@ -51,21 +58,36 @@ export class XApiPublishingProvider implements XPublishingProvider {
   readonly providerName = "x-api";
   private readonly now: () => Date;
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly fetchImpl: typeof fetch;
   private cachedAccount: XAccountIdentity | null = null;
+  private resolvedAccountId: string | null = null;
   private refreshedOnceForRequest = false;
+  /** Idempotent media upload cache (process-local + keyed by idempotencyKey). */
+  private readonly mediaUploadCache = new Map<string, XUploadMediaResult>();
 
   constructor(private readonly deps: XApiPublishingProviderDeps) {
     this.now = deps.now ?? (() => new Date());
     this.sleep = deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+    this.fetchImpl = deps.fetchImpl ?? fetch;
   }
 
-  private resolveAccountId(): string {
-    const configured = this.deps.config.xApiAccountId;
-    if (configured) return configured;
+  private async resolveAccountId(): Promise<string> {
+    if (this.deps.config.xApiAccountId) {
+      this.resolvedAccountId = this.deps.config.xApiAccountId;
+      return this.deps.config.xApiAccountId;
+    }
     if (this.cachedAccount?.accountId) return this.cachedAccount.accountId;
-    throw new XPublishError("X_API_ACCOUNT_ID is required", "Configuration", {
-      retryable: false,
-    });
+    if (this.resolvedAccountId) return this.resolvedAccountId;
+    const active = await this.deps.live?.findActiveCredential();
+    if (active?.accountId) {
+      this.resolvedAccountId = active.accountId;
+      return active.accountId;
+    }
+    throw new XPublishError(
+      "X_API_ACCOUNT_ID is required (or an ACTIVE XApiCredential in DB)",
+      "Configuration",
+      { retryable: false },
+    );
   }
 
   async getAuthenticatedAccount(): Promise<XAccountIdentity> {
@@ -74,7 +96,7 @@ export class XApiPublishingProvider implements XPublishingProvider {
         retryable: false,
       });
     }
-    const accountId = this.resolveAccountId();
+    const accountId = await this.resolveAccountId();
     const accessToken = await this.deps.tokens.getValidAccessToken(accountId);
     const response = await this.withAuthRetry(accountId, (token) =>
       this.deps.http.request<{
@@ -116,7 +138,237 @@ export class XApiPublishingProvider implements XPublishingProvider {
       confirmedAt: this.now(),
     };
     this.cachedAccount = identity;
+    this.resolvedAccountId = id;
     return identity;
+  }
+
+  /**
+   * Official X API v2 chunked media upload for images:
+   * initialize → append → finalize. Requires media.write scope.
+   */
+  async uploadMedia(request: XUploadMediaRequest): Promise<XUploadMediaResult> {
+    if (!this.deps.config.xApiEnabled) {
+      throw new XPublishError("X API is not enabled", "Configuration", {
+        retryable: false,
+      });
+    }
+    if (this.deps.allowWrites === false) {
+      throw new XPublishError("Live writes are disabled", "Configuration", {
+        retryable: false,
+      });
+    }
+    if (this.deps.config.xReleaseMode === "DISABLED") {
+      throw new XPublishError("X_RELEASE_MODE=DISABLED", "Configuration", {
+        retryable: false,
+      });
+    }
+    if (this.deps.config.xReleaseMode === "DRY_RUN") {
+      throw new XPublishError("DRY_RUN refuses uploadMedia", "Configuration", {
+        retryable: false,
+      });
+    }
+
+    const cached = this.mediaUploadCache.get(request.idempotencyKey);
+    if (cached) return cached;
+
+    const account = this.cachedAccount ?? (await this.getAuthenticatedAccount());
+    const prepared = await prepareArticleImageForXUpload({
+      sourceUrl: request.sourceUrl,
+      bytes: request.bytes,
+      mimeType: request.mimeType,
+      fetchImpl: this.fetchImpl,
+    });
+
+    const writeCost = this.deps.usage.estimateCost("write");
+    const budget = await this.deps.budget.checkPaidRequest(account.accountId, writeCost);
+    if (!budget.allowed) {
+      throw new XPublishError(budget.reason ?? "API_BUDGET_PAUSED", "Configuration", {
+        retryable: false,
+      });
+    }
+
+    const accessToken = await this.deps.tokens.getValidAccessToken(account.accountId);
+    const mediaCategory = request.mediaCategory ?? "tweet_image";
+
+    // Official v2 simple upload for images (supported path). Chunked remains available
+    // for larger payloads; prefer simple for typical article hero JPEGs.
+    if (prepared.bytes.length <= X_IMAGE_MAX_BYTES) {
+      const form = new FormData();
+      form.append(
+        "media",
+        new Blob([new Uint8Array(prepared.bytes)], { type: prepared.mimeType }),
+        "image",
+      );
+      form.append("media_category", mediaCategory);
+      const simple = await this.withAuthRetry(account.accountId, (token) =>
+        this.deps.http.request<{
+          data?: { id?: string; media_key?: string };
+          id?: string;
+          media_id_string?: string;
+        }>({
+          method: "POST",
+          path: "/2/media/upload",
+          endpointKey: "media.upload",
+          requestType: "MEDIA_UPLOAD_SIMPLE",
+          multipart: form,
+          accessToken: token,
+          accountId: account.accountId,
+          estimatedCost: writeCost,
+          billingUnit: "write",
+          disableRetry: true,
+        }),
+        accessToken,
+      );
+      const mediaId =
+        simple.data?.data?.id ?? simple.data?.id ?? simple.data?.media_id_string;
+      if (!mediaId) {
+        throw new XPublishError("media simple upload missing id", "ServerError", {
+          retryable: true,
+          httpStatus: simple.statusCode,
+        });
+      }
+      const result: XUploadMediaResult = {
+        mediaId,
+        mimeType: prepared.mimeType,
+        byteLength: prepared.bytes.length,
+        sourceUrl: request.sourceUrl,
+      };
+      this.mediaUploadCache.set(request.idempotencyKey, result);
+      return result;
+    }
+
+    const init = await this.withAuthRetry(account.accountId, (token) =>
+      this.deps.http.request<{
+        data?: { id?: string; media_key?: string };
+        id?: string;
+      }>({
+        method: "POST",
+        path: "/2/media/upload/initialize",
+        endpointKey: "media.upload.init",
+        requestType: "MEDIA_UPLOAD_INIT",
+        body: {
+          media_type: prepared.mimeType,
+          total_bytes: prepared.bytes.length,
+          media_category: mediaCategory,
+        },
+        accessToken: token,
+        accountId: account.accountId,
+        estimatedCost: writeCost,
+        billingUnit: "write",
+        disableRetry: true,
+      }),
+      accessToken,
+    );
+
+    const mediaId = init.data?.data?.id ?? init.data?.id;
+    if (!mediaId) {
+      throw new XPublishError("media initialize missing id", "ServerError", {
+        retryable: true,
+        httpStatus: init.statusCode,
+      });
+    }
+
+    let segmentIndex = 0;
+    for (let offset = 0; offset < prepared.bytes.length; offset += MEDIA_CHUNK_SIZE) {
+      const chunk = prepared.bytes.subarray(offset, offset + MEDIA_CHUNK_SIZE);
+      const form = new FormData();
+      form.append(
+        "media",
+        new Blob([new Uint8Array(chunk)], { type: prepared.mimeType }),
+        `segment-${segmentIndex}`,
+      );
+      form.append("segment_index", String(segmentIndex));
+      await this.withAuthRetry(account.accountId, (token) =>
+        this.deps.http.request({
+          method: "POST",
+          path: `/2/media/upload/${mediaId}/append`,
+          endpointKey: "media.upload.append",
+          requestType: "MEDIA_UPLOAD_APPEND",
+          multipart: form,
+          accessToken: token,
+          accountId: account.accountId,
+          estimatedCost: this.deps.usage.estimateCost("write"),
+          billingUnit: "write",
+          disableRetry: true,
+        }),
+        accessToken,
+      );
+      segmentIndex += 1;
+    }
+
+    const finalized = await this.withAuthRetry(account.accountId, (token) =>
+      this.deps.http.request<{
+        data?: {
+          id?: string;
+          processing_info?: { state?: string; check_after_secs?: number };
+        };
+      }>({
+        method: "POST",
+        path: `/2/media/upload/${mediaId}/finalize`,
+        endpointKey: "media.upload.finalize",
+        requestType: "MEDIA_UPLOAD_FINALIZE",
+        body: {},
+        accessToken: token,
+        accountId: account.accountId,
+        estimatedCost: writeCost,
+        billingUnit: "write",
+        disableRetry: true,
+      }),
+      accessToken,
+    );
+
+    const processing = finalized.data?.data?.processing_info;
+    if (processing?.state && processing.state !== "succeeded") {
+      if (processing.state === "failed") {
+        throw new XPublishError("media processing failed", "ContentRejected", {
+          retryable: false,
+          httpStatus: finalized.statusCode,
+        });
+      }
+      let attempts = 0;
+      let checkAfter = processing.check_after_secs ?? 2;
+      while (attempts < 8) {
+        const waitSecs = Math.max(2, Math.min(20, checkAfter));
+        await this.sleep(waitSecs * 1000);
+        const status = await this.withAuthRetry(account.accountId, (token) =>
+          this.deps.http.request<{
+            data?: {
+              processing_info?: { state?: string; check_after_secs?: number };
+            };
+          }>({
+            method: "GET",
+            path: `/2/media/upload?command=STATUS&media_id=${encodeURIComponent(mediaId)}`,
+            endpointKey: "media.upload.status",
+            requestType: "MEDIA_UPLOAD_STATUS",
+            accessToken: token,
+            accountId: account.accountId,
+            estimatedCost: this.deps.usage.estimateCost("read"),
+            billingUnit: "read",
+            disableRetry: true,
+          }),
+          accessToken,
+        );
+        const pi = status.data?.data?.processing_info;
+        const state = pi?.state;
+        if (!state || state === "succeeded") break;
+        if (state === "failed") {
+          throw new XPublishError("media processing failed", "ContentRejected", {
+            retryable: false,
+          });
+        }
+        checkAfter = pi?.check_after_secs ?? checkAfter;
+        attempts += 1;
+      }
+    }
+
+    const result: XUploadMediaResult = {
+      mediaId,
+      mimeType: prepared.mimeType,
+      byteLength: prepared.bytes.length,
+      sourceUrl: request.sourceUrl,
+    };
+    this.mediaUploadCache.set(request.idempotencyKey, result);
+    return result;
   }
 
   async createPost(request: XCreatePostRequest): Promise<XCreatePostResult> {
@@ -155,6 +407,9 @@ export class XApiPublishingProvider implements XPublishingProvider {
     if (request.replyToPostId) {
       body.reply = { in_reply_to_tweet_id: request.replyToPostId };
     }
+    if (request.mediaIds && request.mediaIds.length > 0) {
+      body.media = { media_ids: request.mediaIds };
+    }
 
     const accessToken = await this.deps.tokens.getValidAccessToken(account.accountId);
     let response;
@@ -183,7 +438,6 @@ export class XApiPublishingProvider implements XPublishingProvider {
           accountId: account.accountId,
         });
       }
-      // Timeout after write: do not auto-repost; surface for state check
       throw error;
     }
 
@@ -220,9 +474,6 @@ export class XApiPublishingProvider implements XPublishingProvider {
         });
         if (verify.data?.data?.id === xPostId) {
           verified = true;
-          if (verify.data.data.text != null && returnedHash == null) {
-            // do not invent returned text earlier; verify can confirm existence only
-          }
         }
       } catch {
         verified = false;
@@ -275,7 +526,7 @@ export class XApiPublishingProvider implements XPublishingProvider {
     }
     if (postIds.length === 0) return [];
 
-    const accountId = this.resolveAccountId();
+    const accountId = await this.resolveAccountId();
     const readCost = this.deps.usage.estimateCost("analytics", postIds.length);
     const budget = await this.deps.budget.checkPaidRequest(accountId, readCost);
     if (!budget.allowed) {
@@ -394,7 +645,7 @@ export class XApiPublishingProvider implements XPublishingProvider {
         retryable: false,
       });
     }
-    const accountId = this.resolveAccountId();
+    const accountId = await this.resolveAccountId();
     const token = await this.deps.tokens.getValidAccessToken(accountId);
     await this.deps.http.request({
       method: "DELETE",

@@ -83,6 +83,12 @@ export function evaluateXBacklogEligibility(
   if (input.bodyEmpty === true) {
     reasons.push("BODY_EMPTY");
   }
+  // WP→FANZA funnel: X backlog requires a public WordPress article.
+  if (input.wpStatus != null && input.wpStatus !== "") {
+    if (!isWordPressPublicForXTraffic(input.wpStatus)) {
+      reasons.push("WP_NOT_PUBLIC");
+    }
+  }
   return {
     eligible: reasons.length === 0,
     reasons: [...new Set(reasons)],

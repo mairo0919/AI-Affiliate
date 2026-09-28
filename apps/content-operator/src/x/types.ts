@@ -31,6 +31,25 @@ export interface XCreatePostRequest {
   text: string;
   replyToPostId?: string;
   idempotencyKey: string;
+  /** X media ids from prior upload (images). Attached as media.media_ids. */
+  mediaIds?: string[];
+}
+
+export interface XUploadMediaRequest {
+  /** Source image URL (article pipeline resolved). */
+  sourceUrl: string;
+  /** Optional pre-fetched bytes (skip re-download on retry). */
+  bytes?: Uint8Array;
+  mimeType?: string;
+  idempotencyKey: string;
+  mediaCategory?: "tweet_image";
+}
+
+export interface XUploadMediaResult {
+  mediaId: string;
+  mimeType: string;
+  byteLength: number;
+  sourceUrl: string;
 }
 
 export interface XCreatePostResult {

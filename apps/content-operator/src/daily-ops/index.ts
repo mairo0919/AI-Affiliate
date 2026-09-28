@@ -7,4 +7,6 @@ export * from "./live-orchestrator.js";
 export * from "./orchestrator.js";
 export * from "./publication-history.js";
 export * from "./release-age.js";
+export * from "./x-post-schedule.js";
 export * from "./x-route.js";
+export * from "./x-slot-live.js";

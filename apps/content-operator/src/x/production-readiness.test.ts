@@ -56,6 +56,7 @@ function safeConfig(overrides: Partial<typeof base> = {}) {
     ],
     xProductCooldownHours: 168,
     xProductReservationTtlMinutes: 30,
+    xProductReservationPublishGraceMinutes: 180,
     ...overrides,
   };
 }

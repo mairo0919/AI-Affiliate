@@ -501,7 +501,13 @@ export async function runXLiveDiagnose(): Promise<void> {
     const scopes = Array.isArray(anyCred?.scopes)
       ? (anyCred!.scopes as string[])
       : [];
-    const requiredScopes = ["tweet.read", "tweet.write", "users.read", "offline.access"];
+    const requiredScopes = [
+      "tweet.read",
+      "tweet.write",
+      "users.read",
+      "offline.access",
+      "media.write",
+    ];
     const missingScopes = requiredScopes.filter((s) => !scopes.includes(s));
 
     const dbKill = await ops.isControlActive("GLOBAL_KILL_SWITCH", now);
@@ -938,3 +944,69 @@ export async function runXBudgetResume(argv: string[]): Promise<void> {
     console.log(JSON.stringify({ resumed: true }, null, 2));
   });
 }
+
+/**
+ * One-shot live smoke for juvr00281 only.
+ * Usage:
+ *   x-live-smoke-oneshot --preflight
+ *   x-live-smoke-oneshot --live --confirm-cid=juvr00281
+ */
+export async function runXLiveSmokeOneShot(argv: string[]): Promise<void> {
+  const flags = parseFlags(argv);
+  const preflightOnly =
+    flags.preflight === true ||
+    flags.preflight === "true" ||
+    (flags.live !== true && flags.live !== "true");
+  const executeLive = flags.live === true || flags.live === "true";
+  const confirmCid = (flagString(flags, "confirm-cid") ?? "").toLowerCase();
+
+  if (executeLive && confirmCid !== "juvr00281") {
+    console.error("Refuse live smoke without --confirm-cid=juvr00281");
+    process.exitCode = 1;
+    return;
+  }
+
+  await withDb(async (database) => {
+    const config = loadConfig();
+    // Process-local allowlist only (does not persist to Railway service env)
+    (config as { xOneShotLiveSmokeCid?: string }).xOneShotLiveSmokeCid = "juvr00281";
+    (config as { xAutoPublicationEnabled?: boolean }).xAutoPublicationEnabled = false;
+
+    const sourceCredentialDatabaseUrl =
+      flagString(flags, "credential-source-database-url") ??
+      process.env.X_CREDENTIAL_SOURCE_DATABASE_URL ??
+      undefined;
+
+    const { runOneShotLiveSmoke } = await import("./one-shot-live-smoke.js");
+    const report = await runOneShotLiveSmoke({
+      database,
+      config,
+      executeLive: executeLive && !preflightOnly,
+      sourceCredentialDatabaseUrl,
+    });
+    console.log(JSON.stringify(redactSmokeReport(report), null, 2));
+    if (executeLive && report.success !== true) {
+      process.exitCode = 1;
+    }
+  });
+}
+
+/** Redact tokens/secrets but keep intentional post body for smoke reports. */
+function redactSmokeReport(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactSmokeReport);
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) {
+      if (/token|secret|authorization|verifier|password|encrypted/i.test(k)) {
+        out[k] = "[redacted]";
+      } else if (k === "bodyPreview" || k === "postedBody") {
+        out[k] = v;
+      } else {
+        out[k] = redactSmokeReport(v);
+      }
+    }
+    return out;
+  }
+  return value;
+}
+

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildXSocialSafeBodyFromEvidence,
   detectXAdultExpressions,
+  stripXAdultSpans,
   enforceXSocialContentBody,
   filterClaimsForXSocialContent,
   isXSocialSafeClaimStatement,
@@ -22,6 +23,9 @@ describe("X_SOCIAL_CONTENT policy", () => {
     expect(detectXAdultExpressions("濃厚セックスと激しいピストン").hit).toBe(true);
     expect(detectXAdultExpressions("パイズリ収録").hit).toBe(true);
     expect(detectXAdultExpressions("最新12タイトルの全コーナーを収録").hit).toBe(false);
+    expect(stripXAdultSpans("1本限りのアナルSEX復活と玉城夏帆撮影中にアナルSEXを交渉してみた")).toMatch(
+      /復活|交渉|撮影/,
+    );
     expect(isXSocialSafeClaimStatement("奥田咲")).toBe(true);
     expect(isXSocialSafeClaimStatement("低身長なのにグラマラスボディ")).toBe(false);
     expect(

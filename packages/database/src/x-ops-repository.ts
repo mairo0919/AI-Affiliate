@@ -10,6 +10,11 @@ import type {
   XProductReservationStatus,
   XRuntimeControl,
 } from "@prisma/client";
+import {
+  DEFAULT_X_PRODUCT_RESERVATION_PUBLISH_GRACE_MINUTES,
+  assertReservationExpiresAtInvariant,
+  shouldExpireReservationForPublication,
+} from "./x-reservation-lifecycle.js";
 
 export class XOpsStateError extends Error {
   constructor(message: string) {
@@ -48,6 +53,7 @@ export class XOpsRepository {
     provider: string;
     researchItemId?: string | null;
     contentCandidateId?: string | null;
+    nextEligibleAt?: Date | null;
   }): Promise<XProductPublicationState> {
     return this.prisma.xProductPublicationState.upsert({
       where: { productKey: input.productKey },
@@ -56,11 +62,15 @@ export class XOpsRepository {
         provider: input.provider,
         researchItemId: input.researchItemId ?? null,
         contentCandidateId: input.contentCandidateId ?? null,
+        nextEligibleAt: input.nextEligibleAt ?? null,
       },
       update: {
         provider: input.provider,
         researchItemId: input.researchItemId ?? undefined,
         contentCandidateId: input.contentCandidateId ?? undefined,
+        ...(input.nextEligibleAt !== undefined
+          ? { nextEligibleAt: input.nextEligibleAt }
+          : {}),
       },
     });
   }
@@ -100,6 +110,11 @@ export class XOpsRepository {
           `ACTIVE reservation already exists for productKey=${input.productKey}`,
         );
       }
+
+      assertReservationExpiresAtInvariant({
+        expiresAt: input.expiresAt,
+        scheduledAt: input.scheduledAt,
+      });
 
       const reservation = await tx.xProductPublicationReservation.create({
         data: {
@@ -184,15 +199,127 @@ export class XOpsRepository {
     });
   }
 
-  async expireDueReservations(now: Date): Promise<number> {
+  /**
+   * Expire ACTIVE reservations whose expiresAt has passed — but never kill a
+   * reservation still required by a future scheduled publication.
+   *
+   * When expiresAt was incorrectly shortened (e.g. flat NOW()+24h repair),
+   * extend expiresAt to scheduledAt + publishGrace instead of expiring.
+   */
+  async expireDueReservations(
+    now: Date,
+    options?: { publishGraceMinutes?: number },
+  ): Promise<number> {
+    const publishGraceMinutes =
+      options?.publishGraceMinutes ??
+      DEFAULT_X_PRODUCT_RESERVATION_PUBLISH_GRACE_MINUTES;
     const due = await this.prisma.xProductPublicationReservation.findMany({
       where: { status: "ACTIVE", expiresAt: { lt: now } },
       take: 100,
     });
+    let expired = 0;
     for (const row of due) {
+      const publication = await this.prisma.xPublication.findUnique({
+        where: { id: row.publicationId },
+        select: { status: true, scheduledAt: true },
+      });
+      const decision = shouldExpireReservationForPublication({
+        now,
+        expiresAt: row.expiresAt,
+        publication,
+        publishGraceMinutes,
+      });
+      if (!decision.expire) {
+        if (decision.extendExpiresAt) {
+          assertReservationExpiresAtInvariant({
+            expiresAt: decision.extendExpiresAt,
+            scheduledAt: publication?.scheduledAt,
+          });
+          await this.prisma.xProductPublicationReservation.update({
+            where: { id: row.id },
+            data: {
+              expiresAt: decision.extendExpiresAt,
+              reason: `lifecycle-extend:${decision.reason}`,
+            },
+          });
+        }
+        continue;
+      }
       await this.releaseReservation(row.publicationId, "EXPIRED");
+      expired += 1;
     }
-    return due.length;
+    return expired;
+  }
+
+  /**
+   * Restore EXPIRED/RELEASED/CANCELLED reservation to ACTIVE with an expiresAt
+   * that respects the scheduledAt invariant. Used for scoped production repair.
+   */
+  async restoreReservationForPublication(input: {
+    publicationId: string;
+    expiresAt: Date;
+    reason: string;
+    scheduledAt?: Date | null;
+  }): Promise<XProductPublicationReservation> {
+    assertReservationExpiresAtInvariant({
+      expiresAt: input.expiresAt,
+      scheduledAt: input.scheduledAt,
+    });
+    return this.prisma.$transaction(async (tx) => {
+      const reservation = await tx.xProductPublicationReservation.findUnique({
+        where: { publicationId: input.publicationId },
+      });
+      if (!reservation) {
+        throw new XOpsStateError(
+          `reservation not found for publication=${input.publicationId}`,
+        );
+      }
+      if (reservation.status === "CONSUMED") {
+        throw new XOpsStateError(
+          `cannot restore CONSUMED reservation publication=${input.publicationId}`,
+        );
+      }
+      if (reservation.status === "ACTIVE") {
+        return tx.xProductPublicationReservation.update({
+          where: { id: reservation.id },
+          data: {
+            expiresAt: input.expiresAt,
+            reason: input.reason,
+            releasedAt: null,
+          },
+        });
+      }
+      const otherActive = await tx.xProductPublicationReservation.findFirst({
+        where: {
+          productKey: reservation.productKey,
+          status: "ACTIVE",
+          id: { not: reservation.id },
+        },
+      });
+      if (otherActive) {
+        throw new XOpsStateError(
+          `ACTIVE reservation already exists for productKey=${reservation.productKey}`,
+        );
+      }
+      const updated = await tx.xProductPublicationReservation.update({
+        where: { id: reservation.id },
+        data: {
+          status: "ACTIVE",
+          expiresAt: input.expiresAt,
+          reason: input.reason,
+          releasedAt: null,
+        },
+      });
+      await tx.xProductPublicationState.update({
+        where: { productKey: reservation.productKey },
+        data: {
+          activeReservationCount: { increment: 1 },
+          lastPublicationId: input.publicationId,
+          lastScheduledAt: input.scheduledAt ?? undefined,
+        },
+      });
+      return updated;
+    });
   }
 
   async countActiveReservations(): Promise<number> {

@@ -69,7 +69,115 @@ async function loadPublishedBlogUrls(
 }
 
 /**
- * Build pool from the latest completed analysis run (or ResearchItem fallback).
+ * Seed / top-up pool with WordPress PUBLISHED rows that already have a linked
+ * ContentVersion (Factory backfill / live publish). Analysis top-N alone often
+ * omits these, which leaves X WP_TRAFFIC with zero PASS probes.
+ */
+export async function loadWordPressPublishedCandidates(
+  prisma: DatabaseClient["prisma"],
+  input: {
+    releaseAge: ReleaseAgeThresholds;
+    now?: Date;
+    limit?: number;
+  },
+): Promise<ChannelCandidate[]> {
+  const now = input.now ?? new Date();
+  const limit = Math.max(1, Math.min(input.limit ?? 80, 200));
+  const targets = await prisma.publicationTarget.findMany({
+    where: {
+      platform: "WORDPRESS",
+      status: "PUBLISHED",
+      publishedUrl: { not: "" },
+    },
+    orderBy: [{ publishedAt: "desc" }, { updatedAt: "desc" }],
+    take: limit * 2,
+    select: {
+      publishedUrl: true,
+      platformMetadata: true,
+      contentVersionId: true,
+    },
+  });
+
+  const byCid = new Map<string, { url: string; contentVersionId: string }>();
+  for (const t of targets) {
+    if (!t.contentVersionId || !t.publishedUrl) continue;
+    const meta = asRecord(t.platformMetadata);
+    const rawCid =
+      (typeof meta.canonicalId === "string" && meta.canonicalId) ||
+      (typeof meta.externalId === "string" && meta.externalId) ||
+      null;
+    const cid = rawCid?.trim().toLowerCase();
+    if (!cid || !t.publishedUrl || !t.contentVersionId) continue;
+    if (!byCid.has(cid)) {
+      byCid.set(cid, { url: t.publishedUrl, contentVersionId: t.contentVersionId });
+    }
+  }
+  if (byCid.size === 0) return [];
+
+  const items = await prisma.researchItem.findMany({
+    where: { externalId: { in: [...byCid.keys()] } },
+    include: {
+      images: true,
+      tags: { include: { researchTag: true } },
+    },
+  });
+  const byExternal = new Map(items.map((i) => [i.externalId.trim().toLowerCase(), i] as const));
+
+  const out: ChannelCandidate[] = [];
+  for (const [cid, link] of byCid) {
+    const item = byExternal.get(cid);
+    if (!item) continue;
+    const sampleImageCount = item.images.length;
+    const publishedAt = item.publishedAt?.toISOString() ?? null;
+    const ageDays =
+      item.publishedAt != null
+        ? (now.getTime() - item.publishedAt.getTime()) / 86400000
+        : null;
+    out.push({
+      researchItemId: item.id,
+      canonicalId: item.externalId,
+      // Above default X minTotalScore (20) so WP-ready inventory is selectable.
+      totalScore: 70 + Math.min(25, sampleImageCount * 2),
+      popularityScore: null,
+      trendScore: null,
+      freshnessScore: null,
+      dataQualityScore: sampleImageCount > 0 ? 60 : 40,
+      reviewScore: null,
+      pageEvidenceRichness: Math.min(1, Math.max(0.5, sampleImageCount / 8 + 0.35)),
+      sampleImageCount,
+      actressKey: tagName(item.tags, "actress"),
+      makerKey: tagName(item.tags, "maker"),
+      seriesKey: tagName(item.tags, "series"),
+      affiliateUrl: extractAffiliateUrl(item.rawData, item.url),
+      title: item.title,
+      publishedAt,
+      releaseAgeBucket: classifyReleaseAge(ageDays, input.releaseAge),
+      publishedBlogUrl: link.url,
+    });
+  }
+  return out;
+}
+
+function mergeCandidatePools(
+  primary: ChannelCandidate[],
+  extra: ChannelCandidate[],
+  limit: number,
+): ChannelCandidate[] {
+  const seen = new Set<string>();
+  const out: ChannelCandidate[] = [];
+  for (const c of [...extra, ...primary]) {
+    const cid = c.canonicalId.trim().toLowerCase();
+    if (!cid || seen.has(cid)) continue;
+    seen.add(cid);
+    out.push(c);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+/**
+ * Build pool from the latest completed analysis run (or ResearchItem fallback),
+ * topped up with WordPress-PUBLISHED Factory-linked inventory for X WP_TRAFFIC.
  */
 export async function loadDailyCandidatePool(
   prisma: DatabaseClient["prisma"],
@@ -82,6 +190,11 @@ export async function loadDailyCandidatePool(
   const now = input.now ?? new Date();
   const limit = Math.max(1, Math.min(input.limit ?? 80, 200));
   const blogUrlByCid = await loadPublishedBlogUrls(prisma);
+  const wpPublished = await loadWordPressPublishedCandidates(prisma, {
+    releaseAge: input.releaseAge,
+    now,
+    limit,
+  });
 
   const latestRun = await prisma.analysisRun.findFirst({
     where: { status: "COMPLETED" },
@@ -106,7 +219,7 @@ export async function loadDailyCandidatePool(
       },
     });
 
-    const pool: ChannelCandidate[] = analyses.map((a) => {
+    const analysisPool: ChannelCandidate[] = analyses.map((a) => {
       const item = a.researchItem;
       const externalId = item.externalId;
       const sampleImageCount = item.images.length;
@@ -145,7 +258,10 @@ export async function loadDailyCandidatePool(
       };
     });
 
-    return { pool, analysisRunId: latestRun.id };
+    return {
+      pool: mergeCandidatePools(analysisPool, wpPublished, Math.max(limit, wpPublished.length + 20)),
+      analysisRunId: latestRun.id,
+    };
   }
 
   // Fallback: ResearchItems without Analysis (selection still requires evidence thresholds)
@@ -158,7 +274,7 @@ export async function loadDailyCandidatePool(
     },
   });
 
-  const pool: ChannelCandidate[] = items.map((item) => {
+  const researchPool: ChannelCandidate[] = items.map((item) => {
     const sampleImageCount = item.images.length;
     const publishedAt = item.publishedAt?.toISOString() ?? null;
     const ageDays =
@@ -187,5 +303,8 @@ export async function loadDailyCandidatePool(
     };
   });
 
-  return { pool, analysisRunId: null };
+  return {
+    pool: mergeCandidatePools(researchPool, wpPublished, Math.max(limit, wpPublished.length + 20)),
+    analysisRunId: null,
+  };
 }

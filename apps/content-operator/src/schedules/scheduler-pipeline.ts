@@ -755,7 +755,9 @@ export class SchedulerPipeline {
     if (this.config.xGlobalKillSwitch || runtimeKill || runtimePaused) {
       return { skipped: true, skipReason: "X_KILL_SWITCH_OR_PAUSE" };
     }
-    await this.opsRepo.expireDueReservations(this.now());
+    await this.opsRepo.expireDueReservations(this.now(), {
+      publishGraceMinutes: this.config.xProductReservationPublishGraceMinutes,
+    });
     const results = await this.xPublicationService.runDue(20);
     const published = results.filter(
       (r) => r.status === "PUBLISHED" || r.status === "PUBLISHED_UNVERIFIED",

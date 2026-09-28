@@ -70,6 +70,8 @@ export function runMultiChannelDailyDry(input: MultiChannelDryInput): MultiChann
     minSampleImages: 3,
     minEvidenceRichness: 0.25,
     now,
+    allowDirectAffiliateRoute: config.allowDirectAffiliateRoute === true,
+    allowCombinedRoute: config.allowCombinedRoute === true,
   });
 
   const poolBucketCounts: Record<string, number> = {};

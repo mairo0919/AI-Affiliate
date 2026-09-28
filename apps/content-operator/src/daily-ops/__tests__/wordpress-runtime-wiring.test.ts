@@ -318,6 +318,7 @@ describe("wordpress runtime wiring (daily-ops / scheduler)", () => {
     expect(live).toContain("xPublicationService");
     expect(live).toContain("XPublicationService");
     expect(live).toMatch(/\/\/ ——— X/);
-    expect(live).toContain("loadCanonicalXSource");
+    expect(live).toContain("planXHorizonFromProbes");
+    expect(live).toContain("./x-slot-live.js");
   });
 });

@@ -10,6 +10,11 @@ export type XApiEndpointKey =
   | "tweets.get"
   | "tweets.delete"
   | "tweets.metrics"
+  | "media.upload"
+  | "media.upload.init"
+  | "media.upload.append"
+  | "media.upload.finalize"
+  | "media.upload.status"
   | "usage.get"
   | "other";
 
@@ -20,6 +25,8 @@ export interface XApiHttpRequest {
   requestType: string;
   body?: unknown;
   form?: URLSearchParams;
+  /** multipart/form-data (do not set Content-Type manually). */
+  multipart?: FormData;
   accessToken?: string;
   basicAuth?: { username: string; password: string };
   accountId?: string | null;
@@ -77,6 +84,13 @@ function classifyStatus(status: number): {
   if (status === 429) {
     return { errorType: "RateLimit", retryable: true, errorCode: "RATE_LIMIT" };
   }
+  if (status === 402) {
+    return {
+      errorType: "Configuration",
+      retryable: false,
+      errorCode: "PAYMENT_REQUIRED",
+    };
+  }
   if (status === 401 || status === 403) {
     return {
       errorType: status === 401 ? "AuthTransient" : "Permission",
@@ -94,6 +108,9 @@ function classifyStatus(status: number): {
 }
 
 function sanitizeErrorMessage(status: number, errorCode: string): string {
+  if (status === 402 || errorCode === "PAYMENT_REQUIRED") {
+    return "X API payment required (status=402) — check developer credits/billing";
+  }
   return `X API request failed status=${status} code=${errorCode}`;
 }
 
@@ -151,8 +168,11 @@ export class XApiHttpClient {
         headers.set("Authorization", `Basic ${token}`);
       }
 
-      let body: string | undefined;
-      if (req.form) {
+      let body: string | FormData | undefined;
+      if (req.multipart) {
+        body = req.multipart;
+        // Let fetch set multipart boundary Content-Type.
+      } else if (req.form) {
         headers.set("Content-Type", "application/x-www-form-urlencoded");
         body = req.form.toString();
       } else if (req.body !== undefined) {
@@ -285,8 +305,10 @@ export class XApiHttpClient {
         !req.disableRetry &&
         classified.retryable &&
         attempt < maxAttempts &&
-        // Never blindly retry write tweets — caller decides after state check
-        req.endpointKey !== "tweets.create";
+        // Never blindly retry write tweets / media finalize — caller decides after state check
+        req.endpointKey !== "tweets.create" &&
+        req.endpointKey !== "media.upload" &&
+        req.endpointKey !== "media.upload.finalize";
 
       if (statusCode === 429 && rateLimitResetAt) {
         const waitMs = Math.max(0, rateLimitResetAt.getTime() - this.now().getTime());

@@ -90,7 +90,8 @@ export class OpenAiCompatibleLLMProvider implements LLMProvider {
         },
         body: JSON.stringify({
           model: args.model,
-          temperature: 0.4,
+          temperature:
+            typeof args.request.temperature === "number" ? args.request.temperature : 0.4,
           response_format: { type: "json_object" },
           messages: [
             { role: "system", content: args.system },

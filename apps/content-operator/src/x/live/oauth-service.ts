@@ -10,6 +10,8 @@ const DEFAULT_SCOPES = [
   "tweet.write",
   "users.read",
   "offline.access",
+  /** Required for v2 media upload (images attached to posts). */
+  "media.write",
 ];
 
 export interface OAuthStartResult {

@@ -116,6 +116,11 @@ export interface AppConfig {
   xApiAccessToken: string | undefined;
   xApiRefreshToken: string | undefined;
   xApiAccountId: string | undefined;
+  /**
+   * Temporary one-shot live smoke allowlist (single CID). Empty = disabled.
+   * Does not enable scheduler or backlog; process-local gate only.
+   */
+  xOneShotLiveSmokeCid: string | undefined;
   xApiBaseUrl: string;
   xApiTimeoutMs: number;
   xApiMaxAttempts: number;
@@ -135,6 +140,23 @@ export interface AppConfig {
   xStrategyEnabledTypes: string[];
   xStrategyAutoEnabledTypes: string[];
   xAutoPublicationEnabled: boolean;
+  /**
+   * When false (default), auto ops never select DIRECT_AFFILIATE.
+   * Code paths remain; set true to resume direct affiliate posting.
+   */
+  xAllowDirectAffiliateRoute: boolean;
+  /**
+   * When false (default), auto ops never select COMBINED (WP+FANZA in one thread).
+   * Code paths remain; set true to resume combined posting.
+   */
+  xAllowCombinedRoute: boolean;
+  /**
+   * When true, X publication uses AFFILIATE_THREAD:
+   * PARENT (copy+media) → FANZA affiliate reply → WP article reply.
+   * Default false — CURRENT production keeps WP_TRAFFIC_EMBED (parent + WP URL).
+   * Enable only after FANZA X affiliate use is formally approved; do not hardcode approval.
+   */
+  xAffiliateThreadMode: boolean;
   xMetricsCollectionEnabled: boolean;
   xMetricsCollectionWindowsMinutes: number[];
   xMetricsCollectionBatchSize: number;
@@ -190,6 +212,8 @@ export interface AppConfig {
   };
   xProductCooldownHours: number;
   xProductReservationTtlMinutes: number;
+  /** Grace after scheduledAt before unused reservation may expire (also TTL floor). */
+  xProductReservationPublishGraceMinutes: number;
   xAllowDuplicateProductExperiments: boolean;
   xDuplicateProductMinIntervalHours: number;
   xReleaseMode: "DISABLED" | "DRY_RUN" | "ALLOWLIST" | "LIMITED" | "FULL";
@@ -253,6 +277,8 @@ export interface AppConfig {
   llmMode: "mock" | "api";
   llmProvider: string;
   llmModelGeneration: string;
+  /** Article Writer / Article Rewrite / X Social Writer+Rewrite. Default gpt-4.1 — never aliases GENERATION/mini. */
+  llmModelWriter: string;
   llmModelReview: string;
   llmModelRevision: string;
   llmModelStrategy: string;
@@ -725,6 +751,7 @@ export function loadConfig(options?: { requireDatabaseUrl?: boolean }): AppConfi
     xApiAccessToken: process.env.X_API_ACCESS_TOKEN?.trim() || undefined,
     xApiRefreshToken: process.env.X_API_REFRESH_TOKEN?.trim() || undefined,
     xApiAccountId: process.env.X_API_ACCOUNT_ID?.trim() || undefined,
+    xOneShotLiveSmokeCid: process.env.X_ONESHOT_LIVE_SMOKE_CID?.trim().toLowerCase() || undefined,
     xApiBaseUrl: process.env.X_API_BASE_URL?.trim() || "https://api.x.com",
     xApiTimeoutMs: parsePositiveInt(process.env.X_API_TIMEOUT_MS, 30_000),
     xApiMaxAttempts: parsePositiveInt(process.env.X_API_MAX_ATTEMPTS, 3),
@@ -775,6 +802,12 @@ export function loadConfig(options?: { requireDatabaseUrl?: boolean }): AppConfi
       "control",
     ]),
     xAutoPublicationEnabled: parseBooleanEnv(process.env.X_AUTO_PUBLICATION_ENABLED, false),
+    xAllowDirectAffiliateRoute: parseBooleanEnv(
+      process.env.X_ALLOW_DIRECT_AFFILIATE_ROUTE,
+      false,
+    ),
+    xAllowCombinedRoute: parseBooleanEnv(process.env.X_ALLOW_COMBINED_ROUTE, false),
+    xAffiliateThreadMode: parseBooleanEnv(process.env.X_AFFILIATE_THREAD_MODE, false),
     xMetricsCollectionEnabled: parseBooleanEnv(process.env.X_METRICS_COLLECTION_ENABLED, false),
     xMetricsCollectionWindowsMinutes: parseIntList(
       process.env.X_METRICS_COLLECTION_WINDOWS_MINUTES,
@@ -903,6 +936,10 @@ export function loadConfig(options?: { requireDatabaseUrl?: boolean }): AppConfi
       process.env.X_PRODUCT_RESERVATION_TTL_MINUTES,
       30,
     ),
+    xProductReservationPublishGraceMinutes: parsePositiveInt(
+      process.env.X_PRODUCT_RESERVATION_PUBLISH_GRACE_MINUTES,
+      180,
+    ),
     xAllowDuplicateProductExperiments: parseBooleanEnv(
       process.env.X_ALLOW_DUPLICATE_PRODUCT_EXPERIMENTS,
       false,
@@ -973,7 +1010,7 @@ export function loadConfig(options?: { requireDatabaseUrl?: boolean }): AppConfi
       process.env.X_OAUTH_CALLBACK_URL?.trim() || "http://127.0.0.1:8787/callback",
     xOAuthScopes:
       process.env.X_OAUTH_SCOPES?.trim() ||
-      "tweet.read tweet.write users.read offline.access",
+      "tweet.read tweet.write users.read offline.access media.write",
     xOAuthSessionTtlMinutes: parsePositiveInt(process.env.X_OAUTH_SESSION_TTL_MINUTES, 15),
     xTokenRefreshBufferMinutes: parsePositiveInt(process.env.X_TOKEN_REFRESH_BUFFER_MINUTES, 10),
     xVerifyPublishedPostEnabled: parseBooleanEnv(
@@ -1036,6 +1073,7 @@ export function loadConfig(options?: { requireDatabaseUrl?: boolean }): AppConfi
     llmMode: (process.env.LLM_MODE ?? "mock").trim().toLowerCase() === "api" ? "api" : "mock",
     llmProvider: (process.env.LLM_PROVIDER ?? "openai-compatible").trim() || "openai-compatible",
     llmModelGeneration: process.env.LLM_MODEL_GENERATION ?? "gpt-4.1-mini",
+    llmModelWriter: process.env.LLM_MODEL_WRITER ?? "gpt-4.1",
     llmModelReview: process.env.LLM_MODEL_REVIEW ?? "gpt-4.1-mini",
     llmModelRevision: process.env.LLM_MODEL_REVISION ?? "gpt-4.1-mini",
     llmModelStrategy: process.env.LLM_MODEL_STRATEGY ?? process.env.LLM_MODEL_GENERATION ?? "gpt-4.1-mini",

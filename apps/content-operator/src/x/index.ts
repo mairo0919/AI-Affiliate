@@ -66,6 +66,7 @@ export { CONTENT_POLICY_SURFACE } from "./content-policy-surfaces.js";
 export type { ContentPolicySurface } from "./content-policy-surfaces.js";
 export {
   detectXAdultExpressions,
+  stripXAdultSpans,
   filterClaimsForXSocialContent,
   enforceXSocialContentBody,
   buildXSocialSafeBodyFromEvidence,
@@ -120,23 +121,76 @@ export type {
 } from "./x-social-adaptation.js";
 export {
   extractArticlePlanSocialFacts,
-  selectXSocialFacts,
+  groundedPlanFactTexts,
   composeXSocialPosts,
-  toXSocialSafePhrase,
+  toGroundedPlanAtom,
+  chooseWpTrafficCta,
 } from "./x-social-facts.js";
 export type { XSocialFact, XSocialFactKind } from "./x-social-facts.js";
 export {
-  realizeXSocialCopy,
-  assessSocialContentThinness,
-  editorialRealizePhrase,
-  productNameCopyRate,
-} from "./x-social-realize.js";
-export type { SocialRealizeResult, SocialThinSkip } from "./x-social-realize.js";
+  resolveXPublicationStrategy,
+  composeXThreadPublication,
+  extractThreadPostIds,
+  resolveThreadReplyOrder,
+  isStrongRelatedRelation,
+  isPublishedXPostUrl,
+  X_THREAD_NAV_TEMPLATES,
+  X_THREAD_NAV_TEMPLATE_POOLS,
+} from "./x-thread-publication.js";
+export type {
+  XPublicationStrategy,
+  XThreadPostRole,
+  XThreadComposedPost,
+  XPublicationIntent,
+  XRelatedNavCandidate,
+  XThreadReplyOrder,
+} from "./x-thread-publication.js";
+export { planXSocial } from "./social-plan.js";
+export type {
+  SocialPlan,
+  SocialPlanResult,
+  SocialPlannerInput,
+  XSocialPlan,
+  XPlanResult,
+  XPlannerInput,
+  XSocialPublicationIntent,
+} from "./social-plan.js";
+export { writeXSocialCopy, synthesizeXSocialFromPlan, X_SOCIAL_WRITER_SYSTEM } from "./social-write.js";
+export {
+  reviewXSocialCopy,
+  reviewXSocialPublicationUnit,
+  rewriteXSocialCopyOnce,
+} from "./social-review.js";
+export type {
+  SocialReviewFinding,
+  SocialReviewResult,
+  SocialReviewDimension,
+  XPublicationUnitPost,
+} from "./social-review.js";
+export {
+  runXSocialPipeline,
+  assembleWpTrafficPost,
+  X_COPY_PRODUCTION_PATH,
+  classifySocialFailure,
+} from "./social-pipeline.js";
+export type {
+  SocialPipelineInput,
+  SocialPipelineResult,
+  SocialPipelineOk,
+  SocialPipelineSkip,
+  SocialFailureClass,
+} from "./social-pipeline.js";
+export type { SocialThinSkip } from "./x-social-adaptation.js";
 export {
   selectXMediaFromArticleImages,
+  exposureProxyScoreForX,
   X_ARTICLE_MEDIA_POLICY_VERSION,
 } from "./x-article-media.js";
 export type { XArticleMediaPick, XArticleMediaCandidate } from "./x-article-media.js";
+export {
+  resolveWordPressCanonicalUrl,
+  isWordPressQueryPermalink,
+} from "./x-wordpress-url.js";
 export {
   loadCanonicalXSource,
   adaptLoadedCanonicalToX,

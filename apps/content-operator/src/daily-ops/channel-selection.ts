@@ -51,6 +51,10 @@ export interface ChannelSelectionInput {
   /** @deprecated ranking cadence folded into mix weights — ignored */
   rankingAllowed?: boolean;
   rankingDue?: boolean;
+  /** From config X_ALLOW_DIRECT_AFFILIATE_ROUTE (default false). */
+  allowDirectAffiliateRoute?: boolean;
+  /** From config X_ALLOW_COMBINED_ROUTE (default false). */
+  allowCombinedRoute?: boolean;
 }
 
 export interface ChannelDayPlan {
@@ -241,14 +245,16 @@ export function planDailyChannels(input: ChannelSelectionInput): ChannelDayPlan 
     route = chooseXPostRoute({
       affiliateUrl: affiliate,
       publishedBlogUrl: fromPool?.publishedBlogUrl,
-      preferBlogTrafficHint:
-        blogMix.slot === "POPULAR_RANKING" || blogMix.slot === "PERFORMER_RANKING",
+      preferredRoute: "BLOG_TRAFFIC",
+      preferBlogTrafficHint: true,
       recentRoutes: input.xRecentRoutes,
       affiliateLinkReady: affiliateHint.ok && affiliateHint.hasAffiliateIdHint,
       canonicalProductUrl:
         !affiliateHint.hasAffiliateIdHint && xSelection.selected.canonicalId
           ? `https://video.dmm.co.jp/av/content/?id=${xSelection.selected.canonicalId}`
           : null,
+      allowDirectAffiliate: input.allowDirectAffiliateRoute === true,
+      allowCombined: input.allowCombinedRoute === true,
     });
   }
 
@@ -269,4 +275,70 @@ export function planDailyChannels(input: ChannelSelectionInput): ChannelDayPlan 
       sameMixSlotAsBlog: blogMix.slot === xMix.slot,
     },
   };
+}
+
+/**
+ * Rank distinct X candidates for fixed daily slots (up to `limit`).
+ * Soft-prefers different product from blog; hard-skips channel cooldown / used CIDs.
+ */
+export function listRankedXCandidates(
+  input: ChannelSelectionInput & {
+    limit: number;
+    excludeCanonicalIds?: Iterable<string>;
+    blogCanonicalId?: string | null;
+  },
+): ChannelCandidate[] {
+  const now = input.now ?? new Date();
+  const annotated = annotateBuckets(input.pool, input.releaseAge, now);
+  const exclude = new Set(
+    [...(input.excludeCanonicalIds ?? [])].map((c) => c.trim().toLowerCase()).filter(Boolean),
+  );
+  const blogCid = input.blogCanonicalId?.trim().toLowerCase() || null;
+
+  const xHistory = (input.recentXMix ?? input.recentMix ?? []).map((m) => m.slot);
+  const xMix = chooseContentMixSlot({
+    weights: input.mixWeights,
+    recentSlots: xHistory,
+    dayKey: input.dayKey,
+    channelSalt: "X",
+  });
+
+  const baseFilter = (c: ChannelCandidate, allowSameAsBlog: boolean) => {
+    const cid = c.canonicalId.trim().toLowerCase();
+    if (!cid || exclude.has(cid)) return false;
+    if (!allowSameAsBlog && blogCid && cid === blogCid) return false;
+    const b = isBlockedOnChannel({
+      channel: "X",
+      canonicalId: c.canonicalId,
+      history: input.channelHistory,
+      config: input.channelDuplicate,
+      now,
+    });
+    return !b.blocked;
+  };
+
+  let pool = annotated.filter((c) => baseFilter(c, false));
+  if (pool.length === 0 && blogCid) {
+    pool = annotated.filter((c) => baseFilter(c, true));
+  }
+
+  const out: ChannelCandidate[] = [];
+  const used = new Set<string>();
+  const limit = Math.max(1, Math.min(input.limit, 20));
+  while (out.length < limit) {
+    const remaining = pool.filter((c) => !used.has(c.canonicalId.toLowerCase()));
+    if (remaining.length === 0) break;
+    const pick = pickForSlot(remaining, xMix.slot, {
+      minTotalScore: input.minTotalScore,
+      minSampleImages: Math.min(1, input.minSampleImages),
+      minEvidenceRichness: Math.min(0.2, input.minEvidenceRichness),
+      recentActressKeys: input.xRecentActressKeys ?? [],
+      recentMakerKeys: [],
+      recentSeriesKeys: [],
+    });
+    if (!pick.selected) break;
+    used.add(pick.selected.canonicalId.toLowerCase());
+    out.push(pick.selected);
+  }
+  return out;
 }
