@@ -8,7 +8,12 @@
  * Does not write final copy. Thin material → SKIP.
  */
 
-import { hasParticleHole, isParticleFreeTitleStack, isTitleFragmentRun } from "./x-copy-quality.js";
+import {
+  hasParticleHole,
+  isExpressionSafeFact,
+  isParticleFreeTitleStack,
+  isTitleFragmentRun,
+} from "./x-copy-quality.js";
 import { detectXAdultExpressions, stripXAdultSpans } from "./x-social-content-policy.js";
 
 export type XPlanSkip = {
@@ -172,7 +177,10 @@ function isXSafeAtom(raw: string): boolean {
 
 /** Understanding note — adult-stripped meaning; not for verbatim X paste. */
 function toUnderstandingNote(raw: string): string | null {
-  let t = stripXAdultSpans(cleanAtom(raw));
+  const base = cleanAtom(raw);
+  // Deleting an adult word leaves a broken fragment. Drop the phrase instead.
+  if (!base || stripXAdultSpans(base) !== base) return null;
+  let t = base;
   t = t.replace(/\s+を\s+/gu, " ").replace(/\s+/gu, " ").trim();
   t = t.replace(/[～〜]+/gu, " ").replace(/\s+/gu, " ").trim();
   if (t.length < 8 || t.length > 72) return null;
@@ -183,7 +191,8 @@ function toUnderstandingNote(raw: string): string | null {
 }
 
 export function salvageTitleHook(title: string, subject: string | null): string | null {
-  let t = stripXAdultSpans(title);
+  if (detectXAdultExpressions(title).hit) return null;
+  let t = title;
   if (subject && t.includes(subject)) {
     t = t.replaceAll(subject, " ");
   }
@@ -208,14 +217,14 @@ export function salvageTitleHook(title: string, subject: string | null): string 
 
 function catalogHooksFromTitle(title: string): string[] {
   const hooks: string[] = [];
-  const hours = title.match(/(\d+)\s*時間/u);
+  const hours = title.match(/(?<![\d.])(\d+(?:\.\d+)?)\s*時間/u);
   if (hours?.[1]) {
     hooks.push(`${hours[1]}時間の収録ボリューム`);
   }
   if (/BEST|ベスト|総集編/iu.test(title)) {
     hooks.push("複数タイトルを横断した総集編");
   }
-  const people = title.match(/(\d+)\s*名/u);
+  const people = title.match(/(?<![\d.])(\d+)\s*名/u);
   if (people?.[1]) {
     hooks.push(`${people[1]}名が出演する企画`);
   }
@@ -231,21 +240,6 @@ function catalogHooksFromTitle(title: string): string[] {
     "合宿",
   ]) {
     if (title.includes(noun) && noun.length >= 4) hooks.push(noun);
-  }
-  // Keep a title remnant only when the source is already one clause.
-  // Compacting a spaced or ＆-joined title glues fragments into a fake noun.
-  if (!/[\s　＆&]/u.test(title)) {
-    const stripped = cleanAtom(stripXAdultSpans(title));
-    if (
-      stripped &&
-      stripped.length >= 10 &&
-      stripped.length <= 36 &&
-      isXSafeAtom(stripped) &&
-      !isParticleFreeTitleStack(stripped) &&
-      /保育士|先生|ランナー|エステ|タクシー|合宿|町内|対決|企画|シリーズ|ハンドテク/u.test(stripped)
-    ) {
-      hooks.push(stripped);
-    }
   }
   return hooks.filter((h) => h.length >= 6 && (isXSafeAtom(h) || (h.length <= 12 && /エステ|タクシー|ハンドテク|保育士|ランナー/u.test(h))));
 }
@@ -366,16 +360,16 @@ function buildEditorialAngle(input: {
   }
   if (seriesName && subject) {
     return {
-      angle: `${subject}出演のシリーズ作として、シリーズの空気感を伝える`,
+      angle: `${subject}の${seriesName}`,
       readerHook: `${seriesName}の流れの一作`,
       whyThisWork: primaryAppeal || `${subject}のシリーズ出演`,
     };
   }
   if (subject && primaryAppeal) {
     return {
-      angle: `${subject}の作品を、${primaryAppeal}から紹介する`,
-      readerHook: `${primaryAppeal}の具体点`,
-      whyThisWork: `${subject}の出演情報と具体点が揃っている`,
+      angle: primaryAppeal,
+      readerHook: primaryAppeal,
+      whyThisWork: primaryAppeal,
     };
   }
   if (subject) {
@@ -386,7 +380,7 @@ function buildEditorialAngle(input: {
     };
   }
   return {
-    angle: "公式情報から読み取れる作品の焦点を紹介する",
+    angle: primaryAppeal || "作品の焦点",
     readerHook: primaryAppeal || "作品の具体点",
     whyThisWork: primaryAppeal || "公開カタログ上の具体点がある",
   };
@@ -398,6 +392,16 @@ function buildEditorialAngle(input: {
 export function planXSocial(input: XPlannerInput): XPlanResult {
   const title = (input.canonicalTitle || input.productTitle || "").trim();
   const productTitle = (input.productTitle || title).trim();
+  const provenanceSources = [
+    title,
+    productTitle,
+    input.seriesName ?? "",
+    ...(input.performerNames ?? []),
+    ...(input.claimStatements ?? []).map((claim) => claim.statement),
+    ...(input.groundedPlanFacts ?? []),
+  ]
+    .map((source) => source.trim())
+    .filter((source) => source.length > 0);
   const performers = input.performerNames ?? [];
   const subject = pickSubject(performers, title);
   const contentType = detectContentType(title, input.seriesName ?? null);
@@ -432,21 +436,6 @@ export function planXSocial(input: XPlannerInput): XPlanResult {
 
     if (!wasAdult && !wasVoice && isXSafeAtom(cleaned)) {
       expressionPool.push(cleaned);
-      return;
-    }
-    // Salvage only catalog-like remnants — never truncated scene debris.
-    let salvaged = cleanAtom(stripXAdultSpans(cleaned)).replace(SOURCE_VOICE_RE, " ");
-    salvaged = salvaged.replace(/\s+/gu, "").trim();
-    if (
-      salvaged &&
-      salvaged.length >= 8 &&
-      salvaged.length <= 36 &&
-      isXSafeAtom(salvaged) &&
-      /出演|ベスト|総集|時間|シリーズ|収録|企画|単体|配信|タクシー|エステ|ランナー|保育|合宿|町内|VR|8K/u.test(
-        salvaged,
-      )
-    ) {
-      expressionPool.push(salvaged);
     }
   };
 
@@ -679,6 +668,16 @@ export function planXSocial(input: XPlannerInput): XPlanResult {
     if (!isXSafeAtom(corePremise)) corePremise = allowedClaims[0]!;
   }
 
+  const faithful = (fact: string | null | undefined): fact is string =>
+    typeof fact === "string" && isExpressionSafeFact(fact, provenanceSources);
+  allowedClaims = allowedClaims.filter(faithful);
+  if (!faithful(corePremise)) corePremise = allowedClaims[0] ?? null;
+  if (!faithful(primaryAppeal)) primaryAppeal = allowedClaims.find((claim) => claim !== corePremise) ?? null;
+  if (!faithful(secondaryAppeal)) secondaryAppeal = null;
+  const faithfulDetails = concreteDetails.filter(faithful);
+  concreteDetails.length = 0;
+  concreteDetails.push(...faithfulDetails);
+
   const editorial = buildEditorialAngle({
     subject,
     contentType,
@@ -694,6 +693,7 @@ export function planXSocial(input: XPlannerInput): XPlanResult {
   ])
     .filter(
       (w) =>
+        faithful(w) &&
         isCleanPlanText(w, { maxLen: 64 }) &&
         !isParticleFreeTitleStack(w) &&
         !isTitleFragmentRun(w),

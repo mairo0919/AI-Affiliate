@@ -560,7 +560,15 @@ describe("X Publishing Engine", () => {
       },
       now: () => new Date(),
     });
-    const result = await pipeline.run();
+    const previousStock = process.env.STOCK_GENERATION_ENABLED;
+    process.env.STOCK_GENERATION_ENABLED = "false";
+    let result: Awaited<ReturnType<SchedulerPipeline["run"]>>;
+    try {
+      result = await pipeline.run();
+    } finally {
+      if (previousStock === undefined) delete process.env.STOCK_GENERATION_ENABLED;
+      else process.env.STOCK_GENERATION_ENABLED = previousStock;
+    }
     expect("skipReason" in result.xPublish).toBe(true);
     expect("skipReason" in result.xMetrics).toBe(true);
     expect("skipReason" in result.xStrategy).toBe(true);

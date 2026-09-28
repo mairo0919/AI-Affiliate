@@ -62,8 +62,10 @@ describe("1rctd00763 planner does not keep broken title debris", () => {
     expect(blob).not.toContain("精液");
     expect(blob).not.toContain("＆");
     expect(blob).not.toContain("下品エロ");
-    expect(blob).not.toMatch(/状況設定が特徴|として制作されて|出演作では/);
+    expect(blob).not.toMatch(/状況設定|として制作されて|出演作では/);
+    expect(blob).not.toContain("ROCKET18周年記念ユーザーリクエスト祭り完全主観ホラー");
     expect(planned.plan.subject).toBe("九井スナオ");
+    expect(planned.plan.allowedClaims.every((fact) => OFFICIAL_TITLE.includes(fact))).toBe(true);
     expect(blob).toMatch(/完全主観/);
   });
 });
@@ -81,6 +83,45 @@ describe("review blocks the published 1rctd00763 root", () => {
     expect(codes).toContain("BROKEN_PHRASE");
     expect(codes).toContain("TEMPLATE_EXPLAINER");
     expect(codes).toContain("TITLE_FRAGMENT_GLUE");
+  });
+
+  it("fails mechanical frames even when a word is inserted", () => {
+    const plan = planFixture({
+      subject: "九井スナオ",
+      allowedClaims: ["完全主観ホラー"],
+      productTitle: OFFICIAL_TITLE,
+    });
+    for (const body of [
+      "九井スナオの作品は完全主観ホラーで展開されます。",
+      "九井スナオが出演するシリーズ作品では、完全主観ホラーが紹介されています。",
+      "完全主観ホラーで、たっぷりとした収録ボリュームが特徴の作品です。",
+    ]) {
+      const review = reviewXSocialCopy(body, plan);
+      expect(review.ok).toBe(false);
+      expect(review.findings.some((f) => f.code === "TEMPLATE_EXPLAINER" || f.code === "GENERIC_PUFFERY")).toBe(
+        true,
+      );
+    }
+  });
+
+  it("still blocks generic puffery", () => {
+    const plan = planFixture({
+      subject: "九井スナオ",
+      allowedClaims: ["完全主観ホラー"],
+      productTitle: OFFICIAL_TITLE,
+    });
+    for (const body of [
+      "九井スナオの作品は完全主観ホラーで、緊迫感が際立っています。",
+      "九井スナオの作品は完全主観ホラーで、独特の世界観が展開されます。",
+      "九井スナオの作品は完全主観ホラーで、独特の没入感が味わえます。",
+      "九井スナオの完全主観ホラーはファン必見です。",
+      "九井スナオの作品は完全主観ホラーで、魅力を存分に楽しめます。",
+      "九井スナオの完全主観ホラーが話題になっています。",
+    ]) {
+      const review = reviewXSocialCopy(body, plan);
+      expect(review.ok).toBe(false);
+      expect(review.findings.map((finding) => finding.code)).toContain("GENERIC_PUFFERY");
+    }
   });
 
   it("rejects fame puffery and a sentence that only repeats the fact", () => {
@@ -105,7 +146,7 @@ describe("review blocks the published 1rctd00763 root", () => {
       allowedClaims: ["完全主観ホラー"],
     });
     const review = reviewXSocialCopy(
-      "九井スナオの作品で、完全主観ホラーが焦点になっている。完全主観ホラーは公式タイトルに書かれた形式だ。",
+      "九井スナオの作品は、完全主観ホラーだ。",
       plan,
     );
     expect(review.ok).toBe(true);

@@ -4,6 +4,8 @@
  */
 
 import {
+  hasJoinedSourcePhrases,
+  ungroundedContentWord,
   hasParticleHole,
   hasQuotedTitleFragment,
   isTemplateExplainer,
@@ -46,7 +48,7 @@ const MECHANICAL_TEMPLATE_RE =
   /が出演する作品|を軸にした作品紹介|の作品紹介。|時間収録のまとめ|の近作では、|見どころとして、|がどう展開するか気になる/u;
 
 const GENERIC_PUFFERY_RE =
-  /魅力を存分に|引き込まれること間違いなし|世界観をじっくりと味わ|核心を成しています|独特の世界観が楽しめ|大きな魅力となっています|魅力を引き立て|雰囲気を引き立て|世界観に注目です|魅力をじっくり|魅力的な作品です|魅力の一作|楽しめる一作|見逃せない一作|引き込まれます|目が離せません|魅力が際立つ|興味深い内容です|注目が集まって|注目が集まり|注目されます|入り込みやすい|世界観にじっくりと浸る|魅力をまとめて追える|名にふさわしい内容|魅力を感じ|新たな魅力を感じ|話題です|特別な内容で|一線を画す|存在感が際立つ|役柄が際立|際立っています|が魅力となって|設定が魅力|知られて/u;
+  /魅力を存分に|引き込まれること間違いなし|世界観をじっくりと味わ|核心を成しています|独特の世界観|独特の|没入|味わえ|大きな魅力となっています|魅力を引き立て|雰囲気を引き立て|世界観に注目です|魅力をじっくり|魅力的な作品です|魅力の一作|楽しめる一作|見逃せない一作|引き込まれます|目が離せません|魅力が際立つ|興味深い内容です|注目|入り込みやすい|世界観にじっくりと浸る|魅力をまとめて追える|名にふさわしい内容|魅力を感じ|新たな魅力を感じ|話題です|話題に|ファン必見|楽しめ|活躍|たっぷり|特別な内容で|一線を画す|存在感が際立つ|役柄が際立|際立って|が魅力となって|設定が魅力|知られて/u;
 
 const CATALOG_SUMMARY_RE =
   /ベスト／総集編です。|収録コーナーまとめです|最新タイトルまとめです|公開情報ベースで作品のポイントを整理|ベスト／総集編としての見どころ。/u;
@@ -270,7 +272,11 @@ export function reviewXSocialCopy(
     );
   }
 
-  if (isTitleFragmentRun(text) || sents.some((sent) => isTitleFragmentRun(sent))) {
+  if (
+    isTitleFragmentRun(text) ||
+    sents.some((sent) => isTitleFragmentRun(sent)) ||
+    (plan.productTitle ? hasJoinedSourcePhrases(text, plan.productTitle) : false)
+  ) {
     fail(
       "NATURAL_JAPANESE",
       "TITLE_FRAGMENT_GLUE",
@@ -357,6 +363,20 @@ export function reviewXSocialCopy(
       "parent copy too thin — expect multi-sentence work introduction",
       "BLOCKING",
     );
+  }
+
+  const groundedForWords = [
+    plan.subject,
+    plan.contentType,
+    plan.canonicalContext.seriesName,
+    ...plan.canonicalContext.performers,
+    ...plan.allowedClaims,
+  ]
+    .filter((part): part is string => Boolean(part && part.trim()))
+    .join("\n");
+  const extraWord = ungroundedContentWord(text, groundedForWords);
+  if (extraWord) {
+    fail("GROUNDING", "UNGROUNDED", `ungrounded word: ${extraWord}`);
   }
 
   if (/がの|のでは|なを|にを|をー|男かせ|たち顔|＆まで|ただしが|お姉さんがの|ひたすらられる|強。$|っぷりでされ|され大量|のった敏感/u.test(text)) {
@@ -597,7 +617,7 @@ function findingsToHints(findings: SocialReviewFinding[]): string[] {
   }
   if (codes.has("CATALOG_SUMMARY") || codes.has("GENERIC_PUFFERY") || codes.has("GENERIC_FRAME")) {
     hints.push(
-      "Remove empty puffery (魅力を感じられる / 話題です / 世界観). State a concrete work fact from EXPRESSION_SAFE_FACTS instead.",
+      "Remove every evaluation (魅力, 話題, 世界観, 没入, 味わえる, 楽しめる, 活躍). The sentence may only name the performer and one EXPRESSION_SAFE_FACT.",
     );
   }
   if (
@@ -609,7 +629,7 @@ function findingsToHints(findings: SocialReviewFinding[]): string[] {
     codes.has("PACKAGE_FRAGMENT_GLUE")
   ) {
     hints.push(
-      "Write one ordinary clause: the performer and ONE fact from EXPRESSION_SAFE_FACTS, using は/が/を/で. A second sentence may only reuse that same fact. Do not use 特徴です, 制作されています, 登場しています, タイトル通り, or 振り返ることができます. Do not quote a title with the spaces removed.",
+      "Write one ordinary clause: the performer and ONE fact from EXPRESSION_SAFE_FACTS, using は/が/を/で. A second sentence may only reuse that same fact. Do not use 特徴, 制作されています, 展開されます, 登場しています, タイトル通り, or 振り返ることができます. Do not quote a title with the spaces removed.",
     );
   }
   if (codes.has("UNSUPPORTED_SWEEP")) {
@@ -635,19 +655,6 @@ function findingsToHints(findings: SocialReviewFinding[]): string[] {
   return hints;
 }
 
-function plainFactSentence(plan: XSocialPlan): string | null {
-  const subject = plan.subject?.trim() ?? "";
-  const fact = (plan.corePremise || plan.allowedClaims[0] || "").trim();
-  if (subject.length < 2 || fact.length < 4) return null;
-  if (/タクシー|エステ|ランナー|保育|合宿|町内/u.test(fact)) {
-    return `${subject}の作品の舞台は、${fact}だ。`;
-  }
-  if (/総集|時間|ベスト|BEST/iu.test(fact)) {
-    return `${subject}の作品には、${fact}がある。`;
-  }
-  return `${subject}の作品は、${fact}だ。`;
-}
-
 export async function rewriteXSocialCopyOnce(
   previous: string,
   plan: XSocialPlan,
@@ -665,16 +672,6 @@ export async function rewriteXSocialCopyOnce(
     "Rewrite as a complete publish-quality third-party intro from the same grounded understanding — not a partial patch that invents new claims.",
   );
 
-  if (
-    codes.has("TEMPLATE_EXPLAINER") ||
-    codes.has("TITLE_FRAGMENT_GLUE") ||
-    codes.has("GENERIC_PUFFERY")
-  ) {
-    const example = plainFactSentence(plan);
-    if (example) {
-      hints.unshift(`Replace the draft with this sentence, changing nothing except particles if needed: ${example}`);
-    }
-  }
   if (opts?.llm) {
     const anchorOnPrevious =
       !codes.has("TEMPLATE_EXPLAINER") &&

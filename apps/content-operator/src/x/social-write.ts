@@ -12,12 +12,14 @@ export const X_SOCIAL_LLM_TEMPERATURE = 0.2;
 
 export const X_SOCIAL_WRITER_SYSTEM = [
   "You write one Japanese X post as a third party, not as the performer or the maker.",
-  "Use SUBJECT and one string from EXPRESSION_SAFE_FACTS. Say that fact in ordinary Japanese, with は, が, を, or で.",
-  "Write one sentence. Do not add a second sentence that repeats the fact.",
-  "Do not add cast verbs, production notes, or a claim that the fact was confirmed somewhere.",
-  "Do not drop a word out of a quoted phrase. Do not delete spaces to join title pieces.",
-  "Do not invent scenes, rankings, popularity, or evaluations.",
-  "No sexual acts, genitals, fluids, or package slogans. No URL. No hashtag. No navigation line.",
+  "EXPRESSION_SAFE_FACTS are the only facts you may use. They are official phrases, not sentences to paste.",
+  "Write one natural introduction. Use the performer and the meaning of one fact.",
+  "Acceptable shape: 「出演者の作品は、公式の焦点だ。」 Replace 出演者 with SUBJECT and 公式の焦点 with one EXPRESSION_SAFE_FACT.",
+  "Do not add any other content word. Do not line facts up like a catalog.",
+  "Do not write 「出演作では」, 「が出演する作品では」, 「作品では」, 「という状況設定が特徴です」, 「として制作されています」, 「が特徴」, or 「展開されます」.",
+  "Do not add rankings, popularity, feelings, or evaluations such as 際立って, 世界観, 必見, 魅力, 話題, 没入, 味わえる, 楽しめる, or 注目.",
+  "Do not drop a word inside a phrase, and do not delete spaces to join title pieces.",
+  "One sentence. No URL. No hashtag. No navigation line.",
   "Return JSON only: {\"body\":\"...\"}.",
 ].join(" ");
 
@@ -70,21 +72,6 @@ function sanitizeProductTitleForWriter(plan: XSocialPlan): string {
   return "作品紹介";
 }
 
-function writerSafeUnderstanding(plan: XSocialPlan): string[] {
-  return plan.workUnderstanding
-    .filter((w) => {
-      const t = w.trim();
-      if (t.length < 8 || t.length > 64) return false;
-      if (isAdultUnsafe(t) || isStyleReject(t)) return false;
-      if (/[はがをにとの]$/u.test(t)) return false;
-      if (/もそうな|」、|鬼オホ|散らす|塗りたく|起き上がり|のった|らせて|を吹き|直後の|ヤり|エッチ/u.test(t)) {
-        return false;
-      }
-      return true;
-    })
-    .slice(0, 4);
-}
-
 /** Keep non-adult sentences from an LLM draft — does not invent new facts. */
 function salvageNonAdultBody(raw: string): string | null {
   const stripped = stripXAdultSpans(raw)
@@ -133,16 +120,16 @@ export function synthesizeXSocialFromPlan(plan: XSocialPlan): SocialWriteResult 
   const contentType = plan.contentType && plan.contentType !== "作品紹介" ? plan.contentType : null;
 
   const sentences: string[] = [];
-  if (subject && premise && premise.length >= 8) {
+  if (subject && premise && premise.length >= 4) {
     sentences.push(ensurePeriod(`${subject}の${contentType || "作品"}として、${premise}に焦点を当てて紹介する`));
   } else if (premise && premise.length >= 10) {
-    sentences.push(ensurePeriod(`${premise}を軸に、公式情報から読み取れる焦点を伝える`));
+    sentences.push(ensurePeriod(`${premise}が焦点だ`));
   } else if (subject && primary) {
-    sentences.push(ensurePeriod(`${subject}の作品では、${primary}が具体点になっている`));
+    sentences.push(ensurePeriod(`${subject}の作品は、${primary}が焦点だ`));
   } else if (subject && contentType) {
-    sentences.push(ensurePeriod(`${subject}の${contentType}を、確認できる収録焦点から紹介する`));
+    sentences.push(ensurePeriod(`${subject}の${contentType}が焦点だ`));
   } else if (primary) {
-    sentences.push(ensurePeriod(`${primary}を作品の具体点として伝える`));
+    sentences.push(ensurePeriod(`${primary}が焦点だ`));
   }
 
   const used = sentences.join("");
@@ -156,7 +143,7 @@ export function synthesizeXSocialFromPlan(plan: XSocialPlan): SocialWriteResult 
           /尻テク|業界トップ|\d+作品|\d+時間|ギブアップ|シリーズ|エステ|タクシー|ランナー|合宿|町内|収録/u.test(c),
       ) ?? null;
   if (featureClaim && sentences.length < 3) {
-    sentences.push(ensurePeriod(`${featureClaim}も具体点として触れておく`));
+    sentences.push(ensurePeriod(`${featureClaim}も焦点だ`));
   } else if (why && !used.includes(why) && sentences.length < 3) {
     sentences.push(ensurePeriod(why));
   } else if (primary && premise && primary !== premise && !used.includes(primary) && sentences.length < 3) {
@@ -166,7 +153,7 @@ export function synthesizeXSocialFromPlan(plan: XSocialPlan): SocialWriteResult 
   }
 
   if (sentences.length === 0 && subject) {
-    sentences.push(ensurePeriod(`${subject}の作品を、公式に確認できる焦点から紹介する`));
+    sentences.push(ensurePeriod(`${subject}の作品が焦点だ`));
   }
 
   const flat: string[] = [];
@@ -210,21 +197,8 @@ export function buildXSocialWriterPrompts(
 } {
   const writerPlan = {
     SUBJECT: plan.subject,
-    CONTENT_TYPE: plan.contentType,
-    WHAT_IS_INTERESTING: plan.whatIsInteresting,
-    ANGLE: plan.angle,
-    READER_HOOK: plan.readerHook,
-    WHY_THIS_WORK: plan.whyThisWork,
-    SUPPORTING_CLAIMS: plan.supportingClaims,
-    WORK_UNDERSTANDING: writerSafeUnderstanding(plan),
+    CONTENT_TYPE: plan.contentType && plan.contentType !== "作品紹介" ? plan.contentType : null,
     EXPRESSION_SAFE_FACTS: plan.allowedClaims,
-    CORE_PREMISE: plan.corePremise,
-    PRIMARY_APPEAL: plan.primaryAppeal,
-    SECONDARY_APPEAL: plan.secondaryAppeal,
-    CONCRETE_DETAILS: plan.concreteDetails,
-    PRODUCT_TITLE: sanitizeProductTitleForWriter(plan),
-    PERFORMERS: plan.canonicalContext.performers,
-    SERIES: plan.canonicalContext.seriesName,
   };
   const hints = (opts?.revisionHints ?? []).filter(Boolean);
   const prev = (opts?.previousBody ?? "").trim();
@@ -339,9 +313,7 @@ export async function writeXSocialCopy(
             secondaryAppeal: null,
             concreteDetails: [],
             workUnderstanding: [],
-            angle: plan.subject
-              ? `${plan.subject}の作品を、確認できる設定から紹介する`
-              : "確認できる設定から作品を紹介する",
+            angle: plan.allowedClaims[0] ?? plan.subject ?? "作品の焦点",
             readerHook: plan.allowedClaims[0] ?? plan.readerHook,
             whyThisWork: plan.allowedClaims[1] ?? plan.whyThisWork,
           };

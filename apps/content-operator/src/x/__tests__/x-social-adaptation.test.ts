@@ -487,7 +487,8 @@ describe("social composer regression fixtures (dry-preview CIDs)", () => {
     expect(body).not.toMatch(stockCtaRe);
     if (!result.skip) {
       expect(body).toMatch(/篠田ゆう/);
-      expect(body).toMatch(/尻テク|業界トップ|11作品|8時間BEST/);
+      expect(body).toMatch(/8時間|総集編/);
+      expect(body).not.toMatch(/業界トップ|尻テク/);
     }
   });
 });
