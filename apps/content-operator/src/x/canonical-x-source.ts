@@ -44,6 +44,8 @@ export type CanonicalXSource = {
   taxonomyTags: string[];
   articlePlanFacts: XSocialFact[];
   productTitle: string | null;
+  /** Official product-page description from SourceDocument.pageEvidence. */
+  officialDescription: string | null;
   /** Same resolved images as WP (structuredContent.images). */
   articleImages: ArticleImage[];
 };
@@ -293,8 +295,37 @@ export async function loadCanonicalXSource(
     taxonomyTags,
     articlePlanFacts,
     productTitle: researchItem?.title ?? null,
+    officialDescription: await loadOfficialDescription(prisma, key, cid.trim()),
     articleImages,
   };
+}
+
+async function loadOfficialDescription(
+  prisma: DatabaseClient["prisma"],
+  key: string,
+  rawCid: string,
+): Promise<string | null> {
+  const byId = await prisma.sourceDocument.findFirst({
+    where: { externalId: { equals: rawCid, mode: "insensitive" } },
+    orderBy: { retrievedAt: "desc" },
+    select: { metadata: true },
+  });
+  const byUrl =
+    byId ??
+    (await prisma.sourceDocument.findFirst({
+      where: { url: { contains: key, mode: "insensitive" } },
+      orderBy: { retrievedAt: "desc" },
+      select: { metadata: true },
+    }));
+  return readOfficialDescription(byUrl?.metadata);
+}
+
+function readOfficialDescription(metadata: unknown): string | null {
+  const meta = asRecord(metadata);
+  const page = asRecord(meta.pageEvidence);
+  const description = asRecord(page.description);
+  const text = typeof description.text === "string" ? description.text.trim() : "";
+  return text || null;
 }
 
 export async function adaptLoadedCanonicalToX(
@@ -324,6 +355,7 @@ export async function adaptLoadedCanonicalToX(
     claimStatements: source.claimStatements,
     taxonomyTags: source.taxonomyTags,
     articlePlanFacts: source.articlePlanFacts,
+    officialDescription: source.officialDescription,
     articleImages: source.articleImages,
     publishedBlogUrl: source.publishedBlogUrl,
     wpStatus: source.wpStatus,

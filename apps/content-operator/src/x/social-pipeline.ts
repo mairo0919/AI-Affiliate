@@ -55,6 +55,7 @@ export type SocialPipelineInput = {
   seriesName?: string | null;
   claimStatements?: Array<{ id?: string; statement: string }>;
   groundedPlanFacts?: string[];
+  officialDescription?: string | null;
   maxBodyChars?: number;
   llm?: LLMProvider | null;
   model?: string;
@@ -113,6 +114,7 @@ export async function runXSocialPipeline(
     seriesName: input.seriesName,
     claimStatements: input.claimStatements,
     groundedPlanFacts: input.groundedPlanFacts,
+    officialDescription: input.officialDescription,
   });
 
   if (!planned.ok) {

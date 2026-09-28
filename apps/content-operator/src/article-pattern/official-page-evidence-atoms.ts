@@ -51,6 +51,69 @@ export type OfficialPageEvidenceInput = {
 const EVAL_PHRASE_RE =
   /キュート|エッチで|魅力|おすすめ|見逃せ|楽しめる|話題|最高|必見|超可愛|エチえち|本気をみさらせ|最強|天使な|大ボリュームで|詰まった|厳選の|いっちゃん/;
 
+/** Whole-clause viewing fantasy or sales puffery. Never delete a word inside a kept clause. */
+const OFFICIAL_CLAUSE_REJECT_RE =
+  /(見てみると|実際に視聴|視聴すると|印象的だった|おすすめ|オススメ|見てみませんか|ご体験あれ|魅力|必見|最高峰|最高傑作|楽しめる|話題|ヌケる|抜ける|間違い無|ぜひご覧|お見逃し|豪華|スペシャル|絶賛|活躍中|お楽しみ|ご覧ください|チェック)/u;
+
+const FIRST_PERSON_SALES_RE = /ボク|俺|僕|私(?:は|が|の|に|も|を|たち)/u;
+
+const OFFICIAL_CLAUSE_PUFFERY_RE =
+  /最高|極上|新鮮|爆アゲ|進化を続ける|禁断|果たして|完璧|できるんだ|してくれる|てくれる|ご奉仕|制作・著作|KMPVR|快楽|お届け|欲望|熱を帯び|可愛い|お申込み|らしい$/u;
+
+const INCOMPLETE_OFFICIAL_CLAUSE_TAIL_RE =
+  /(?:たら|たり|って|て|で|ので|のに|から|けれど|けど|ながら|つつ|ですが|ますが|でしたが|ましたが|したが|んですよ|んです|ですよ|ちゃいます|ください|だよ|だね|ね|よ)$/u;
+
+function isOfficialSpecClause(clause: string): boolean {
+  const rest = clause
+    .replace(/\d+(?:\.\d+)?\s*(?:時間|分|作品|タイトル|コーナー|枚|人|名)/gu, "")
+    .replace(/収録|ベスト|総集編|全コーナー|最新|約|vol\.?\s*\d+|この作品|本作/giu, "")
+    .replace(/[、。\s・]/gu, "");
+  return rest.length < 8;
+}
+
+/**
+ * Official description clauses that say what the work is.
+ * Genre tokens stay genre atoms. Spec counts stay spec atoms.
+ * Adult wording that is in the source is kept verbatim.
+ */
+export function selectOfficialWorkClauses(
+  description: string | null | undefined,
+  limit = 4,
+): string[] {
+  const text = (description ?? "")
+    .replace(/[「」『』]/gu, "\n")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of text.split(/[。！？…\n]/u)) {
+    const clause = raw.trim().replace(/^[、,\s]+|[、,\s]+$/gu, "");
+    if (clause.length < 12 || clause.length > 80) continue;
+    if (/^[#＃]/.test(clause)) continue;
+    if (/[「」『』]/.test(clause)) continue;
+    if (!/[がを]/u.test(clause)) continue;
+    if (
+      OFFICIAL_CLAUSE_REJECT_RE.test(clause) ||
+      OFFICIAL_CLAUSE_PUFFERY_RE.test(clause) ||
+      FIRST_PERSON_SALES_RE.test(clause)
+    ) {
+      continue;
+    }
+    if (INCOMPLETE_OFFICIAL_CLAUSE_TAIL_RE.test(clause)) continue;
+    if (isOfficialSpecClause(clause)) continue;
+    if (/^(?:この作品|本作)は、/u.test(clause)) {
+      const rest = clause.replace(/^(?:この作品|本作)は、/u, "");
+      if (rest.length < 12 || !/[がを]/u.test(rest)) continue;
+    }
+    if (seen.has(clause)) continue;
+    seen.add(clause);
+    out.push(clause);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
 /** Source-backed character/expression stems — not promotional wrappers. */
 const CHARACTER_CONCRETE_EXACT_RE =
   /^(?:生意気|生意気な表情|大人をバカにした表情)$/u;
@@ -1051,11 +1114,18 @@ export function extractAtomsFromPageEvidenceMeta(
   });
 
   // Official catalog genres (JSON-LD / ItemList) — previously AVAILABLE but IGNORED.
+  const described = withOfficialWorkClauses(
+    base,
+    meta.description?.text ?? null,
+    meta.description?.originField ?? "jsonld.Product.description",
+  );
   const genreAtoms = extractCatalogGenreAtoms(meta.catalog?.genres ?? null);
-  if (genreAtoms.length === 0) return base;
+  if (genreAtoms.length === 0) return described;
 
   const existingFacts = new Set(
-    base.concrete.filter((a) => a.generatorAllowed).map((a) => a.fact.replace(/\s+/g, "")),
+    described.concrete
+      .filter((a) => a.generatorAllowed && !a.familyId.startsWith("OFFICIAL_WORK_CLAUSE"))
+      .map((a) => a.fact.replace(/\s+/g, "")),
   );
   const mergedExtra: typeof genreAtoms = [];
   for (const g of genreAtoms) {
@@ -1072,9 +1142,52 @@ export function extractAtomsFromPageEvidenceMeta(
     existingFacts.add(key);
     mergedExtra.push(g);
   }
-  if (mergedExtra.length === 0) return base;
+  if (mergedExtra.length === 0) return described;
+  return {
+    ...described,
+    concrete: [...described.concrete, ...mergedExtra],
+  };
+}
+
+function withOfficialWorkClauses(
+  base: ReturnType<typeof extractOfficialPageFactAtoms>,
+  descriptionText: string | null | undefined,
+  originField: string,
+): ReturnType<typeof extractOfficialPageFactAtoms> {
+  const clauses = selectOfficialWorkClauses(descriptionText);
+  const clauseIds = new Map(clauses.map((clause, index) => [clause, index + 1]));
+  const concrete = base.concrete.map((atom) => {
+    const index = clauseIds.get(atom.fact);
+    if (index == null) return atom;
+    return {
+      ...atom,
+      sourceFactType: "OFFICIAL_DESCRIPTION" as const,
+      familyId: atom.familyId.startsWith("OFFICIAL_WORK_CLAUSE")
+        ? atom.familyId
+        : `OFFICIAL_WORK_CLAUSE_${index}`,
+    };
+  });
+  const existing = new Set(concrete.map((atom) => atom.fact));
+  const extra: OfficialPageFactAtom[] = [];
+  clauses.forEach((clause, index) => {
+    if (existing.has(clause)) return;
+    extra.push({
+      id: `page_work_clause::${index + 1}`,
+      fact: clause,
+      bucket: "SUPPORTED_CONCRETE_FACT",
+      familyId: `OFFICIAL_WORK_CLAUSE_${index + 1}`,
+      primary: "UNKNOWN_CONCRETE",
+      blueprintType: "setting_or_situation",
+      originField,
+      source: "fanza_product_page",
+      generatorAllowed: true,
+      sourceFactType: "OFFICIAL_DESCRIPTION",
+    });
+  });
+  if (extra.length === 0 && concrete.every((atom, index) => atom === base.concrete[index])) return base;
   return {
     ...base,
-    concrete: [...base.concrete, ...mergedExtra],
+    atoms: [...base.atoms, ...extra],
+    concrete: [...concrete, ...extra],
   };
 }

@@ -889,6 +889,7 @@ export function claimStatementsFromPageEvidence(input: {
         projected.statement,
       );
     let score = writerClaimSelectionScore(projected);
+    if (atom.familyId.startsWith("OFFICIAL_WORK_CLAUSE")) score = Math.max(score, 132);
     if (BARE_COMPILATION_FORM_RE.test(projected.statement)) score = Math.min(score, 22);
     pushScored(projected.statement, score, fam);
   }

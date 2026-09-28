@@ -320,6 +320,35 @@ describe("planner viability uses a primary fact, not a spec readout", () => {
     expect(vr.plan.semanticFacts?.map((fact) => fact.value).join("\n")).not.toMatch(/沼る/);
     expect(composeGroundedIntro(vr.plan)).toBeNull();
   });
+
+  it("uses an official description clause as a primary premise without loosening a thin title", () => {
+    const thin = planTitle("女のアフター5 vol.2", ["糸井瑠花"], "女のアフター5");
+    expect(thin.ok).toBe(true);
+    if (!thin.ok) return;
+    expect(thin.plan.viability).toBe("X_INSUFFICIENT_MATERIAL");
+
+    const planned = planXSocial({
+      canonicalTitle: "女のアフター5 vol.2",
+      productTitle: "女のアフター5 vol.2",
+      performerNames: ["糸井瑠花"],
+      seriesName: "女のアフター5",
+      officialDescription:
+        "昼間の顔をそっと脱ぎ捨て本当の自分を解き放つ。見てみると印象的だった。精液を狙う僕の感想をおすすめします。",
+    });
+    expect(planned.ok).toBe(true);
+    if (!planned.ok) return;
+    expect(planned.plan.viability).toBe("X_POSTABLE");
+    expect(
+      planned.plan.semanticFacts?.some(
+        (fact) => fact.salience === "primary" && fact.value === "昼間の顔をそっと脱ぎ捨て本当の自分を解き放つ",
+      ),
+    ).toBe(true);
+    expect(planned.plan.semanticFacts?.map((fact) => fact.value).join("\n")).not.toMatch(/見てみると|印象的|精液|おすすめ/);
+    const body = composeGroundedIntro(planned.plan) ?? "";
+    expect(body).toBe("糸井瑠花の女のアフター5は、昼間の顔をそっと脱ぎ捨て本当の自分を解き放つ。");
+    expect(body).not.toMatch(/を収録している/);
+    expect(reviewXSocialCopy(body, planned.plan).ok).toBe(true);
+  });
 });
 
 describe("X article images fall back to ALLOWED research images", () => {

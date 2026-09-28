@@ -14,6 +14,7 @@ import {
   isParticleFreeTitleStack,
   isTitleFragmentRun,
 } from "./x-copy-quality.js";
+import { selectOfficialWorkClauses } from "../article-pattern/official-page-evidence-atoms.js";
 import { assessXViability, buildSemanticRelations, extractSemanticFacts, selectSemanticFacts } from "./semantic-facts.js";
 import { detectXAdultExpressions, stripXAdultSpans } from "./x-social-content-policy.js";
 
@@ -121,6 +122,8 @@ export type XPlannerInput = {
   seriesName?: string | null;
   claimStatements?: Array<{ id?: string; statement: string }>;
   groundedPlanFacts?: string[];
+  /** Official product-page description. Same Evidence SSOT as the article. Not an X-only source. */
+  officialDescription?: string | null;
 };
 
 const SOURCE_VOICE_RE =
@@ -432,10 +435,13 @@ function buildEditorialAngle(input: {
 export function planXSocial(input: XPlannerInput): XPlanResult {
   const title = (input.canonicalTitle || input.productTitle || "").trim();
   const productTitle = (input.productTitle || title).trim();
+  const officialClauses = selectOfficialWorkClauses(input.officialDescription, 3);
   const provenanceSources = [
     title,
     productTitle,
     input.seriesName ?? "",
+    input.officialDescription ?? "",
+    ...officialClauses,
     ...(input.performerNames ?? []),
     ...(input.claimStatements ?? []).map((claim) => claim.statement),
     ...(input.groundedPlanFacts ?? []),
@@ -715,15 +721,30 @@ export function planXSocial(input: XPlannerInput): XPlanResult {
   const semanticSources = [officialTitle, input.seriesName ?? ""]
     .map((source) => source.trim())
     .filter((source, index, all) => source.length > 0 && all.indexOf(source) === index);
+  const titleFacts = extractSemanticFacts({
+    sources: semanticSources,
+    performers,
+    seriesName: input.seriesName,
+  });
   const semanticFacts = selectSemanticFacts(
-    extractSemanticFacts({ sources: semanticSources, performers, seriesName: input.seriesName }).filter((fact) =>
+    extractSemanticFacts({
+      sources: semanticSources,
+      performers,
+      seriesName: input.seriesName,
+      officialClauses: titleFacts.some((fact) => fact.salience === "primary") ? [] : officialClauses,
+    }).filter((fact) =>
       fact.role === "who"
         ? true
         : faithful(fact.value) &&
           !/魅力|妖艶|珠玉|凝縮|官能|濃密|圧巻|必見|世界観|話題|楽しめる|迫力/u.test(fact.value),
     ),
   );
-  const semanticRelations = buildSemanticRelations({ facts: semanticFacts, subject });
+  const semanticRelations = buildSemanticRelations({
+    facts: semanticFacts,
+    subject,
+    seriesName: input.seriesName,
+    workTitle: officialTitle,
+  });
   const viability = assessXViability(semanticFacts);
   const semanticValues = semanticFacts.map((fact) => fact.value);
   if (semanticValues.length > 0) {

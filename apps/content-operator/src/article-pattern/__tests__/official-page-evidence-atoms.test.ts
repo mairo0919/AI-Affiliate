@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   extractOfficialPageFactAtoms,
   extractAtomsFromPageEvidenceMeta,
+  selectOfficialWorkClauses,
 } from "../official-page-evidence-atoms.js";
 import { buildEvidencePack } from "../evidence-pack.js";
 import { buildResearchEvidence } from "../research-evidence.js";
@@ -105,6 +106,31 @@ describe("official page evidence atoms (LLM=0)", () => {
       })),
     });
     expect(concrete).toHaveLength(0);
+  });
+
+  it("keeps an official situation clause verbatim and drops viewing fantasy", () => {
+    const description =
+      "10作品。昼間の顔をそっと脱ぎ捨て本当の自分を解き放つ。精液を狙う展開が公式コメントにある。見てみると印象的だったおすすめの体験。";
+    const clauses = selectOfficialWorkClauses(description);
+    expect(clauses).toContain("昼間の顔をそっと脱ぎ捨て本当の自分を解き放つ");
+    expect(clauses).toContain("精液を狙う展開が公式コメントにある");
+    expect(clauses.join("\n")).not.toMatch(/見てみると|印象的だった|おすすめ/);
+    expect(clauses).not.toContain("人妻");
+
+    const { concrete } = extractAtomsFromPageEvidenceMeta({
+      description: { text: description, originField: "jsonld.Product.description" },
+      catalog: {
+        genres: [{ value: "人妻", provenance: "page_json_ld", originField: "jsonld.VideoObject.genre" }],
+      },
+    });
+    const kept = concrete.find((atom) => atom.fact === "精液を狙う展開が公式コメントにある");
+    expect(kept?.generatorAllowed).toBe(true);
+    expect(kept?.sourceFactType).toBe("OFFICIAL_DESCRIPTION");
+    expect(kept?.source).toBe("fanza_product_page");
+    expect(concrete.some((atom) => atom.fact === "人妻" && atom.sourceFactType === "GENRE_TAG")).toBe(true);
+    expect(concrete.some((atom) => /見てみると|印象的だった/.test(atom.fact) && atom.generatorAllowed)).toBe(
+      false,
+    );
   });
 
   it("semantic families distinguish quantity vs duration vs scene", () => {

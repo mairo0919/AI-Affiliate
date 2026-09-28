@@ -28,9 +28,10 @@ function pushFact(
   value: string,
   source: string,
   evidence: string,
+  maxLen = 40,
 ): void {
   const next = value.trim();
-  if (next.length < 2 || next.length > 40 || isAdultSurface(next) || hasParticleHole(next)) return;
+  if (next.length < 2 || next.length > maxLen || isAdultSurface(next) || hasParticleHole(next)) return;
   if (facts.some((fact) => fact.value === next)) return;
   facts.push({
     role,
@@ -83,11 +84,17 @@ export function extractSemanticFacts(input: {
   sources: string[];
   performers?: string[];
   seriesName?: string | null;
+  /** Verbatim official-description clauses. Whole adult clauses are dropped, never word-stripped. */
+  officialClauses?: string[];
 }): SemanticFact[] {
   const facts: SemanticFact[] = [];
   const performers = (input.performers ?? []).map((name) => name.trim()).filter((name) => name.length >= 2);
   const performerSet = new Set(performers);
   const blob = input.sources.join("\n");
+
+  for (const clause of input.officialClauses ?? []) {
+    pushFact(facts, "premise", "primary", clause, clause, clause, 80);
+  }
 
   for (const name of performers) {
     pushFact(facts, "who", "entity", name, name, name);
@@ -236,6 +243,8 @@ export function selectSemanticFacts(facts: SemanticFact[], limit = 4): SemanticF
 export function buildSemanticRelations(input: {
   facts: SemanticFact[];
   subject: string | null;
+  seriesName?: string | null;
+  workTitle?: string | null;
 }): SemanticRelation[] {
   const facts = input.facts;
   const performer = input.subject?.trim() || facts.find((fact) => fact.role === "who")?.value || "";
@@ -245,11 +254,19 @@ export function buildSemanticRelations(input: {
   const project =
     facts.find((fact) => fact.salience === "primary" && fact.role === "what" && !isCampaign(fact.value) && fact.value !== feature)?.value ??
     null;
+  const series = input.seriesName?.trim() ?? "";
+  const title = input.workTitle?.trim() ?? "";
+  const fallbackWork =
+    series.length >= 4 && !isSupportingSpec(series) && !isAdultSurface(series)
+      ? series
+      : title.length >= 4 && title !== premise
+        ? title
+        : null;
   const work =
     facts.find((fact) => fact.salience === "entity" && fact.role === "what")?.value ??
     project ??
     campaign ??
-    null;
+    (premise ? fallbackWork : null);
   const relations: SemanticRelation[] = [];
   const add = (type: SemanticRelation["type"], from: string | null, to: string | null) => {
     if (!from || !to || from === to) return;

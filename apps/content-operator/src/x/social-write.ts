@@ -416,6 +416,9 @@ export function composeGroundedIntro(plan: XSocialPlan): string | null {
   if (premise) {
     const work = who && appears ? `${who}の${premise.from}` : premise.from;
     const extra = [...runtimes, ...volumes].slice(0, 2);
+    if (/[うくぐすつぬぶむる]$/u.test(premise.to)) {
+      return `${work}は、${premise.to}。`;
+    }
     if (/参加$/u.test(premise.to)) {
       const label = extra.length ? `${extra.join("、")}で、` : "";
       return `${work}は、${label}${premise.to}する。`;
