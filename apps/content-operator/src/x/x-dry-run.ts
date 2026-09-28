@@ -17,6 +17,10 @@ import {
   type XSocialMediaCandidateReport,
   type XSocialMediaDecision,
 } from "./x-social-media-gate.js";
+import {
+  hasClearAdDisclosure,
+  normalizeDisclosureLabel,
+} from "./ops/pre-publish-guard.js";
 import type { XAdaptedPost, XLinkMode, XThreadShape } from "./x-social-adaptation.js";
 
 export type XDryRunPayload = {
@@ -132,8 +136,9 @@ export function buildXDryRunPayload(input: {
   const allText = posts.map((p) => p.body).join("\n");
   const disclosurePresent =
     !disclosure ||
-    allText.includes(disclosure) ||
-    /#PR|アフィリエイト/u.test(allText);
+    hasClearAdDisclosure(allText) ||
+    (normalizeDisclosureLabel(disclosure) !== "PR" &&
+      allText.includes(normalizeDisclosureLabel(disclosure)));
 
   const adult = detectXAdultExpressions(allText);
   const fanzaXSiteApproved =

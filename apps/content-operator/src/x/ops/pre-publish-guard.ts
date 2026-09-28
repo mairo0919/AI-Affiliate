@@ -47,8 +47,35 @@ export interface XPrePublishGuardDeps {
 }
 
 /**
+ * #PR is not the required token. A plain-text "PR" label, or 広告 / アフィリエイト,
+ * is a clear ad disclosure. Legacy #PR still counts, but new copy must not emit it.
+ */
+export function normalizeDisclosureLabel(disclosure: string | null | undefined): string {
+  const trimmed = disclosure?.trim() ?? "";
+  if (/^#PR$/i.test(trimmed)) return "PR";
+  return trimmed;
+}
+
+export function stripLegacyHashPr(body: string): string {
+  return body
+    .replace(/#PR\b/gi, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/[ \t]*\n[ \t]*/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/** True when the text clearly says the post is an ad. Does not require the #PR hashtag. */
+export function hasClearAdDisclosure(text: string): boolean {
+  if (/アフィリエイト|広告/.test(text)) return true;
+  if (/(?:^|[\s　\n])PR(?=$|[\s　\n])/i.test(text)) return true;
+  if (/(?:^|[\s　\n])#PR(?=$|[\s　\n])/i.test(text)) return true;
+  return false;
+}
+
+/**
  * Disclosure is required on the publication unit (parent + replies), not on the parent alone.
- * Returns true when a configured disclosure is absent from every post.
+ * Returns true when no clear ad disclosure is present.
  */
 export function publicationUnitDisclosureMissing(input: {
   disclosure: string | null | undefined;
@@ -57,8 +84,10 @@ export function publicationUnitDisclosureMissing(input: {
   const disclosure = input.disclosure?.trim() ?? "";
   if (!disclosure || input.bodies.length === 0) return false;
   const unitText = input.bodies.join("\n");
-  if (unitText.includes(disclosure)) return false;
-  return !/アフィリエイト|広告|#PR/i.test(unitText);
+  if (hasClearAdDisclosure(unitText)) return false;
+  const label = normalizeDisclosureLabel(disclosure);
+  if (label && label !== "PR" && unitText.includes(label)) return false;
+  return true;
 }
 
 export class XPrePublishGuard {

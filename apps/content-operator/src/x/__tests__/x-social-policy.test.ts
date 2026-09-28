@@ -45,7 +45,8 @@ describe("X_SOCIAL_CONTENT policy", () => {
       disclosure: "#PR",
     });
     expect(body).toMatch(/奥田咲/);
-    expect(body).toMatch(/#PR/);
+    expect(body.startsWith("PR\n")).toBe(true);
+    expect(body).not.toMatch(/#PR/);
     expect(body).toContain("https://otonaselect.net/?p=26");
     expect(detectXAdultExpressions(body).hit).toBe(false);
     expect(body).not.toMatch(/セックス|ピストン|パイズリ/);

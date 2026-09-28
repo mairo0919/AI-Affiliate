@@ -2191,7 +2191,6 @@ export class ContentGenerationService {
     );
     let xBody = parsed.body.trim();
     const destinationUrl = input.bloggerUrl || input.productUrl || null;
-    const disclosure = "#PR";
     const restatement = detectSourceTitleRestatement({
       body: xBody,
       sourceStatements: claimStatements.map((c) => c.statement),
@@ -2226,11 +2225,10 @@ export class ContentGenerationService {
     });
     xBody = enforced.body;
 
-    // Append soft CTA destination + disclosure outside LLM body (route-aware caller may re-append)
+    // Publication unit owns the CTA disclosure. This body must not carry the #PR hashtag.
+    xBody = xBody.replace(/#PR\b/gi, " ").replace(/[ \t]{2,}/g, " ").trim();
     if (destinationUrl && !xBody.includes(destinationUrl)) {
-      xBody = `${xBody.trim()} ${disclosure} ${destinationUrl}`.trim();
-    } else if (!/#PR|アフィリエイト/u.test(xBody)) {
-      xBody = `${xBody.trim()} ${disclosure}`.trim();
+      xBody = `${xBody.trim()} ${destinationUrl}`.trim();
     }
 
     const recheck = enforceXSocialContentBody({
@@ -2238,7 +2236,7 @@ export class ContentGenerationService {
       productTitle: input.productTitle,
       safeFacets,
       destinationUrl,
-      disclosure,
+      disclosure: null,
     });
     parsed.body = recheck.body;
 
@@ -2250,7 +2248,7 @@ export class ContentGenerationService {
         productTitle: input.productTitle,
         safeFacets,
         destinationUrl,
-        disclosure,
+        disclosure: null,
       });
       this.xCounter.assertWithinLimit(parsed.body, max);
     }

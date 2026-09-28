@@ -766,7 +766,7 @@ export function loadConfig(options?: { requireDatabaseUrl?: boolean }): AppConfi
       process.env.X_AUTO_MAX_POSTS_PER_PUBLICATION,
       2,
     ),
-    xAffiliateDisclosure: process.env.X_AFFILIATE_DISCLOSURE?.trim() || "#PR",
+    xAffiliateDisclosure: process.env.X_AFFILIATE_DISCLOSURE?.trim() || "PR",
     xStrategySelectionMode: (() => {
       const mode = process.env.X_STRATEGY_SELECTION_MODE?.trim().toLowerCase();
       if (mode === "random" || mode === "weighted" || mode === "manual") {

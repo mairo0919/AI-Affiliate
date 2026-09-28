@@ -271,7 +271,8 @@ describe("X Publication Builder", () => {
       });
       expect(built.posts[0]?.sequence).toBe(1);
       expect(["ROOT", "HUB"]).toContain(built.posts[0]?.role);
-      expect(built.posts[0]?.body).toContain("#PR");
+      expect(built.posts[0]?.body).toContain("PR");
+      expect(built.posts[0]?.body).not.toContain("#PR");
     }
   });
 

@@ -20,6 +20,7 @@ import { XRelatedPostSelector } from "./related-selector.js";
 import { XStrategySelector } from "./strategy-selector.js";
 import type { XPublishingProvider } from "./providers/index.js";
 import { createXPublishingProvider } from "./providers/index.js";
+import { planPostMediaIds } from "./publication-media-plan.js";
 import { XPublishError, type GeneratedXPublication } from "./types.js";
 import { STRATEGY_VERSION } from "./types.js";
 import { XPrePublishGuard } from "./ops/pre-publish-guard.js";
@@ -799,28 +800,36 @@ export class XPublicationService {
         }
 
         try {
-          let mediaIds: string[] | undefined;
-          // Attach article hero/sample image on ROOT only (reply/thread structure unchanged).
-          if (
-            (post.sequence === 1 || post.role === "ROOT") &&
-            this.provider.uploadMedia
-          ) {
-            const mediaUrl = resolvePublicationMediaUrl(content);
-            if (mediaUrl) {
-              const uploadKey = `${publication.idempotencyKey}:media:${mediaUrl}`;
-              const cachedId = this.mediaIdByUploadKey.get(uploadKey);
-              if (cachedId) {
-                mediaIds = [cachedId];
-              } else {
-                const uploaded = await this.provider.uploadMedia({
-                  sourceUrl: mediaUrl,
-                  idempotencyKey: uploadKey,
-                });
-                this.mediaIdByUploadKey.set(uploadKey, uploaded.mediaId);
-                mediaIds = [uploaded.mediaId];
-              }
+          const isRoot = post.sequence === 1 || post.role === "ROOT";
+          const mediaUrl = isRoot ? resolvePublicationMediaUrl(content) : null;
+          let uploadedMediaId: string | null = null;
+          // Product image stays on ROOT. CTA/replies never receive mediaIds.
+          if (isRoot && mediaUrl) {
+            if (!this.provider.uploadMedia) {
+              throw new XPublishError(
+                "product image available but uploadMedia is missing — refusing text-only ROOT",
+                "Configuration",
+                { retryable: false },
+              );
+            }
+            const uploadKey = `${publication.idempotencyKey}:media:${mediaUrl}`;
+            const cachedId = this.mediaIdByUploadKey.get(uploadKey);
+            if (cachedId) {
+              uploadedMediaId = cachedId;
+            } else {
+              const uploaded = await this.provider.uploadMedia({
+                sourceUrl: mediaUrl,
+                idempotencyKey: uploadKey,
+              });
+              this.mediaIdByUploadKey.set(uploadKey, uploaded.mediaId);
+              uploadedMediaId = uploaded.mediaId;
             }
           }
+          const mediaIds = planPostMediaIds({
+            isRoot,
+            mediaUrl,
+            uploadedMediaId,
+          });
 
           const result = await this.provider.createPost({
             text: post.body,

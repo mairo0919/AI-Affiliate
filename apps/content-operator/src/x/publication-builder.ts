@@ -1,6 +1,10 @@
 import type { AppConfig } from "@ai-affiliate/config";
 import type { XPublicationStrategyType } from "@ai-affiliate/database";
 import { XCharacterCounter } from "./character-counter.js";
+import {
+  hasClearAdDisclosure,
+  normalizeDisclosureLabel,
+} from "./ops/pre-publish-guard.js";
 import type { GeneratedXPostSpec, GeneratedXPublication } from "./types.js";
 import { STRATEGY_VERSION } from "./types.js";
 
@@ -159,11 +163,11 @@ export class XPublicationBuilder {
         `weighted length ${counted.weightedLength} exceeds ${this.config.xMaxWeightedLength}`,
       );
     }
-    const disclosure = this.config.xAffiliateDisclosure;
-    const hashtagCountExcludingDisclosure =
-      disclosure.startsWith("#") && post.body.includes(disclosure)
-        ? Math.max(0, counted.hashtagCount - 1)
-        : counted.hashtagCount;
+    const disclosure = this.disclosureLabel();
+    const disclosed =
+      hasClearAdDisclosure(post.body) ||
+      (disclosure.length > 0 && post.body.includes(disclosure));
+    const hashtagCountExcludingDisclosure = counted.hashtagCount;
     if (hashtagCountExcludingDisclosure > this.config.xMaxHashtags) {
       throw new XPublicationValidationError(
         `hashtag count ${hashtagCountExcludingDisclosure} exceeds ${this.config.xMaxHashtags}`,
@@ -173,29 +177,30 @@ export class XPublicationBuilder {
     if (
       requireDisclosure &&
       (post.role === "ROOT" || post.role === "HUB") &&
-      !post.body.includes(this.config.xAffiliateDisclosure)
+      !disclosed
     ) {
       throw new XPublicationValidationError("ROOT missing affiliate disclosure");
     }
     if (
       requireDisclosure &&
       post.body.includes("http") &&
-      !post.body.includes(this.config.xAffiliateDisclosure) &&
+      !disclosed &&
       strategyType !== "HUB_POST"
     ) {
-      // URL-bearing posts should keep disclosure when carrying affiliate URL
       if (post.body.includes("http://") || post.body.includes("https://")) {
-        if (!post.body.includes(this.config.xAffiliateDisclosure)) {
-          throw new XPublicationValidationError(
-            "affiliate URL post missing disclosure",
-          );
-        }
+        throw new XPublicationValidationError(
+          "affiliate URL post missing disclosure",
+        );
       }
     }
   }
 
+  private disclosureLabel(): string {
+    return normalizeDisclosureLabel(this.config.xAffiliateDisclosure);
+  }
+
   private buildSingle(ctx: XPublicationBuildContext): GeneratedXPostSpec {
-    const disclosureIsTag = this.config.xAffiliateDisclosure.startsWith("#");
+    const disclosureIsTag = this.disclosureLabel().startsWith("#");
     const tags = takeHashtags(
       ctx.hashtags,
       Math.max(0, this.config.xMaxHashtags - (disclosureIsTag ? 1 : 0)),
@@ -203,7 +208,7 @@ export class XPublicationBuilder {
     const body = joinParts([
       ctx.title,
       ctx.summary ?? ctx.facts?.[0] ?? ctx.callToAction ?? "注目ポイントをチェック",
-      this.config.xAffiliateDisclosure,
+      this.disclosureLabel(),
       ctx.affiliateUrl,
       ...tags,
     ]);
@@ -213,7 +218,7 @@ export class XPublicationBuilder {
   private buildControl(ctx: XPublicationBuildContext): GeneratedXPostSpec {
     const body = joinParts([
       ctx.title,
-      this.config.xAffiliateDisclosure,
+      this.disclosureLabel(),
       ctx.affiliateUrl,
     ]);
     return { sequence: 1, role: "ROOT", body: this.fit(body) };
@@ -225,14 +230,14 @@ export class XPublicationBuilder {
         ctx.title,
         ctx.summary ?? "詳細は返信へ",
         "続きは返信で",
-        this.config.xAffiliateDisclosure,
+        this.disclosureLabel(),
       ]),
     );
     const reply = this.fit(
       joinParts([
         ...(ctx.facts ?? []).slice(0, 3),
         ctx.callToAction ?? "詳細はこちら",
-        this.config.xAffiliateDisclosure,
+        this.disclosureLabel(),
         ctx.affiliateUrl,
       ]),
     );
@@ -247,14 +252,14 @@ export class XPublicationBuilder {
       joinParts([
         ctx.title,
         "関連投稿もどうぞ",
-        this.config.xAffiliateDisclosure,
+        this.disclosureLabel(),
         ctx.relatedPostUrl!,
       ]),
     );
     const reply = this.fit(
       joinParts([
         "本編はこちら",
-        this.config.xAffiliateDisclosure,
+        this.disclosureLabel(),
         ctx.affiliateUrl,
       ]),
     );
@@ -275,7 +280,7 @@ export class XPublicationBuilder {
         sequence: 1,
         role: "ROOT",
         body: this.fit(
-          joinParts([ctx.title, "スレッドで紹介", this.config.xAffiliateDisclosure]),
+          joinParts([ctx.title, "スレッドで紹介", this.disclosureLabel()]),
         ),
       },
     ];
@@ -290,7 +295,7 @@ export class XPublicationBuilder {
         body: this.fit(
           joinParts([
             facts[i - 1] ?? `ポイント${i}`,
-            isLast ? this.config.xAffiliateDisclosure : null,
+            isLast ? this.disclosureLabel() : null,
             isLast ? ctx.affiliateUrl : null,
           ]),
         ),
@@ -308,7 +313,7 @@ export class XPublicationBuilder {
           joinParts([
             "注目まとめ",
             ctx.title,
-            this.config.xAffiliateDisclosure,
+            this.disclosureLabel(),
             ctx.affiliateUrl,
           ]),
         ),
@@ -318,7 +323,7 @@ export class XPublicationBuilder {
 
   /** Truncate body carefully without removing disclosure or URL. */
   private fit(body: string): string {
-    const disclosure = this.config.xAffiliateDisclosure;
+    const disclosure = this.disclosureLabel();
     const max = this.config.xMaxWeightedLength;
     let current = body;
     let counted = this.counter.count(current);

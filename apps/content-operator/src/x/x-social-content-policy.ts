@@ -5,6 +5,11 @@
  */
 
 import { CONTENT_POLICY_SURFACE } from "./content-policy-surfaces.js";
+import {
+  hasClearAdDisclosure,
+  normalizeDisclosureLabel,
+  stripLegacyHashPr,
+} from "./ops/pre-publish-guard.js";
 
 export const X_SOCIAL_CONTENT_POLICY_VERSION = "x-social-content-v1";
 
@@ -111,10 +116,10 @@ export function buildXSocialSafeBodyFromEvidence(input: {
   }
   parts.push(cta);
 
-  let body = parts.join("");
-  const disclosure = (input.disclosure ?? "").trim();
-  if (disclosure && !body.includes(disclosure) && !/#PR/u.test(body)) {
-    body = `${body} ${disclosure}`;
+  let body = stripLegacyHashPr(parts.join(""));
+  const disclosure = normalizeDisclosureLabel(input.disclosure);
+  if (disclosure && !hasClearAdDisclosure(body)) {
+    body = `${disclosure}\n${body}`;
   }
   const url = input.destinationUrl?.trim();
   if (url && !body.includes(url)) {
@@ -127,12 +132,11 @@ export function buildXSocialSafeBodyFromEvidence(input: {
       actress ? `${actress}の` : "",
       catalog[0] ?? "作品情報",
       "をまとめて確認。",
-      disclosure ? ` ${disclosure}` : "",
       url ? ` ${url}` : "",
     ]
       .join("")
       .trim();
-    return safeOnly;
+    return disclosure ? `${disclosure}\n${safeOnly}` : safeOnly;
   }
   return body;
 }

@@ -577,7 +577,7 @@ describe("X Optimization review & apply", () => {
     const child = await contents.findGeneratedContentById(result.generatedContentId!);
     expect(child?.parentContentId).toBe(contentId);
     expect(child?.affiliateUrl).toBe(parent?.affiliateUrl);
-    expect(child?.body).toMatch(/アフィリエイト|#PR/);
+    expect(child?.body).toMatch(/アフィリエイト|#PR|(?:^|[\s\n])PR(?=$|[\s\n])/);
     expect(result.experimentId).toBeTruthy();
     const experiment = await publications.findExperimentById(result.experimentId!);
     const variants = experiment?.strategyVariants as {

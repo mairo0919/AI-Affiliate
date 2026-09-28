@@ -17,6 +17,12 @@
  * Publication never rewrites work introduction copy.
  */
 
+import {
+  hasClearAdDisclosure,
+  normalizeDisclosureLabel,
+  stripLegacyHashPr,
+} from "./ops/pre-publish-guard.js";
+
 export type XPublicationStrategy = "WP_TRAFFIC_EMBED" | "AFFILIATE_THREAD";
 
 export type XThreadPostRole =
@@ -137,9 +143,13 @@ export function resolveXPublicationStrategy(
 }
 
 function withDisclosure(body: string, disclosure: string): string {
-  if (!disclosure) return body.trim();
-  if (body.includes(disclosure) || /#PR/u.test(body)) return body.trim();
-  return `${body.trim()} ${disclosure}`.trim();
+  const label = normalizeDisclosureLabel(disclosure);
+  const cleaned = stripLegacyHashPr(body);
+  if (!label) return cleaned;
+  if (label === "PR" || cleaned.includes(label)) {
+    if (hasClearAdDisclosure(cleaned) || cleaned.includes(label)) return cleaned;
+  }
+  return `${label}\n${cleaned}`.trim();
 }
 
 /** Parent is writer copy. URLs belong on replies. */
@@ -155,14 +165,18 @@ function applyUnitDisclosure(
   posts: XThreadComposedPost[],
   disclosure: string,
 ): XThreadComposedPost[] {
-  if (!disclosure) return posts;
+  if (!disclosure) {
+    return posts.map((post) => ({ ...post, body: stripLegacyHashPr(post.body) }));
+  }
   const commercial = posts.find(
     (p) => p.threadRole === "AFFILIATE_REPLY" || p.threadRole === "WP_REPLY",
   );
   const targetSequence = commercial?.sequence ?? posts.find((p) => p.threadRole === "PARENT")?.sequence;
   if (targetSequence == null) return posts;
   return posts.map((p) =>
-    p.sequence === targetSequence ? { ...p, body: withDisclosure(p.body, disclosure) } : p,
+    p.sequence === targetSequence
+      ? { ...p, body: withDisclosure(p.body, disclosure) }
+      : { ...p, body: stripLegacyHashPr(p.body) },
   );
 }
 

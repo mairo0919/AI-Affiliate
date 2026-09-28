@@ -7,6 +7,11 @@
  * - assembles posts with URL / thread shape for publication
  */
 
+import {
+  hasClearAdDisclosure,
+  normalizeDisclosureLabel,
+  stripLegacyHashPr,
+} from "./ops/pre-publish-guard.js";
 import { detectXAdultExpressions } from "./x-social-content-policy.js";
 
 export type XSocialFactKind =
@@ -215,11 +220,12 @@ export function composeXSocialPosts(input: {
   disclosure: string;
   performers?: string[];
 }): Array<{ sequence: number; role: "ROOT" | "REPLY" | "CTA"; body: string; linkKind: "none" | "wp" | "fanza" }> {
-  const disclosure = input.disclosure;
+  const label = normalizeDisclosureLabel(input.disclosure);
   const withDisc = (body: string) => {
-    if (!disclosure) return body.trim();
-    if (body.includes(disclosure) || /#PR/u.test(body)) return body.trim();
-    return `${body.trim()} ${disclosure}`.trim();
+    const cleaned = stripLegacyHashPr(body);
+    if (!label) return cleaned;
+    if (hasClearAdDisclosure(cleaned)) return cleaned;
+    return `${label}\n${cleaned}`.trim();
   };
   const withUrl = (body: string, url: string | null) => {
     if (!url || body.includes(url)) return body;
@@ -255,8 +261,7 @@ export function composeXSocialPosts(input: {
       if (parts.join("").length + s.length > maxTotal) break;
       parts.push(s);
     }
-    let body = parts.join("") || asSentence(hookLine());
-    body = withDisc(body);
+    let body = stripLegacyHashPr(parts.join("") || asSentence(hookLine()));
     const posts: Array<{
       sequence: number;
       role: "ROOT" | "REPLY" | "CTA";
@@ -264,10 +269,13 @@ export function composeXSocialPosts(input: {
       linkKind: "none" | "wp" | "fanza";
     }> = [{ sequence: 1, role: "ROOT", body, linkKind: "none" }];
     if (input.wpUrl) {
+      const ctaBody = label
+        ? `${label}\n記事はこちら\n${input.wpUrl}`
+        : `記事はこちら\n${input.wpUrl}`;
       posts.push({
         sequence: 2,
         role: "CTA",
-        body: `記事はこちら\n${input.wpUrl}`,
+        body: ctaBody,
         linkKind: "wp",
       });
     }

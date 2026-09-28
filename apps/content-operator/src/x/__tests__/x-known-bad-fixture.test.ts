@@ -159,7 +159,8 @@ describe("known bad live fixture 赤名いと package-fragment + parent URL", ()
     expect(posts[0]!.threadRole).toBe("PARENT");
     const wp = posts.find((p) => p.threadRole === "WP_REPLY");
     expect(wp?.body).toContain("otonaselect.net");
-    expect(wp?.body).toContain("#PR");
+    expect(wp?.body.startsWith("PR\n")).toBe(true);
+    expect(wp?.body).not.toContain("#PR");
     expect(posts.some((p) => p.threadRole === "AFFILIATE_REPLY")).toBe(false);
     expect(posts.some((p) => /al\.fanza\.co\.jp/i.test(p.body))).toBe(false);
   });
