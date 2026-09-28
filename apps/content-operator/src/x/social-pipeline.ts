@@ -6,7 +6,7 @@
 import type { LLMProvider } from "../adapters/types.js";
 import type { XSocialPlan, XPlanSkip } from "./social-plan.js";
 import { planXSocial } from "./social-plan.js";
-import { writeXSocialCopy } from "./social-write.js";
+import { composeGroundedIntro, writeXSocialCopy } from "./social-write.js";
 import {
   reviewXSocialCopy,
   rewriteXSocialCopyOnce,
@@ -152,6 +152,26 @@ export async function runXSocialPipeline(
       mode: draft.mode,
     };
     review = reviewXSocialCopy(draft.body, plan, { maxChars: input.maxBodyChars ?? 240 });
+  }
+
+  if (!review.ok) {
+    const grounded = composeGroundedIntro(plan);
+    if (grounded && grounded !== draft.body) {
+      const groundedReview = reviewXSocialCopy(grounded, plan, { maxChars: input.maxBodyChars ?? 240 });
+      if (groundedReview.ok) {
+        return {
+          ok: true,
+          plan,
+          draftBody: draft.body,
+          finalBody: grounded,
+          reviewFindings: groundedReview.findings,
+          review: groundedReview,
+          rewritten: true,
+          writerMode: draft.mode,
+          rewriteAttempts: attempts,
+        };
+      }
+    }
   }
 
   if (!review.ok) {

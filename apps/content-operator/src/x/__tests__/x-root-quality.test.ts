@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { planXSocial } from "../social-plan.js";
 import { reviewXSocialCopy } from "../social-review.js";
+import { composeGroundedIntro } from "../social-write.js";
 import type { XSocialPlan } from "../social-plan.js";
 import { resolveCanonicalArticleImages } from "../canonical-x-source.js";
 import { selectXMediaFromArticleImages } from "../x-article-media.js";
@@ -66,7 +67,11 @@ describe("1rctd00763 planner does not keep broken title debris", () => {
     expect(blob).not.toContain("ROCKET18周年記念ユーザーリクエスト祭り完全主観ホラー");
     expect(planned.plan.subject).toBe("九井スナオ");
     expect(planned.plan.allowedClaims.every((fact) => OFFICIAL_TITLE.includes(fact))).toBe(true);
-    expect(blob).toMatch(/完全主観/);
+    expect(planned.plan.allowedClaims.join("\n")).toMatch(/完全主観/);
+    expect(planned.plan.allowedClaims.join("\n")).toMatch(/ROCKET18周年/);
+    expect((planned.plan.semanticFacts ?? []).every((fact) => fact.provenance.evidence.length > 0)).toBe(
+      true,
+    );
   });
 });
 
@@ -140,16 +145,192 @@ describe("review blocks the published 1rctd00763 root", () => {
     expect(echo.findings.map((f) => f.code)).toContain("TEMPLATE_EXPLAINER");
   });
 
-  it("passes a grammatical one-hook sentence", () => {
+  it("fails a one-fact copula and a role mismatch, and passes a two-fact sentence", () => {
     const plan = planFixture({
       subject: "九井スナオ",
-      allowedClaims: ["完全主観ホラー"],
+      allowedClaims: ["完全主観ホラー", "ROCKET18周年記念ユーザーリクエスト祭り"],
+      productTitle: OFFICIAL_TITLE,
     });
-    const review = reviewXSocialCopy(
-      "九井スナオの作品は、完全主観ホラーだ。",
+    const copula = reviewXSocialCopy("九井スナオの作品は、完全主観ホラーだ。", plan);
+    expect(copula.ok).toBe(false);
+    expect(copula.findings.map((f) => f.code)).toContain("TEMPLATE_EXPLAINER");
+    const student = reviewXSocialCopy(
+      "堀北桃愛のシリーズ作品は、あの30，000人が応募した日本一可愛い学生だ。",
       plan,
     );
-    expect(review.ok).toBe(true);
+    expect(student.ok).toBe(false);
+    expect(student.findings.map((f) => f.code)).toContain("TEMPLATE_EXPLAINER");
+    const participant = reviewXSocialCopy(
+      "小那海あやのシリーズ作品は、オーディションを勝ち抜いた素人男性がガチ参加だ。",
+      plan,
+    );
+    expect(participant.ok).toBe(false);
+    const titled = reviewXSocialCopy(
+      "ウブな女子大生が初めての風俗チャレンジ約6.5時間は、6.5時間の収録ボリュームだ。",
+      planFixture({
+        subject: null,
+        allowedClaims: ["6.5時間", "SCOOP的モニタリングAV"],
+        productTitle: "SCOOP的モニタリングAV ウブな女子大生が初めての風俗チャレンジ約6.5時間 神回SP",
+      }),
+    );
+    expect(titled.ok).toBe(false);
+    const natural = reviewXSocialCopy(
+      "九井スナオのROCKET18周年記念ユーザーリクエスト祭りは、完全主観ホラーの作品として収録されている。",
+      plan,
+    );
+    expect(natural.ok).toBe(true);
+    const exists = reviewXSocialCopy("SCOOP的モニタリングAVは、神回SPで、6.5時間がある。", plan);
+    expect(exists.ok).toBe(false);
+    expect(exists.findings.map((f) => f.code)).toContain("TEMPLATE_EXPLAINER");
+  });
+});
+
+describe("semantic facts keep a role and compose a clause", () => {
+  const samples = [
+    {
+      title: OFFICIAL_TITLE,
+      performers: ["九井スナオ"],
+      series: null,
+      includes: ["九井スナオ", "完全主観ホラー", "神出鬼没", "ROCKET18周年"],
+    },
+    {
+      title: "SCOOP的モニタリングAV ウブな女子大生が初めての風俗チャレンジ約6.5時間 神回SP",
+      performers: [],
+      series: null,
+      includes: ["SCOOP的モニタリングAV", "6.5時間", "風俗チャレンジ"],
+    },
+    {
+      title: "【配信限定】巨尻巨乳の豊満なカラダ 夏川あゆみ ベスト",
+      performers: ["夏川あゆみ"],
+      series: null,
+      includes: ["夏川あゆみ", "配信限定", "ベスト"],
+    },
+    {
+      title:
+        "【早漏素人×最強女優】「早漏改善プロジェクト、ついに本格始動」応募人数206人！撮影期間3ヶ月！オーディションを勝ち抜いた素人男性がガチ参加！早漏を治せたら女優と夢の4Pハーレム大乱交！",
+      performers: ["小那海あや"],
+      series: "滝沢ガレソチャンネル",
+      includes: ["小那海あや", "206人", "3ヶ月", "ガチ参加"],
+    },
+    {
+      title:
+        "配信限定:ナチュポケ ありのまま解禁 REC:堀北桃愛 あの30，000人が応募した日本一可愛い学生 ミスコンファイナリストのハメ撮り",
+      performers: ["堀北桃愛"],
+      series: null,
+      includes: ["堀北桃愛", "ナチュポケ", "学生", "出演"],
+    },
+    {
+      title:
+        "御愛顧感謝特別作品！！ シリーズ別人気企画ベストBOX 豪華5枚組100作品収録1200分 選りすぐりの名場面を一挙収録したヌキどころ満載の超充実20時間",
+      performers: ["有村のぞみ"],
+      series: null,
+      includes: ["有村のぞみ", "5枚組", "100作品", "20時間"],
+    },
+  ];
+
+  it("passes review without a one-fact copula", () => {
+    for (const sample of samples) {
+      const planned = planXSocial({
+        canonicalTitle: sample.title,
+        productTitle: sample.title,
+        performerNames: sample.performers,
+        seriesName: sample.series,
+      });
+      expect(planned.ok, sample.title).toBe(true);
+      if (!planned.ok) continue;
+      const body = composeGroundedIntro(planned.plan);
+      const review = reviewXSocialCopy(body ?? "", planned.plan);
+      expect(review.findings.map((finding) => `${finding.code}:${finding.message}`), `${sample.title}\n${body}`).toEqual([]);
+      expect(body, sample.title).toBeTruthy();
+      for (const piece of sample.includes) expect(body, sample.title).toContain(piece);
+      expect(body).not.toMatch(/がある|の(?:シリーズ)?作品は、|するがある/);
+      expect(planned.plan.semanticFacts?.every((fact) => fact.provenance.evidence.length > 0)).toBe(true);
+    }
+  });
+
+  it("keeps title facts and does not adopt a puffery claim or a false subject", () => {
+    const best = planXSocial({
+      canonicalTitle: "小那海あや 4時間BEST",
+      productTitle: "小那海あや 4時間BEST",
+      performerNames: ["小那海あや"],
+    });
+    expect(best.ok).toBe(true);
+    if (!best.ok) return;
+    const bestBody = composeGroundedIntro(best.plan);
+    expect(bestBody).toContain("小那海あや");
+    expect(bestBody).toContain("4時間");
+    expect(bestBody).not.toMatch(/^\d/u);
+    expect(reviewXSocialCopy(bestBody ?? "", best.plan).ok).toBe(true);
+
+    const series = planXSocial({
+      canonicalTitle: "田舎のお母さんシリーズ2 8時間",
+      productTitle: "田舎のお母さんシリーズ2 8時間",
+      performerNames: [],
+    });
+    expect(series.ok).toBe(true);
+    if (!series.ok) return;
+    expect(series.plan.subject).toBeNull();
+    const seriesBody = composeGroundedIntro(series.plan);
+    expect(seriesBody).toBe("田舎のお母さんシリーズ2は、8時間を収録している。");
+    expect(reviewXSocialCopy(seriesBody ?? "", series.plan).ok).toBe(true);
+
+    const puff = planXSocial({
+      canonicalTitle: "ギュっと！上戸まり2タイトル4時間",
+      productTitle: "ギュっと！上戸まり2タイトル4時間",
+      performerNames: ["上戸まり"],
+      claimStatements: [{ statement: "上戸まりの魅力を存分に味わえる240分" }],
+    });
+    expect(puff.ok).toBe(true);
+    if (!puff.ok) return;
+    expect(puff.plan.semanticFacts?.map((fact) => fact.value).join("\n")).not.toMatch(/魅力|味わえ/);
+    const puffBody = composeGroundedIntro(puff.plan);
+    expect(puffBody).toContain("2タイトル");
+    expect(puffBody).toContain("4時間");
+    expect(puffBody).not.toMatch(/魅力/);
+    expect(reviewXSocialCopy(puffBody ?? "", puff.plan).ok).toBe(true);
+  });
+
+  it("does not attach な to a second title or a volume number", () => {
+    const volume = planXSocial({
+      canonicalTitle: "女のアフター5 vol.2",
+      productTitle: "女のアフター5 vol.2",
+      performerNames: ["糸井瑠花"],
+    });
+    expect(volume.ok).toBe(true);
+    if (!volume.ok) return;
+    const volumeBody = composeGroundedIntro(volume.plan) ?? "";
+    expect(volumeBody).toBe("糸井瑠花は、女のアフター5のvol.2に出演している。");
+    const volumeReview = reviewXSocialCopy(volumeBody, volume.plan);
+    expect(volumeReview.findings.map((finding) => finding.code)).toEqual([]);
+    expect(reviewXSocialCopy("糸井瑠花の女のアフター5は、vol.2な作品として収録されている。", volume.plan).ok).toBe(
+      false,
+    );
+
+    const paired = planXSocial({
+      canonicalTitle: "ROCKET18周年記念ユーザーリクエスト祭り 無個性ゼンタイ人間化",
+      productTitle: "ROCKET18周年記念ユーザーリクエスト祭り 無個性ゼンタイ人間化",
+      performerNames: ["一色さら"],
+    });
+    expect(paired.ok).toBe(true);
+    if (!paired.ok) return;
+    const pairedBody = composeGroundedIntro(paired.plan) ?? "";
+    expect(pairedBody).toBe(
+      "一色さらは、ROCKET18周年記念ユーザーリクエスト祭りの無個性ゼンタイ人間化に出演している。",
+    );
+    expect(pairedBody).not.toMatch(/な作品/);
+    expect(reviewXSocialCopy(pairedBody, paired.plan).ok).toBe(true);
+
+    const vr = planXSocial({
+      canonicalTitle: "【VR】響蓮に沼る",
+      productTitle: "【VR】響蓮に沼る",
+      performerNames: ["響蓮"],
+    });
+    expect(vr.ok).toBe(true);
+    if (!vr.ok) return;
+    const vrBody = composeGroundedIntro(vr.plan) ?? "";
+    expect(vrBody).toBe("響蓮は、VRの響蓮に沼るとして収録されている。");
+    expect(vrBody).not.toMatch(/な作品/);
+    expect(reviewXSocialCopy(vrBody, vr.plan).findings.map((finding) => finding.code)).toEqual([]);
   });
 });
 

@@ -14,6 +14,7 @@ import {
   isParticleFreeTitleStack,
   isTitleFragmentRun,
 } from "./x-copy-quality.js";
+import { extractSemanticFacts, selectSemanticFacts } from "./semantic-facts.js";
 import { detectXAdultExpressions, stripXAdultSpans } from "./x-social-content-policy.js";
 
 export type XPlanSkip = {
@@ -35,6 +36,15 @@ export type XSocialPublicationIntent = {
     | "wp_then_related"
     | "related_then_wp"
     | null;
+};
+
+/** Role of a fact the Writer may use. who = person, what = the work, attribute = count/runtime/format, premise = official situation. */
+export type SemanticFactRole = "who" | "what" | "attribute" | "premise";
+
+export type SemanticFact = {
+  role: SemanticFactRole;
+  value: string;
+  provenance: { source: string; evidence: string };
 };
 
 /** Writer-visible plan — editorial intent, not a fact dump list. */
@@ -60,6 +70,8 @@ export type XSocialPlan = {
   concreteDetails: string[];
   /** X-safe surfaces the Writer may quote into final copy. */
   allowedClaims: string[];
+  /** Typed facts. Absent on older fixtures; Writer then treats allowedClaims as premises. */
+  semanticFacts?: SemanticFact[];
   /** Soft publication intent — not a fixed thread template. */
   publicationIntent: XSocialPublicationIntent;
   productTitle: string;
@@ -300,8 +312,9 @@ function pickSubject(performers: string[], title: string): string | null {
   if (named[0]) return named[0]!;
   const m = title.match(/^([一-龯ぁ-んァ-ンー]{2,8})(?:の|と|が|は)/u);
   if (
-    m &&
-    !detectXAdultExpressions(m[1]!).hit &&
+    m?.[1] &&
+    m[1].length >= 3 &&
+    !detectXAdultExpressions(m[1]).hit &&
     !/手のひら|久しぶり|激エロ|塩対応|赤ちゃん|しろうと|近親|^しろう$|^本当$/u.test(m[1]!)
   ) {
     // Avoid chopping 「しろうと彼女」 into subject 「しろう」.
@@ -671,6 +684,29 @@ export function planXSocial(input: XPlannerInput): XPlanResult {
   const faithful = (fact: string | null | undefined): fact is string =>
     typeof fact === "string" && isExpressionSafeFact(fact, provenanceSources);
   allowedClaims = allowedClaims.filter(faithful);
+  const officialTitle = (input.productTitle || title).trim();
+  const semanticSources = [officialTitle, input.seriesName ?? ""]
+    .map((source) => source.trim())
+    .filter((source, index, all) => source.length > 0 && all.indexOf(source) === index);
+  const semanticFacts = selectSemanticFacts(
+    extractSemanticFacts({ sources: semanticSources, performers }).filter((fact) =>
+      fact.role === "who"
+        ? true
+        : faithful(fact.value) &&
+          !/魅力|妖艶|珠玉|凝縮|官能|濃密|圧巻|必見|世界観|話題|楽しめる|迫力/u.test(fact.value),
+    ),
+  );
+  const semanticValues = semanticFacts.map((fact) => fact.value);
+  if (semanticValues.length > 0) {
+    const rest = allowedClaims.filter(
+      (claim) =>
+        claim !== "複数タイトルを横断した総集編" &&
+        !semanticValues.includes(claim) &&
+        !/魅力|妖艶|珠玉|凝縮|官能|濃密|圧巻|必見|世界観|話題|楽しめる|迫力|公開カタログ上で確認/u.test(claim),
+    );
+    allowedClaims = dedupe([...semanticValues, ...rest]).slice(0, 4);
+    corePremise = semanticValues.find((value) => value !== subject) ?? allowedClaims[0] ?? null;
+  }
   if (!faithful(corePremise)) corePremise = allowedClaims[0] ?? null;
   if (!faithful(primaryAppeal)) primaryAppeal = allowedClaims.find((claim) => claim !== corePremise) ?? null;
   if (!faithful(secondaryAppeal)) secondaryAppeal = null;
@@ -783,6 +819,7 @@ export function planXSocial(input: XPlannerInput): XPlanResult {
       secondaryAppeal,
       concreteDetails,
       allowedClaims,
+      semanticFacts,
       publicationIntent: {
         needsArticleReply,
         relatedPostUseful,

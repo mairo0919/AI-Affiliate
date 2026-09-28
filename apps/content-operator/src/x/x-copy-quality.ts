@@ -3,6 +3,8 @@
  * Detects broken phrases and title-fragment sentences without a fixed product list.
  */
 
+import { detectXAdultExpressions } from "./x-social-content-policy.js";
+
 /** Long title compound with no case particle. Too easy to paste as a sentence. */
 export function isParticleFreeTitleStack(text: string): boolean {
   const s = text.replace(/\s+/gu, "");
@@ -32,6 +34,51 @@ export function isTitleFragmentRun(text: string): boolean {
   return false;
 }
 
+/**
+ * The whole post is only 「〜の作品は、〜だ」.
+ * That shape renames one fact and does not say what the work is.
+ */
+export function isLoneWorkCopula(text: string): boolean {
+  const body = text.replace(/\s+/gu, "").trim();
+  const sentences = body.split("。").filter((part) => part.length > 0);
+  if (sentences.length !== 1) return false;
+  const sentence = sentences[0] ?? "";
+  if (/の(?:シリーズ)?作品は、[^。]{1,80}だ$/u.test(sentence)) return true;
+  return (
+    /は、[^。]{1,80}だ$/u.test(sentence) &&
+    !/(?:する|した|している|される|れる|られる)/u.test(sentence)
+  );
+}
+
+/**
+ * The grammatical subject is a scenario clause copied from the title,
+ * or a long title slice whose predicate is only a measurement.
+ */
+export function hasAwkwardTitleSubject(text: string, source: string): boolean {
+  const subject = (text.split(/は/u)[0] ?? "").replace(/^[「『\s]+/u, "").trim();
+  if (subject.length < 16 || !source.includes(subject)) return false;
+  if (/[がをに]/u.test(subject)) return true;
+  const predicate = text.split(/は/u).slice(1).join("は");
+  return (
+    /時間|収録|ボリューム|枚組/u.test(predicate) &&
+    /だ。?$/u.test(text.trim()) &&
+    !/[をで]/u.test(predicate)
+  );
+}
+
+/**
+ * The work is identified with a person, or 「作品は、人が〜だ」 has no verb.
+ */
+export function hasSemanticRoleMismatch(text: string): boolean {
+  const body = text.replace(/\s+/gu, "");
+  if (/作品は、[^。]{0,80}(?:学生|男性|女性|男子|女子|男|女|人|女優|男優)だ。?$/u.test(body)) {
+    return true;
+  }
+  if (/(?:時間|人|名|枚組|分|する)がある/u.test(body)) return true;
+  if (!/作品は、[^。]{0,80}が[^。]{0,30}だ。?$/u.test(body)) return false;
+  return !/が[^。]{0,30}(?:する|した|している|いる|される)/u.test(body);
+}
+
 /** Mass-produced explainer frames. A normal clause with a subject and predicate does not match. */
 export function isTemplateExplainer(text: string): boolean {
   if (
@@ -43,7 +90,7 @@ export function isTemplateExplainer(text: string): boolean {
   }
   if (/では[、，][^。]{0,80}が特徴です/u.test(text)) return true;
   if (
-    /が特徴です|点が特徴|登場して|が登場した|タイトル通り|公式設定が紹介|をまとめて楽しめる|からリリースされて|進化を続ける|まとめられています|振り返ることが/u.test(
+    /が特徴です|点が特徴|登場して|が登場した|タイトル通り|公式設定が紹介|をまとめて楽しめる|からリリースされて|進化を続ける|まとめられています|振り返ることが|ほか、|といった作品|(?:vol\.?\s*\d+|[一-龯ァ-ヶー]{6,})な作品/iu.test(
       text,
     )
   ) {
@@ -91,21 +138,52 @@ export function sourcePhrases(text: string): string[] {
  */
 export function isExpressionSafeFact(fact: string, sources: string[]): boolean {
   const value = fact.trim();
-  if (!value || hasParticleHole(value)) return false;
-  if (isTitleFragmentRun(value) || isParticleFreeTitleStack(value)) return false;
+  if (!value || hasParticleHole(value) || isAdultSurface(value)) return false;
+  if (isExactSourcePhrase(value, sources) && value.length <= 40) return true;
+  if (
+    value.length <= 24 &&
+    sources.some((source) => source.includes(value)) &&
+    !isTitleFragmentRun(value)
+  ) {
+    return true;
+  }
   if (isFaithfulCatalogReading(value, sources)) return true;
+  if (isTitleFragmentRun(value) || isParticleFreeTitleStack(value)) return false;
   return sources.some((source) => source.includes(value));
+}
+
+function isAdultSurface(value: string): boolean {
+  return detectXAdultExpressions(value).hit || /エロ|下品|変態|精液|ヌキ|センズリ|中出し/u.test(value);
+}
+
+/** The fact is one phrase already separated in the source, not a glued title. */
+export function isExactSourcePhrase(fact: string, sources: string[]): boolean {
+  const value = fact.trim();
+  return sources.some((source) => sourcePhrases(source).includes(value));
 }
 
 /** Runtime / cast-count / compilation shape copied from a number or label that is actually in the source. */
 export function isFaithfulCatalogReading(fact: string, sources: string[]): boolean {
   const blob = sources.join("\n");
-  const hours = /^(\d+(?:\.\d+)?)時間の収録ボリューム$/u.exec(fact);
+  const hours = /^(\d+(?:\.\d+)?)時間(?:の収録ボリューム)?$/u.exec(fact);
   if (hours && new RegExp(`(?<![\\d.])${hours[1].replace(".", "\\.")}\\s*時間`, "u").test(blob)) {
     return true;
   }
+  const minutes = /^(\d+)分$/u.exec(fact);
+  if (minutes && new RegExp(`(?<![\\d.])${minutes[1]}\\s*分`, "u").test(blob)) return true;
+  const months = /^(\d+)ヶ月$/u.exec(fact);
+  if (months && new RegExp(`(?<![\\d.])${months[1]}\\s*ヶ?月`, "u").test(blob)) return true;
+  const works = /^(\d+)作品(?:収録)?$/u.exec(fact);
+  if (works && new RegExp(`(?<![\\d.])${works[1]}\\s*作品`, "u").test(blob)) return true;
+  const discs = /^(\d+)枚組$/u.exec(fact);
+  if (discs && blob.includes(`${discs[1]}枚組`)) return true;
   const people = /^(\d+)名が出演する企画$/u.exec(fact);
   if (people && new RegExp(`(?<![\\d.])${people[1]}\\s*名`, "u").test(blob)) return true;
+  const head = fact.replace(/をまとめた作品$/u, "");
+  if (head !== fact && head.length >= 2 && blob.includes(head) && /BEST|ベスト|総集編/iu.test(blob)) {
+    return true;
+  }
+  if (fact === "ベストをまとめた作品" && /ベスト|BEST|総集編/iu.test(blob)) return true;
   if (fact === "複数タイトルを横断した総集編" && /BEST|ベスト|総集編/iu.test(blob)) return true;
   return false;
 }

@@ -4,12 +4,15 @@
  */
 
 import {
+  hasAwkwardTitleSubject,
   hasJoinedSourcePhrases,
-  ungroundedContentWord,
   hasParticleHole,
   hasQuotedTitleFragment,
+  hasSemanticRoleMismatch,
+  isLoneWorkCopula,
   isTemplateExplainer,
   isTitleFragmentRun,
+  ungroundedContentWord,
 } from "./x-copy-quality.js";
 import { detectXAdultExpressions } from "./x-social-content-policy.js";
 import type { XSocialPlan } from "./social-plan.js";
@@ -304,11 +307,16 @@ export function reviewXSocialCopy(
     }
   }
 
-  if (isTemplateExplainer(text)) {
+  if (
+    isTemplateExplainer(text) ||
+    isLoneWorkCopula(text) ||
+    hasSemanticRoleMismatch(text) ||
+    (plan.productTitle ? hasAwkwardTitleSubject(text, plan.productTitle) : false)
+  ) {
     fail(
       "NATURAL_JAPANESE",
       "TEMPLATE_EXPLAINER",
-      "explainer template — 状況設定が特徴 / として制作されています / 出演作では",
+      "explainer template — 作品は〜だ / 状況設定が特徴 / として制作されています / 出演作では",
     );
   }
 
@@ -337,24 +345,40 @@ export function reviewXSocialCopy(
   }
 
   const compactLen = compact(text).length;
+  const typedFactInBody = (plan.semanticFacts ?? []).some((fact) => {
+    const c = compact(fact.value);
+    return (
+      c.length >= 2 &&
+      compact(text).includes(c) &&
+      (c.length >= 3 || /^(?:VR|8K|配信限定)$/u.test(fact.value))
+    );
+  });
   const concreteHook =
     (plan.subject ? compact(text).includes(compact(plan.subject)) : true) &&
-    [plan.corePremise, ...plan.allowedClaims].some((fact) => {
-      const c = fact ? compact(fact) : "";
-      return c.length >= 6 && compact(text).includes(c);
-    });
+    [plan.corePremise, ...plan.allowedClaims, ...(plan.semanticFacts ?? []).map((fact) => fact.value)].some(
+      (fact) => {
+        const c = fact ? compact(fact) : "";
+        return c.length >= 6 && compact(text).includes(c);
+      },
+    );
+  const honestShort =
+    Boolean(plan.subject) &&
+    typedFactInBody &&
+    compactLen >= 16 &&
+    /収録している|収録されている|出演している/u.test(text);
 
   if (/という作品です|という設定が|という独特な舞台設定|という設定も|という設定を/u.test(text)) {
     fail("VOICE", "GENERIC_FRAME", "generic 「という作品／設定」 frame concentration");
   }
 
   // Publish bar: too short / name-only stubs.
-  if (compactLen > 0 && compactLen < 36 && !(concreteHook && compactLen >= 16)) {
+  if (compactLen > 0 && compactLen < 36 && !(concreteHook && compactLen >= 16) && !honestShort) {
     fail("PRODUCT_SPECIFICITY", "LOW_INFORMATION", "body too short for publish-quality intro");
   } else if (
     sents.length <= 1 &&
     compactLen < 48 &&
     !concreteHook &&
+    !honestShort &&
     (Boolean(plan.corePremise) || plan.workUnderstanding.length >= 1)
   ) {
     fail(
@@ -365,12 +389,13 @@ export function reviewXSocialCopy(
     );
   }
 
+  const semanticValues = (plan.semanticFacts ?? []).map((fact) => fact.value);
   const groundedForWords = [
     plan.subject,
     plan.contentType,
     plan.canonicalContext.seriesName,
     ...plan.canonicalContext.performers,
-    ...plan.allowedClaims,
+    ...(semanticValues.length > 0 ? semanticValues : plan.allowedClaims),
   ]
     .filter((part): part is string => Boolean(part && part.trim()))
     .join("\n");
@@ -629,7 +654,7 @@ function findingsToHints(findings: SocialReviewFinding[]): string[] {
     codes.has("PACKAGE_FRAGMENT_GLUE")
   ) {
     hints.push(
-      "Write one ordinary clause: the performer and ONE fact from EXPRESSION_SAFE_FACTS, using は/が/を/で. A second sentence may only reuse that same fact. Do not use 特徴, 制作されています, 展開されます, 登場しています, タイトル通り, or 振り返ることができます. Do not quote a title with the spaces removed.",
+      "Use the performer as a person and at least two SEMANTIC_FACTS when they exist. Attach a count or runtime with を or で, and use a verb such as 収録している. Do not write 「の作品は、〜だ」. Do not treat the work as a person or a student. Do not put a title clause before は. Do not use 特徴, 制作されています, 展開されます, 登場しています, タイトル通り, or 振り返ることができます.",
     );
   }
   if (codes.has("UNSUPPORTED_SWEEP")) {
