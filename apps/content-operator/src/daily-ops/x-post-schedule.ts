@@ -511,12 +511,17 @@ export function planXPostScheduleHorizon(input: {
   extraDayKey?: string | null;
   extraTimes?: readonly XPostExtraSlotTime[];
 }): XHorizonAssignment[] {
+  const filled = new Set(
+    input.filledSlotKeys instanceof Set
+      ? [...input.filledSlotKeys]
+      : [...(input.filledSlotKeys ?? [])],
+  );
   const upcoming = listUpcomingXPostSlots({
     now: input.now,
     dayCount: input.dayCount,
     hours: input.hours,
     mainHour: input.mainHour,
-    filledSlotKeys: input.filledSlotKeys,
+    filledSlotKeys: filled,
     extraDayKey: input.extraDayKey,
     extraTimes: input.extraTimes,
   });
@@ -558,19 +563,23 @@ export function planXPostScheduleHorizon(input: {
         : isExtraDay
           ? extraTimesLen
           : 0;
-    const hardCap =
+    const configuredCap =
       input.hardCapPerDay != null
-        ? isExtraDay
-          ? input.hardCapPerDay
-          : maxStandard
-        : maxStandard + maxExtra;
+        ? input.hardCapPerDay
+        : maxStandard + (isExtraDay ? maxExtra : 0);
+    const booked = [...filled].filter((key) => key.startsWith(`${dayKey}T`)).length;
+    const remaining = Math.max(0, configuredCap - booked);
+    const maxStandardForDay = Math.min(maxStandard, remaining);
+    const maxExtraForDay = isExtraDay
+      ? Math.min(maxExtra, Math.max(0, remaining - maxStandardForDay))
+      : 0;
 
     const dayPlan = allocateXPostSlots({
       slots: daySlots,
       candidates: pool,
-      maxStandardPostsPerDay: maxStandard,
-      maxExtraPostsPerDay: maxExtra,
-      hardCapPerDay: hardCap,
+      maxStandardPostsPerDay: maxStandardForDay,
+      maxExtraPostsPerDay: maxExtraForDay,
+      hardCapPerDay: remaining,
       usedCanonicalIds: usedCid,
       usedContentVersionIds: usedCv,
     });

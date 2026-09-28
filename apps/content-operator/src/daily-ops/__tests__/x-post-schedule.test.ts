@@ -438,4 +438,29 @@ describe("x-post-schedule boundary cases (JST)", () => {
     expect(assigned.every((a) => a.kind === "STANDARD")).toBe(true);
     expect(assigned.map((a) => a.hour).sort((x, y) => x - y)).toEqual([12, 18]);
   });
+
+  it("old 15/21 bookings count toward the daily hard cap of 4", () => {
+    const now = atJst("2026-09-29", 10, 0);
+    const plan = planXPostScheduleHorizon({
+      now,
+      candidates: [pass("a", 0), pass("b", 1), pass("c", 2)],
+      maxStandardPostsPerDay: 3,
+      hardCapPerDay: 4,
+      hours: [12, 18, 23],
+      mainHour: 23,
+      filledSlotKeys: new Set([
+        "2026-09-29T15:00:00+09:00",
+        "2026-09-29T21:00:00+09:00",
+      ]),
+      dayCount: 1,
+    });
+    const assigned = plan.filter((p) => p.status === "ASSIGNED");
+    expect(assigned.map((a) => a.slotKey)).toEqual([
+      "2026-09-29T12:00:00+09:00",
+      "2026-09-29T18:00:00+09:00",
+    ]);
+    expect(assigned.some((a) => a.slotKey.includes("T15:00:00"))).toBe(false);
+    expect(assigned.some((a) => a.slotKey.includes("T21:00:00"))).toBe(false);
+    expect(assigned.some((a) => a.slotKey.includes("T23:00:00"))).toBe(false);
+  });
 });

@@ -23,6 +23,55 @@ import type {
   XPostExtraSlotTime,
 } from "./x-post-schedule.js";
 
+/**
+ * Published WordPress articles can reach X without ever being selected as a
+ * blog ContentCandidate (for example REQUIRES_CONFIRMATION analyses).
+ * XPublication still requires that foreign key. This links the latest existing
+ * ProductAnalysis; it does not publish a new article or bypass X review.
+ */
+export async function ensureContentCandidateForPublishedWpX(
+  prisma: DatabaseClient["prisma"],
+  researchItemId: string,
+): Promise<string | null> {
+  const analysis = await prisma.productAnalysis.findFirst({
+    where: { researchItemId },
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      analysisRunId: true,
+      researchItemId: true,
+      totalScore: true,
+    },
+  });
+  if (!analysis) return null;
+  try {
+    const created = await prisma.contentCandidate.create({
+      data: {
+        analysisRunId: analysis.analysisRunId,
+        researchItemId: analysis.researchItemId,
+        productAnalysisId: analysis.id,
+        candidateType: "EDITORIAL",
+        rank: 1,
+        selectionScore: analysis.totalScore,
+        selectionReasons: {
+          source: "published_wordpress_x_schedule",
+        },
+        targetChannel: "X",
+        status: "SELECTED",
+      },
+      select: { id: true },
+    });
+    return created.id;
+  } catch {
+    const again = await prisma.contentCandidate.findFirst({
+      where: { researchItemId },
+      orderBy: [{ rank: "asc" }, { createdAt: "desc" }],
+      select: { id: true },
+    });
+    return again?.id ?? null;
+  }
+}
+
 export type XSlotLiveOutcome = {
   hour: number;
   role: string;
@@ -340,6 +389,12 @@ export async function executeAssignedXSlots(input: {
           orderBy: [{ rank: "asc" }, { createdAt: "desc" }],
         });
         candidateId = anyCand?.id ?? null;
+      }
+      if (!candidateId) {
+        candidateId = await ensureContentCandidateForPublishedWpX(
+          input.prisma,
+          selected.researchItemId,
+        );
       }
       if (!candidateId) {
         outcomes.push({
