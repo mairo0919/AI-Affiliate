@@ -11,26 +11,13 @@ import { detectXAdultExpressions, stripXAdultSpans } from "./x-social-content-po
 export const X_SOCIAL_LLM_TEMPERATURE = 0.2;
 
 export const X_SOCIAL_WRITER_SYSTEM = [
-  "You are a Japanese social-media Writer for an adult media recommendation account on X (Twitter).",
-  "Write as a third-party media introducer — not the performer, not the maker, not a character in the work.",
-  "EDITORIAL fields (whatIsInteresting / angle / readerHook / whyThisWork / supportingClaims) tell you WHAT to introduce — they are intent, not finished copy.",
-  "EXPRESSION_SAFE_FACTS are the ONLY surfaces you may quote or closely paraphrase into the final body.",
-  "WORK_UNDERSTANDING is meaning context only — never paste holey or adult-stripped debris from it.",
-  "Do NOT invent performers, scenes, rankings, popularity, or evaluations absent from the plan.",
-  "State concrete work facts (who / setting / series / runtime / catalog shape). Do not praise or evaluate.",
-  "FORBIDDEN: soft puffery closers, empty evaluation (魅力 / 注目 / 引き込 / 際立 / 楽しめる一作 / 魅力の一作 / 話題です).",
-  "FORBIDDEN templates: 「Nameが出演する作品で、…」「Nameを軸にした作品紹介」「〜という作品です」「〜という設定」「N時間収録のまとめ」.",
-  "FORBIDDEN assemble shapes: 「Nameの近作では、{fact}」「見どころとして、{fact}」「{fact}がどう展開するか気になる」.",
-  "FORBIDDEN: package fragment glue — do not concatenate source package slogans / stimulatory scraps into a sentence chain.",
-  "FORBIDDEN: source slogan reuse (金ヅル / ナメ腐った / 生き物の本懐 / やっぱ…とは / P活女ども style package voice).",
-  "FORBIDDEN: unsupported grand summaries that leap beyond EXPRESSION_SAFE_FACTS.",
-  "Do NOT paste claim fragments. Do NOT concatenate package title scraps. Write 1–3 natural Japanese sentences from canonical understanding.",
-  "Do not pad to fill character count. Prefer shorter natural intros over padded catalog voice.",
-  "Vary openings without mechanical Name+出演する / 近作では repetition.",
-  "Timeline-safe: no sexual acts, genitals/fluids, explicit body focus, adult hype, source voice, or brand slogans.",
-  "If a fact is adult-adjacent (massage / taxi / therapist setting), describe the setting and cast only — never the sexual act.",
-  "No stock CTA. Omit URLs. Do not write 「詳しくはこちら」「記事に書いています」 — publication owns navigation replies.",
-  "If facts are thin (identity / runtime / series only), write a short factual third-party intro with those facts only — no invented plot.",
+  "You write one Japanese X post as a third party, not as the performer or the maker.",
+  "Use SUBJECT and one string from EXPRESSION_SAFE_FACTS. Say that fact in ordinary Japanese, with は, が, を, or で.",
+  "Write one sentence. Do not add a second sentence that repeats the fact.",
+  "Do not add cast verbs, production notes, or a claim that the fact was confirmed somewhere.",
+  "Do not drop a word out of a quoted phrase. Do not delete spaces to join title pieces.",
+  "Do not invent scenes, rankings, popularity, or evaluations.",
+  "No sexual acts, genitals, fluids, or package slogans. No URL. No hashtag. No navigation line.",
   "Return JSON only: {\"body\":\"...\"}.",
 ].join(" ");
 
@@ -57,7 +44,7 @@ function softNormalize(s: string): string {
 }
 
 const WRITER_REJECT_RE =
-  /魅力を感じ|注目が集まり|注目されます|入り込みやすい|雰囲気を引き立て|が出演する作品|見どころとして、|の近作では、|におすすめ|興味がある方|KMPVRが変わる|制作・著作株式会社|という設定が|という設定も|魅力の一作|楽しめる一作|金ヅル|ナメ腐った|生き物の本懐|P活女ども|詳しくはこちら|記事に書いています/u;
+  /魅力を感じ|注目が集まり|注目されます|入り込みやすい|雰囲気を引き立て|が出演する作品|見どころとして、|の近作では、|出演作では|という状況設定|状況設定が特徴|として制作されて|登場して|振り返ることが|におすすめ|興味がある方|KMPVRが変わる|制作・著作株式会社|という設定が|という設定も|魅力の一作|楽しめる一作|金ヅル|ナメ腐った|生き物の本懐|P活女ども|詳しくはこちら|記事に書いています/u;
 
 function isAdultUnsafe(text: string): boolean {
   return detectXAdultExpressions(text).hit;

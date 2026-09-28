@@ -10,7 +10,9 @@ import type { DatabaseClient } from "@ai-affiliate/database";
 import { validateFanzaAffiliateUrl } from "../daily-blog/affiliate-url.js";
 import {
   parseArticleImages,
+  selectArticleImages,
   type ArticleImage,
+  type RawResearchImageRow,
 } from "../generation/article-images.js";
 import { resolvePublicationOffer } from "../publication/offer-resolution.js";
 import { FANZA_PROVIDER_KEY } from "../publication/provider-registry-meta.js";
@@ -45,6 +47,30 @@ export type CanonicalXSource = {
   /** Same resolved images as WP (structuredContent.images). */
   articleImages: ArticleImage[];
 };
+
+/**
+ * Article images for X.
+ * Prefer structuredContent.images. When that list is empty, use the same
+ * ResearchImage rows the article selector would have written there.
+ * Only ALLOWED rows are returned.
+ */
+export function resolveCanonicalArticleImages(input: {
+  structuredImages: unknown;
+  researchImages?: RawResearchImageRow[] | null;
+  altBase?: string | null;
+}): ArticleImage[] {
+  const fromStructured = parseArticleImages(input.structuredImages);
+  if (fromStructured.length > 0) return fromStructured;
+  const rows = input.researchImages ?? [];
+  if (rows.length === 0) return [];
+  return selectArticleImages({
+    researchImages: rows,
+    options: {
+      altBase: input.altBase?.trim() || "商品画像",
+      allowRequiresConfirmationForDisplay: false,
+    },
+  }).filter((img) => img.usageStatus === "ALLOWED");
+}
 
 function asRecord(v: unknown): Record<string, unknown> {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
@@ -102,6 +128,7 @@ export async function loadCanonicalXSource(
     },
     include: {
       tags: { include: { researchTag: true } },
+      images: true,
     },
   });
 
@@ -181,7 +208,11 @@ export async function loadCanonicalXSource(
       ?.researchTag.name ?? null;
 
   const articlePlanFacts = extractArticlePlanSocialFacts(version?.structuredContent ?? null);
-  const articleImages = parseArticleImages(sc.images);
+  const articleImages = resolveCanonicalArticleImages({
+    structuredImages: sc.images,
+    researchImages: researchItem?.images,
+    altBase: researchItem?.title ?? null,
+  });
 
   let claimStatements: Array<{ id: string; statement: string }> = [];
   if (version?.id) {

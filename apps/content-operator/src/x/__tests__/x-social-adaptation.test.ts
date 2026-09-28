@@ -640,7 +640,8 @@ describe("x-social-adaptation", () => {
     if (cemd.ok) {
       expect(cemd.plan.subject).toBe("玉城夏帆");
       expect(detectXAdultExpressions(cemd.plan.allowedClaims.join("")).hit).toBe(false);
-      expect(`${cemd.plan.corePremise ?? ""}${cemd.plan.primaryAppeal ?? ""}`.length).toBeGreaterThan(8);
+      expect(`${cemd.plan.corePremise ?? ""}${cemd.plan.primaryAppeal ?? ""}`).not.toMatch(/アナル|SEX|交渉/);
+      expect((cemd.plan.corePremise ?? cemd.plan.primaryAppeal ?? "").length).toBeGreaterThan(0);
     }
 
     const hours = planXSocial({
@@ -660,10 +661,9 @@ describe("x-social-adaptation", () => {
       productTitle: "下品なSEXでアへ顔晒してオホ声絶頂 波多野結衣",
       performerNames: ["波多野結衣"],
     });
-    expect(hatano.ok).toBe(true);
-    if (hatano.ok) {
-      expect(hatano.plan.subject).toBe("波多野結衣");
-      expect(detectXAdultExpressions(hatano.plan.allowedClaims.join("")).hit).toBe(false);
+    expect(hatano.ok).toBe(false);
+    if (!hatano.ok) {
+      expect(hatano.skip.reason).toBe("SOCIAL_CONTENT_TOO_THIN");
     }
   });
 

@@ -3,6 +3,12 @@
  * Publish-quality bar: grounding + safety + natural Japanese + information value.
  */
 
+import {
+  hasParticleHole,
+  hasQuotedTitleFragment,
+  isTemplateExplainer,
+  isTitleFragmentRun,
+} from "./x-copy-quality.js";
 import { detectXAdultExpressions } from "./x-social-content-policy.js";
 import type { XSocialPlan } from "./social-plan.js";
 import { writeXSocialCopy, synthesizeXSocialFromPlan } from "./social-write.js";
@@ -40,7 +46,7 @@ const MECHANICAL_TEMPLATE_RE =
   /が出演する作品|を軸にした作品紹介|の作品紹介。|時間収録のまとめ|の近作では、|見どころとして、|がどう展開するか気になる/u;
 
 const GENERIC_PUFFERY_RE =
-  /魅力を存分に|引き込まれること間違いなし|世界観をじっくりと味わ|核心を成しています|独特の世界観が楽しめ|大きな魅力となっています|魅力を引き立て|雰囲気を引き立て|世界観に注目です|魅力をじっくり|魅力的な作品です|魅力の一作|楽しめる一作|見逃せない一作|引き込まれます|目が離せません|魅力が際立つ|興味深い内容です|注目が集まって|注目が集まり|注目されます|入り込みやすい|世界観にじっくりと浸る|魅力をまとめて追える|名にふさわしい内容|魅力を感じ|新たな魅力を感じ|話題です|特別な内容で|一線を画す|存在感が際立つ|役柄が際立|際立っています|が魅力となって|設定が魅力/u;
+  /魅力を存分に|引き込まれること間違いなし|世界観をじっくりと味わ|核心を成しています|独特の世界観が楽しめ|大きな魅力となっています|魅力を引き立て|雰囲気を引き立て|世界観に注目です|魅力をじっくり|魅力的な作品です|魅力の一作|楽しめる一作|見逃せない一作|引き込まれます|目が離せません|魅力が際立つ|興味深い内容です|注目が集まって|注目が集まり|注目されます|入り込みやすい|世界観にじっくりと浸る|魅力をまとめて追える|名にふさわしい内容|魅力を感じ|新たな魅力を感じ|話題です|特別な内容で|一線を画す|存在感が際立つ|役柄が際立|際立っています|が魅力となって|設定が魅力|知られて/u;
 
 const CATALOG_SUMMARY_RE =
   /ベスト／総集編です。|収録コーナーまとめです|最新タイトルまとめです|公開情報ベースで作品のポイントを整理|ベスト／総集編としての見どころ。/u;
@@ -113,6 +119,10 @@ function isGrounded(sentence: string, plan: XSocialPlan): boolean {
     const f = normalizeKey(softFact(fact));
     if (!f) continue;
     if (n.includes(f) || f.includes(n)) return true;
+    const squash = (value: string) => value.replace(/[のとはがをにで]/gu, "");
+    const ns = squash(n);
+    const fs = squash(f);
+    if (fs.length >= 4 && (ns.includes(fs) || fs.includes(ns))) return true;
     const window = f.length >= 10 ? 5 : 6;
     if (f.length >= window && n.length >= window) {
       for (let i = 0; i <= f.length - window; i += 1) {
@@ -126,7 +136,7 @@ function isGrounded(sentence: string, plan: XSocialPlan): boolean {
 function isSoftEditorialWrap(sentence: string): boolean {
   return (
     sentence.length <= 42 &&
-    /注目|印象|雰囲気|焦点|展開|紹介できる|取り上げ|気になる点|差別化/u.test(sentence) &&
+    /注目|印象|雰囲気|焦点|紹介できる|取り上げ|気になる点|差別化/u.test(sentence) &&
     !/魅力を存分|間違いなし|核心を成して/u.test(sentence)
   );
 }
@@ -252,6 +262,50 @@ export function reviewXSocialCopy(
     );
   }
 
+  if (hasParticleHole(text)) {
+    fail(
+      "NATURAL_JAPANESE",
+      "BROKEN_PHRASE",
+      "grammatically incomplete phrase — a word was dropped inside the clause",
+    );
+  }
+
+  if (isTitleFragmentRun(text) || sents.some((sent) => isTitleFragmentRun(sent))) {
+    fail(
+      "NATURAL_JAPANESE",
+      "TITLE_FRAGMENT_GLUE",
+      "title fragments joined into a sentence without a real clause",
+    );
+  }
+
+  if (hasQuotedTitleFragment(text)) {
+    fail(
+      "NATURAL_JAPANESE",
+      "TITLE_FRAGMENT_GLUE",
+      "quoted title fragment with no clause inside the quotes",
+    );
+  }
+
+  if (sents.length >= 2) {
+    const head = compact(sents[0] ?? "");
+    const tail = compact(sents[1] ?? "");
+    if ((tail.length >= 6 && head.includes(tail)) || (head.length >= 6 && tail.includes(head))) {
+      fail(
+        "NATURAL_JAPANESE",
+        "TEMPLATE_EXPLAINER",
+        "second sentence only repeats the first",
+      );
+    }
+  }
+
+  if (isTemplateExplainer(text)) {
+    fail(
+      "NATURAL_JAPANESE",
+      "TEMPLATE_EXPLAINER",
+      "explainer template — 状況設定が特徴 / として制作されています / 出演作では",
+    );
+  }
+
   if (PACKAGE_FRAGMENT_GLUE_RE.test(text) || SOURCE_SLOGAN_RE.test(text)) {
     fail(
       "VOICE",
@@ -277,17 +331,24 @@ export function reviewXSocialCopy(
   }
 
   const compactLen = compact(text).length;
+  const concreteHook =
+    (plan.subject ? compact(text).includes(compact(plan.subject)) : true) &&
+    [plan.corePremise, ...plan.allowedClaims].some((fact) => {
+      const c = fact ? compact(fact) : "";
+      return c.length >= 6 && compact(text).includes(c);
+    });
 
   if (/という作品です|という設定が|という独特な舞台設定|という設定も|という設定を/u.test(text)) {
     fail("VOICE", "GENERIC_FRAME", "generic 「という作品／設定」 frame concentration");
   }
 
   // Publish bar: too short / name-only stubs.
-  if (compactLen > 0 && compactLen < 36) {
+  if (compactLen > 0 && compactLen < 36 && !(concreteHook && compactLen >= 16)) {
     fail("PRODUCT_SPECIFICITY", "LOW_INFORMATION", "body too short for publish-quality intro");
   } else if (
     sents.length <= 1 &&
     compactLen < 48 &&
+    !concreteHook &&
     (Boolean(plan.corePremise) || plan.workUnderstanding.length >= 1)
   ) {
     fail(
@@ -374,6 +435,9 @@ export function reviewXSocialCopy(
     "GENERIC_FRAME",
     "FRAGMENT_ASSEMBLY",
     "PACKAGE_FRAGMENT_GLUE",
+    "BROKEN_PHRASE",
+    "TITLE_FRAGMENT_GLUE",
+    "TEMPLATE_EXPLAINER",
     "UNSUPPORTED_SWEEP",
     "TOO_THIN",
     "STOCK_CTA",
@@ -536,9 +600,16 @@ function findingsToHints(findings: SocialReviewFinding[]): string[] {
       "Remove empty puffery (魅力を感じられる / 話題です / 世界観). State a concrete work fact from EXPRESSION_SAFE_FACTS instead.",
     );
   }
-  if (codes.has("FRAGMENT_ASSEMBLY") || codes.has("BROKEN_JAPANESE") || codes.has("PACKAGE_FRAGMENT_GLUE")) {
+  if (
+    codes.has("FRAGMENT_ASSEMBLY") ||
+    codes.has("BROKEN_JAPANESE") ||
+    codes.has("BROKEN_PHRASE") ||
+    codes.has("TITLE_FRAGMENT_GLUE") ||
+    codes.has("TEMPLATE_EXPLAINER") ||
+    codes.has("PACKAGE_FRAGMENT_GLUE")
+  ) {
     hints.push(
-      "Do not paste or glue package/source fragments; rewrite as continuous third-party editorial prose from EXPRESSION_SAFE_FACTS.",
+      "Write one ordinary clause: the performer and ONE fact from EXPRESSION_SAFE_FACTS, using は/が/を/で. A second sentence may only reuse that same fact. Do not use 特徴です, 制作されています, 登場しています, タイトル通り, or 振り返ることができます. Do not quote a title with the spaces removed.",
     );
   }
   if (codes.has("UNSUPPORTED_SWEEP")) {
@@ -564,6 +635,19 @@ function findingsToHints(findings: SocialReviewFinding[]): string[] {
   return hints;
 }
 
+function plainFactSentence(plan: XSocialPlan): string | null {
+  const subject = plan.subject?.trim() ?? "";
+  const fact = (plan.corePremise || plan.allowedClaims[0] || "").trim();
+  if (subject.length < 2 || fact.length < 4) return null;
+  if (/タクシー|エステ|ランナー|保育|合宿|町内/u.test(fact)) {
+    return `${subject}の作品の舞台は、${fact}だ。`;
+  }
+  if (/総集|時間|ベスト|BEST/iu.test(fact)) {
+    return `${subject}の作品には、${fact}がある。`;
+  }
+  return `${subject}の作品は、${fact}だ。`;
+}
+
 export async function rewriteXSocialCopyOnce(
   previous: string,
   plan: XSocialPlan,
@@ -581,12 +665,26 @@ export async function rewriteXSocialCopyOnce(
     "Rewrite as a complete publish-quality third-party intro from the same grounded understanding — not a partial patch that invents new claims.",
   );
 
+  if (
+    codes.has("TEMPLATE_EXPLAINER") ||
+    codes.has("TITLE_FRAGMENT_GLUE") ||
+    codes.has("GENERIC_PUFFERY")
+  ) {
+    const example = plainFactSentence(plan);
+    if (example) {
+      hints.unshift(`Replace the draft with this sentence, changing nothing except particles if needed: ${example}`);
+    }
+  }
   if (opts?.llm) {
+    const anchorOnPrevious =
+      !codes.has("TEMPLATE_EXPLAINER") &&
+      !codes.has("TITLE_FRAGMENT_GLUE") &&
+      !codes.has("GENERIC_PUFFERY");
     const rewritten = await writeXSocialCopy(plan, {
       llm: opts.llm,
       model: opts.model,
       revisionHints: hints,
-      previousBody: previous.trim() || null,
+      previousBody: anchorOnPrevious ? previous.trim() || null : null,
     });
     if (rewritten.body && rewritten.body !== previous) {
       return rewritten.body;

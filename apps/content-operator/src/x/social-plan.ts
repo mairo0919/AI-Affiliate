@@ -8,6 +8,7 @@
  * Does not write final copy. Thin material → SKIP.
  */
 
+import { hasParticleHole, isParticleFreeTitleStack, isTitleFragmentRun } from "./x-copy-quality.js";
 import { detectXAdultExpressions, stripXAdultSpans } from "./x-social-content-policy.js";
 
 export type XPlanSkip = {
@@ -86,6 +87,15 @@ const THIN_CHRONOLOGY_RE = /^復活から約?\d+年$|^約?\d+年ぶり$/u;
 const INCOMPLETE_TAIL_RE =
   /(?:たら|たり|って|て|で|ので|のに|から|けれど|けど|だが|ながら|つつ|結果|後は|好き勝手|でしたが|したが|ですが|ますが|確実に|なかったが|出来なかったが|できなかったが)$/u;
 
+function embedsUnparsedSubject(text: string, subject: string): boolean {
+  const s = text.replace(/\s+/gu, "");
+  const at = s.indexOf(subject);
+  if (at <= 0) return false;
+  const before = s.slice(0, at);
+  if (/[はがをにでの]/u.test(before)) return false;
+  return before.length >= 4;
+}
+
 function compact(s: string): string {
   return s.replace(/\s+/g, "").trim();
 }
@@ -111,6 +121,8 @@ function isCleanPlanText(raw: string, opts?: { maxLen?: number }): boolean {
   const s = cleanAtom(raw);
   if (s.length < 6 || s.length > maxLen) return false;
   if (detectXAdultExpressions(s).hit) return false;
+  if (hasParticleHole(s) || isTitleFragmentRun(s) || isParticleFreeTitleStack(s)) return false;
+  if (/エロ|下品|変態|精液|中出し|ヌケ|イカされ/u.test(s)) return false;
   if (SOURCE_VOICE_RE.test(s)) return false;
   if (INCOMPLETE_TAIL_RE.test(s)) return false;
   if (/[はがをにとの]$/u.test(s) && s.length >= 6) return false;
@@ -179,8 +191,17 @@ export function salvageTitleHook(title: string, subject: string | null): string 
   const compactTitle = t.replace(/\s+/gu, "");
   if (SOURCE_VOICE_RE.test(compactTitle)) return null;
   if (/のでは|なを|にを|をー|では満足|1発の射精/u.test(compactTitle)) return null;
-  if (compactTitle.length >= 8 && !detectXAdultExpressions(compactTitle).hit) {
-    return compactTitle.slice(0, 42);
+  if (/[\s　＆&]/u.test(title)) return null;
+  if (
+    compactTitle.length >= 8 &&
+    compactTitle.length <= 42 &&
+    !detectXAdultExpressions(compactTitle).hit &&
+    !hasParticleHole(compactTitle) &&
+    !isTitleFragmentRun(compactTitle) &&
+    !isParticleFreeTitleStack(compactTitle) &&
+    !/エロ|下品|変態|精液|ヌケ/u.test(compactTitle)
+  ) {
+    return compactTitle;
   }
   return null;
 }
@@ -209,18 +230,22 @@ function catalogHooksFromTitle(title: string): string[] {
     "町内会",
     "合宿",
   ]) {
-    if (title.includes(noun)) hooks.push(noun.length >= 6 ? noun : `${noun}の設定`);
+    if (title.includes(noun) && noun.length >= 4) hooks.push(noun);
   }
-  // Adult-stripped title remnant that still names a cast/setting.
-  const stripped = cleanAtom(stripXAdultSpans(title));
-  if (
-    stripped &&
-    stripped.length >= 10 &&
-    stripped.length <= 36 &&
-    isXSafeAtom(stripped) &&
-    /保育士|先生|ランナー|エステ|タクシー|合宿|町内|対決|企画|シリーズ|ハンドテク/u.test(stripped)
-  ) {
-    hooks.push(stripped);
+  // Keep a title remnant only when the source is already one clause.
+  // Compacting a spaced or ＆-joined title glues fragments into a fake noun.
+  if (!/[\s　＆&]/u.test(title)) {
+    const stripped = cleanAtom(stripXAdultSpans(title));
+    if (
+      stripped &&
+      stripped.length >= 10 &&
+      stripped.length <= 36 &&
+      isXSafeAtom(stripped) &&
+      !isParticleFreeTitleStack(stripped) &&
+      /保育士|先生|ランナー|エステ|タクシー|合宿|町内|対決|企画|シリーズ|ハンドテク/u.test(stripped)
+    ) {
+      hooks.push(stripped);
+    }
   }
   return hooks.filter((h) => h.length >= 6 && (isXSafeAtom(h) || (h.length <= 12 && /エステ|タクシー|ハンドテク|保育士|ランナー/u.test(h))));
 }
@@ -233,9 +258,9 @@ function splitTitleAtoms(title: string): string[] {
     .trim();
   if (!raw) return [];
   const clauses = raw
-    .split(/[！!？?。．…／/|｜]+/u)
+    .split(/[！!？?。．…／/|｜＆&]+|\s+/u)
     .map((c) => c.trim())
-    .filter((c) => c.length >= 6);
+    .filter((c) => c.length >= 4);
   return clauses.length > 0 ? clauses : [raw];
 }
 
@@ -320,29 +345,23 @@ function buildEditorialAngle(input: {
   if (contentType?.includes("ベスト") || contentType?.includes("総集")) {
     const hook = primaryAppeal || corePremise || "収録の幅";
     return {
-      angle: subject
-        ? `${subject}のベスト／総集編として、${hook}を先に伝える`
-        : `ベスト／総集編として、${hook}を軸に紹介する`,
-      readerHook: `${hook}に収録の焦点がある`,
-      whyThisWork: subject
-        ? `${subject}の作品群をまとめて追える構成`
-        : "複数作を横断して見どころが整理されている",
+      angle: hook,
+      readerHook: hook,
+      whyThisWork: hook,
     };
   }
   if (corePremise && subject) {
     return {
-      angle: `${subject}の作品を、${corePremise}という状況から紹介する`,
-      readerHook: `${corePremise}の状況設定`,
-      whyThisWork: primaryAppeal
-        ? `${primaryAppeal}が差別化点になっている`
-        : `${subject}の出演作として状況設定がはっきりしている`,
+      angle: corePremise,
+      readerHook: corePremise,
+      whyThisWork: corePremise,
     };
   }
   if (corePremise) {
     return {
-      angle: `${corePremise}を軸に作品の焦点を伝える`,
-      readerHook: `${corePremise}の設定`,
-      whyThisWork: primaryAppeal || "公式情報から状況が具体的に読み取れる",
+      angle: corePremise,
+      readerHook: corePremise,
+      whyThisWork: primaryAppeal || corePremise,
     };
   }
   if (seriesName && subject) {
@@ -361,9 +380,9 @@ function buildEditorialAngle(input: {
   }
   if (subject) {
     return {
-      angle: `${subject}の作品として、公式に確認できる焦点を先に示す`,
-      readerHook: `${subject}の該当作`,
-      whyThisWork: "出演者と作品の焦点が公式情報から確認できる",
+      angle: `${subject}の作品`,
+      readerHook: `${subject}の作品`,
+      whyThisWork: `${subject}の作品`,
     };
   }
   return {
@@ -392,7 +411,15 @@ export function planXSocial(input: XPlannerInput): XPlanResult {
     if (!cleaned) return;
     const wasAdult = detectXAdultExpressions(cleaned).hit || detectXAdultExpressions(raw).hit;
     const wasVoice = SOURCE_VOICE_RE.test(cleaned) || SOURCE_VOICE_RE.test(raw);
-    if (wasAdult || wasVoice) droppedAdultCount += 1;
+    if (
+      wasAdult ||
+      wasVoice ||
+      /エロ|下品|変態|精液|中出し|ヌケ|イカされ|進化を続ける|今もなお/u.test(cleaned)
+    ) {
+      droppedAdultCount += 1;
+      return;
+    }
+    if (subject && embedsUnparsedSubject(cleaned, subject)) return;
 
     // Understanding may use adult-stripped meaning, but reject hole debris.
     const understanding = wasAdult || wasVoice
@@ -536,6 +563,13 @@ export function planXSocial(input: XPlannerInput): XPlanResult {
     if (strong) primaryAppeal = strong;
   }
 
+  if (!corePremise) {
+    const short = [...rankedExpression, ...rankedUnderstanding].find(
+      (atom) => atom.length >= 6 && atom.length <= 18 && isCleanPlanText(atom),
+    );
+    if (short) corePremise = short;
+  }
+
   // Identity salvage — never invent 「出演する作品」 filler as premise.
   if (!corePremise && !primaryAppeal) {
     const seriesSafe =
@@ -550,15 +584,8 @@ export function planXSocial(input: XPlannerInput): XPlanResult {
       corePremise = `${seriesSafe}のシリーズ作`;
     } else if (titleHook && toUnderstandingNote(titleHook)) {
       corePremise = toUnderstandingNote(titleHook);
-    } else if (
-      subject &&
-      compact(productTitle || title).length > compact(subject).length + 2
-    ) {
-      // Thin-but-not-empty titles (e.g. 「依本しおりの1人」) still plan from identity.
-      primaryAppeal =
-        contentType && contentType !== "作品紹介"
-          ? contentType
-          : `${subject}の近作として公式設定を紹介`;
+    } else if (subject && contentType && contentType !== "作品紹介") {
+      primaryAppeal = contentType;
     }
   }
 
@@ -615,9 +642,8 @@ export function planXSocial(input: XPlannerInput): XPlanResult {
     if (subject && seriesSafe && isXSafeAtom(`${subject}の${seriesSafe}`)) {
       salvage.push(`${subject}の${seriesSafe}`);
     }
-    if (subject && compact(productTitle || title).length > compact(subject).length + 8) {
-      const cand = `${subject}の近作として公式設定を紹介`;
-      if (isXSafeAtom(cand)) salvage.push(cand);
+    if (subject && contentType && contentType !== "作品紹介" && isXSafeAtom(contentType)) {
+      salvage.push(contentType);
     }
     if (salvage.length === 0) {
       return {
@@ -666,7 +692,12 @@ export function planXSocial(input: XPlannerInput): XPlanResult {
     editorial.readerHook,
     ...rankedUnderstanding.slice(0, 4),
   ])
-    .filter((w) => isCleanPlanText(w, { maxLen: 64 }))
+    .filter(
+      (w) =>
+        isCleanPlanText(w, { maxLen: 64 }) &&
+        !isParticleFreeTitleStack(w) &&
+        !isTitleFragmentRun(w),
+    )
     .slice(0, 6);
 
   // Final thin gate: adult-dominated sources with no usable identity/catalog
