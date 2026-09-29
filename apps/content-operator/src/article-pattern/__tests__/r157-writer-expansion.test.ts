@@ -7,7 +7,8 @@ import { OPTION_B_WRITER_SYSTEM } from "../natural-product-intro-policy.js";
 
 describe("R157 Writer expansion execution modes", () => {
   it("keeps identity-critical EXACT (title / quantity / performer)", () => {
-    expect(deriveExecutionMode("令和イチのメスガキ 松本いちか", "title")).toBe("EXACT_SURFACE");
+    expect(deriveExecutionMode("松本いちか", "title")).toBe("EXACT_SURFACE");
+    expect(deriveExecutionMode("令和イチのメスガキ 松本いちか", "title")).toBe("SEMANTIC_PRESERVE");
     expect(deriveExecutionMode("480分", "body")).toBe("EXACT_SURFACE");
     expect(deriveExecutionMode("22本番", "body")).toBe("EXACT_SURFACE");
     expect(deriveExecutionMode("松本いちか", "lead")).toBe("EXACT_SURFACE");

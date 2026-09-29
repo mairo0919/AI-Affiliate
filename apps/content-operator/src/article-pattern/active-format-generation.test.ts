@@ -132,11 +132,10 @@ describe("ACTIVE Format → Generation wiring (SSOT resolveActiveFormat)", () =>
       claimIds: [claimPerformer.id, claim.id, claimQty.id],
     });
     expect(generated.version.id).toBeTruthy();
-    const callInput = spy.mock.calls[0]?.[0]?.input as {
-      writingPolicy?: Record<string, unknown>;
-      articleFormat?: string;
-    };
-    expect(callInput.articleFormat).toBe("NEW_RELEASE_SINGLE");
+    const callInput = spy.mock.calls
+      .map((c) => c[0]?.input as { writingPolicy?: Record<string, unknown>; articleFormat?: string })
+      .find((input) => input?.articleFormat === "NEW_RELEASE_SINGLE");
+    expect(callInput?.articleFormat).toBe("NEW_RELEASE_SINGLE");
     expect(callInput.writingPolicy).toMatchObject({
       requireEditorialValue: true,
       recommendationRequired: true,

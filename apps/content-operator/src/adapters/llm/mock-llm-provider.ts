@@ -61,20 +61,8 @@ function buildMockArticleFromArticlePlan(
   const plan = readArticlePlan(input);
   const titleFacts = plan?.titleFacts?.length ? plan.titleFacts : [fallbackTitle];
   const bodyFacts = plan?.bodyFacts?.length ? plan.bodyFacts : [`${fallbackTitle}の公開情報`];
-  const ed = plan?.editorialDecision ?? null;
-  // Prefer editorial angle over fact-assembly when present (production title authority).
-  const title =
-    ed?.angle && ed.angle.length >= 8
-      ? ed.angle.length <= 48
-        ? ed.angle
-        : `${ed.angle.slice(0, 40)}を紹介`
-      : titleFacts.length === 1
-        ? titleFacts[0]!
-        : ed?.readerHook && ed.readerHook.length >= 8
-          ? ed.readerHook.slice(0, 48)
-          : titleFacts.length >= 2
-            ? `${titleFacts[0]}を軸にした作品紹介`
-            : fallbackTitle;
+  // Title authority is a planned fact or the product title. The editorial angle is a note, not a headline.
+  const title = titleFacts[0]?.trim() || fallbackTitle;
   // One paragraph per body fact (exact surface) so plan-fact matching stays EXACT.
   const paragraphs = bodyFacts.map((f) => `${f}。`);
   return {

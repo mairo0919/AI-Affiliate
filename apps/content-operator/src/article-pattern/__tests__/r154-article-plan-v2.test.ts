@@ -56,7 +56,7 @@ describe("ARTICLE_PLAN V2 Phase 1", () => {
   it("emits schemaVersion 2 with purpose and reader jobs for parathd-like material", () => {
     const { plan, profile } = buildPlan(PARA_TITLE, PARA_DESC, ["優梨まいな", "ましろ杏"]);
     expect(plan.schemaVersion).toBe(2);
-    expect(plan.title.job).toBe("title_compose");
+    expect(plan.title.job).toBe("editorial_headline");
     expect(plan.lead.job).toBe("overview");
     expect(plan.purpose == null || typeof plan.purpose.statement === "string").toBe(true);
     if (plan.purpose) {
@@ -135,7 +135,14 @@ describe("ARTICLE_PLAN V2 Phase 1", () => {
     );
     const exec = toWriterExecutionContractView(buildArticlePlanExecutionContract(plan));
     expect(exec.length).toBeGreaterThan(0);
-    expect(exec.some((e) => e.slot === "title" && e.executionMode === "EXACT_SURFACE")).toBe(true);
+    const titleExec = exec.filter((e) => e.slot === "title");
+    expect(titleExec.length).toBeGreaterThan(0);
+    for (const e of titleExec) {
+      const bareIdentity = e.fact.length <= 8 && !/[のを]/.test(e.fact);
+      const quantity = /\d+\s*(?:分|時間|本番|射精)/.test(e.fact);
+      expect(e.executionMode).toBe(bareIdentity || quantity ? "EXACT_SURFACE" : "SEMANTIC_PRESERVE");
+    }
+    expect(exec.some((e) => e.executionMode === "EXACT_SURFACE")).toBe(true);
     const auth = buildGenerationAuthorityPromptContract({
       brainGenerationContract: {
         articlePlan: plan,

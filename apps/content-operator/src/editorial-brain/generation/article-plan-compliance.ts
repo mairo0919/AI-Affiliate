@@ -16,6 +16,10 @@ import {
   isPureUnsupportedEvaluativePadding,
 } from "../../article-pattern/plan-surface-attestation.js";
 import { validateTitleSurfaceRealization } from "../../article-pattern/title-eligibility.js";
+import {
+  blockingSemanticClaims,
+  ungroundedTitleStems,
+} from "../../article-pattern/article-semantic-claim.js";
 import { classifyArticleHeadlineDefects } from "../../article-pattern/article-editorial-decision.js";
 import { splitIntoSentences } from "./text-surface.js";
 import type { RawFailureRouting } from "./raw-failure-routing.js";
@@ -328,6 +332,15 @@ function checkTitleAuthority(
       });
     }
   }
+  for (const hit of ungroundedTitleStems(title, factGrounding)) {
+    if (findings.some((f) => f.message.includes(hit.span))) continue;
+    findings.push({
+      code: "PLAN_TITLE_INVENT",
+      message: `title ${hit.class} absent from title authority: ${hit.span}`,
+      severity: "BLOCKING",
+      slot: "title",
+    });
+  }
 
   // Editorial headline quality — only when production title authority is editorial_headline.
   const titleIsEditorialHeadline =
@@ -517,9 +530,12 @@ function checkPlanAttestationSurplus(
         const external = hasExternalFactualClaimResidue(sent, planFacts);
         const pure = isPureUnsupportedEvaluativePadding(sent, planFacts);
         const viewing = hasUnattributedViewingEvaluation(sent, planFacts);
+        const claimLabel = blockingSemanticClaims(sent, planFacts)
+          .map((c) => `${c.class}:${c.span}`)
+          .join(",");
         findings.push({
           code: "PLAN_UNSUPPORTED_EVAL",
-          message: `body paragraph ${i} has unsupported evaluation, recommendation, viewing claim, or external claim: ${sent.slice(0, 200)}`,
+          message: `body paragraph ${i} ${claimLabel || "unsupported evaluation"}: ${sent.slice(0, 200)}`,
           // External claims, empty closers, and unattributed viewing/recommendation are BLOCKING even on fact-bearing sentences.
           severity: external || pure || viewing ? "BLOCKING" : "WARNING",
           slot: "body",

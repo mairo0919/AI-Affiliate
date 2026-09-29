@@ -503,6 +503,54 @@ function surfaceRealizationStatus(
  * Primary ArticlePlan fact realization — status is the SSOT for compliance.
  * EXACT / SEMANTIC = realized (OK); CONTRADICTION / NONE = not realized (NG).
  */
+const DEPICTION_VERBS = ["見せ", "描", "映", "晒", "収録", "写し"];
+
+function quantitiesIn(text: string): Map<string, Set<string>> {
+  const map = new Map<string, Set<string>>();
+  for (const m of text.matchAll(/(\d+)\s*(時間|分|名|人|作品|回|発|本|タイトル|コーナー|cm)/gu)) {
+    const unit = m[2] ?? "";
+    const nums = map.get(unit) ?? new Set<string>();
+    nums.add(m[1] ?? "");
+    map.set(unit, nums);
+  }
+  return map;
+}
+
+function depictionPreserved(sentence: string, fact: string): boolean {
+  const factVerb = DEPICTION_VERBS.find((v) => fact.includes(v));
+  if (!factVerb) return true;
+  return DEPICTION_VERBS.some((v) => sentence.includes(v));
+}
+
+/**
+ * Second-stage coverage: anchors and numbers match, depiction may be restated.
+ * A changed number or a non-depiction act is not coverage.
+ */
+export function factMeaningCovered(sentence: string, fact: string): boolean {
+  const f = fact.trim();
+  const sent = sentence.replace(/\s+/g, "");
+  if (f.length < 8 || sent.length < 4) return false;
+  const factQty = quantitiesIn(f);
+  const sentQty = quantitiesIn(sent);
+  for (const [unit, nums] of factQty) {
+    const seen = sentQty.get(unit);
+    if (!seen || seen.size === 0) continue;
+    for (const n of nums) {
+      if (!seen.has(n)) return false;
+    }
+  }
+  const anchors = deriveRequiredAnchors(f).filter((a) => a.length >= 2 && !/^\d/.test(a));
+  if (anchors.length === 0) return false;
+  const hits = anchors.filter((a) => sent.includes(a.replace(/\s+/g, "")));
+  const nounsCovered =
+    anchors.length <= 3
+      ? hits.length === anchors.length
+      : anchors.filter((a) => a.length >= 4).every((a) => sent.includes(a.replace(/\s+/g, ""))) &&
+        hits.length / anchors.length >= 0.6;
+  if (!nounsCovered) return false;
+  return depictionPreserved(sent, f);
+}
+
 export function resolveFactRealization(
   sentence: string,
   fact: string,
@@ -596,6 +644,15 @@ export function resolveFactRealization(
 
   // Long SEMANTIC_PRESERVE atoms: major meaning anchors (not full surface restage)
   if (status === "NONE" && f.length >= 20 && majorMeaningRealized(sentence, fact)) {
+    status = "SEMANTIC";
+  }
+
+  // Paraphrase that keeps anchors, depiction, and quantities. Exact/12-char match stays first.
+  if (
+    status === "NONE" &&
+    !factRequiresConcessiveRelation(fact) &&
+    factMeaningCovered(sentence, fact)
+  ) {
     status = "SEMANTIC";
   }
 

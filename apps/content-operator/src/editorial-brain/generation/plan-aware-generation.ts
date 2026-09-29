@@ -5,6 +5,10 @@
 import type { ArticlePlan } from "../../article-pattern/article-plan.js";
 import { articlePlanAllFacts } from "../../article-pattern/article-plan.js";
 import {
+  blockingSemanticClaims,
+  ungroundedTitleStems,
+} from "../../article-pattern/article-semantic-claim.js";
+import {
   buildPlanFactExecutionTarget,
   missingAnchorsInSentence,
   missingRelationsInSentence,
@@ -26,19 +30,19 @@ export const MAX_PLAN_EXECUTION_ATTEMPTS = Math.max(
 );
 
 export const PLAN_REGEN_CORRECTION_INSTRUCTION =
-  "Correct only the reported ArticlePlan execution failures. Preserve fact identity and realize omitted facts in their assigned slots. Natural grammar that restates planned facts is allowed. Do not add evaluation, recommendation, viewing-experience claims, or new facts. Do not rewrite ARTICLE_PLAN. Do not add external factual claims (売上No.1 / 大人気 / ファンから高評価 / 最高傑作) absent from the plan.";
+  "Correct only the reported ArticlePlan execution failures. Each violation has violationType, offendingSentence, unsupportedMeaning, allowedSupportingFacts, requiredFactCoverage, and titleAuthority. Rewrite the offending sentence as FACTUAL_DESCRIPTION from allowedSupportingFacts. Realize requiredFactCoverage. Do not replace unsupportedMeaning with another word of UNSUPPORTED_EVALUATION, RECOMMENDATION, VIEWING_EXPERIENCE, or EDITORIAL_EMBELLISHMENT. Do not add a fact. Title words must come from titleAuthority; particles and word order may change. Do not rewrite ARTICLE_PLAN.";
 
 const CONTRASTIVE_REGEN_HINT =
   "Preserve concessive/contrastive relation (e.g. 言えど, ではあるものの, にもかかわらず) — do not replace with neutral copula (である) that removes the planned contrast.";
 
 const EVAL_REGEN_HINT =
-  "For PLAN_UNSUPPORTED_EVAL: delete the unattributed evaluation, recommendation, or viewing-experience claim (印象的 / 魅力的 / 楽しめる / 味わえる / おすすめ / 見逃せない / 体験できる / 臨場感 / 存分に / 堪能). Keep the planned factual clause. Do not replace it with another evaluation. If the planned fact itself is maker promotional wording, keep it only as 公式では…と紹介されている, and prefer the factual situation.";
+  "For PLAN_UNSUPPORTED_EVAL: the violationType names the class (UNSUPPORTED_EVALUATION, RECOMMENDATION, VIEWING_EXPERIENCE, EDITORIAL_EMBELLISHMENT). Remove that meaning. Restate allowedSupportingFacts. Do not swap in 印象的, 魅力, おすすめ, 楽しめる, 味わえる, 体験できる, 余すことなく, or any other word of the same class. If a planned fact is maker wording, keep it only as 公式では…と紹介されている.";
 
 const OMISSION_REGEN_HINT =
-  "For PLAN_FACT_OMISSION on body/lead: realize each listed fact in its assigned slot as concrete explanation (weave with related facts OK). Do not drop required body facts. Do not add evaluation to cover the omission. Title: performer, official premise, series, or a planned factual feature — do NOT force-assemble title.facts and do not invent a hook.";
+  "For PLAN_FACT_OMISSION: realize requiredFactCoverage in the assigned slot. A paraphrase that keeps the same agent, relation, and numbers counts. Do not change the meaning, strengthen the fact, or add a new act. Do not add evaluation to cover the omission.";
 
 const TITLE_EDITORIAL_REGEN_HINT =
-  "For title defects (PLAN_TITLE_EDITORIAL_QUALITY / PLAN_TITLE_INVENT): rewrite the headline from performer, work identity, official premise, series/campaign, or a work-specific factual feature already in ARTICLE_PLAN. Do not invent evaluative copy (禁断, 快楽劇, 艶やか, 濃密, 屈辱, 味わう, おすすめ). Do not paste productTitle wholesale. HARD BAN: never write 「が魅せる」「が贈る」. Reject package-copy shortening, performer+keyword glue, catalog shells.";
+  "For title defects: use only titleAuthority (performer, official work identity, series, campaign, premise, work-specific factual feature). Do not add an editorial frame such as の世界, 繰り広げられる, 禁断, or 濃密. Particles and word order may change. HARD BAN: never write 「が魅せる」「が贈る」.";
 
 function regenInstructionForViolations(violations: PlanRegenViolation[]): string {
   const parts = [PLAN_REGEN_CORRECTION_INSTRUCTION];
@@ -131,6 +135,16 @@ export function buildStructuredPlanRegenViolations(
       const key = `${finding.code}::${unsupportedSentence ?? finding.message}`;
       if (seen.has(key)) continue;
       seen.add(key);
+      const planFacts = articlePlanAllFacts(plan);
+      const claims = unsupportedSentence
+        ? blockingSemanticClaims(unsupportedSentence, planFacts)
+        : [];
+      const allowedSupportingFacts = planFacts
+        .filter((f) => {
+          const anchors = buildPlanFactExecutionTarget(f, "body", 0).requiredAnchors;
+          return anchors.some((a) => (unsupportedSentence ?? "").includes(a));
+        })
+        .slice(0, 6);
       violations.push({
         code: finding.code,
         slot: finding.slot ?? "body",
@@ -138,8 +152,13 @@ export function buildStructuredPlanRegenViolations(
         reason:
           finding.code === "PLAN_THEME_OVERREACH"
             ? "Short theme fact expanded beyond membership/attested surface — remove the invented psychology/role/plot meaning."
-            : "Sentence adds an unattributed evaluation, recommendation, viewing-experience claim, or external factual claim. Delete that claim and keep the planned factual clause. Do not add a new evaluation or a new fact. Do not invent 売上No.1 / 大人気 / ファンから高評価 / 最高傑作 / おすすめ / 味わえる / 楽しめる.",
+            : "Restate allowedSupportingFacts as FACTUAL_DESCRIPTION. Do not replace unsupportedMeaning with another word of the same violationType. Do not add a fact. Maker wording stays only as 公式では…と紹介されている.",
         unsupportedSentence: unsupportedSentence ?? undefined,
+        violationType: claims[0]?.class ?? "UNSUPPORTED_EVALUATION",
+        offendingSentence: unsupportedSentence ?? undefined,
+        unsupportedMeaning:
+          claims.map((c) => `${c.class}:${c.span}`).join("; ") || finding.message.slice(0, 180),
+        allowedSupportingFacts,
       });
       continue;
     }
@@ -157,15 +176,27 @@ export function buildStructuredPlanRegenViolations(
       const key = `${finding.code}::${finding.message}`;
       if (seen.has(key)) continue;
       seen.add(key);
+      const titleAuthority = [
+        ...plan.title.facts,
+        ...plan.body.flatMap((b) => b.facts),
+        plan.productTitle ?? "",
+      ]
+        .map((f) => f.trim())
+        .filter(Boolean)
+        .slice(0, 12);
+      const title = articleText?.title ?? "";
+      const stems = ungroundedTitleStems(title, titleAuthority);
       violations.push({
         code: finding.code,
         slot: "title",
         fact: "",
         reason:
-          finding.code === "PLAN_TITLE_INVENT"
-            ? "Title invents evaluative copy or material absent from planned facts. Rewrite from performer, official premise, series, or a planned factual feature. Do not add 禁断 / 味わう / おすすめ / 濃密."
-            : "Title fails headline quality — rewrite from performer, official premise, series, or a planned factual feature; avoid package-copy / が魅せる / catalog shells / evaluative hooks.",
-        unsupportedSentence: finding.slot === "title" ? articleText?.title?.slice(0, 120) : undefined,
+          "Rewrite the title from titleAuthority only. Particles and word order may change. Do not add an editorial frame.",
+        unsupportedSentence: title.slice(0, 120) || undefined,
+        violationType: stems[0]?.class ?? "EDITORIAL_EMBELLISHMENT",
+        offendingSentence: title.slice(0, 120) || undefined,
+        unsupportedMeaning: stems.map((s) => `${s.class}:${s.span}`).join("; ") || finding.message.slice(0, 180),
+        titleAuthority,
       });
       continue;
     }
@@ -205,9 +236,12 @@ export function buildStructuredPlanRegenViolations(
           ? "plan fact must be realized in assigned slot"
           : missingRelations.length > 0
             ? `missing plan fact / relation: ${missingRelations.join(",")}`
-            : "missing plan fact — realize it in the assigned slot without dropping other coverage",
+            : "Realize requiredFactCoverage. Keep the same agent, relation, and numbers. A natural paraphrase is enough. Do not add a fact or an evaluation.",
       missingAnchors: missingAnchors.length > 0 ? missingAnchors : undefined,
       missingRelations: missingRelations.length > 0 ? missingRelations : undefined,
+      violationType: finding.code === "PLAN_FACT_OMISSION" ? "FACT_OMISSION" : finding.code,
+      requiredFactCoverage: [fact],
+      allowedSupportingFacts: [fact],
     });
   }
 

@@ -28,10 +28,13 @@ describe("ModelRun failure status finalization (LLM=0)", () => {
     const generateSlice = src.slice(generateStart);
     const deferIdx = generateSlice.indexOf('throw new GenerationPreflightError(\n        "insufficient_editorial_material"');
     const modelRunIdx = generateSlice.indexOf("const modelRun = await this.repo.createModelRun({");
-    const llmIdx = generateSlice.indexOf("this.llm.executeTask({");
+    const plannerLlmIdx = generateSlice.indexOf("this.llm.executeTask({");
+    const writerLlmIdx = generateSlice.indexOf("llm = await this.llm.executeTask({", modelRunIdx);
     expect(deferIdx).toBeGreaterThan(0);
     expect(modelRunIdx).toBeGreaterThan(deferIdx);
-    expect(llmIdx).toBeGreaterThan(modelRunIdx);
+    // DEFER returns before any LLM. The editorial planner runs before the writer ModelRun.
+    expect(plannerLlmIdx).toBeGreaterThan(deferIdx);
+    expect(writerLlmIdx).toBeGreaterThan(modelRunIdx);
     expect(generateSlice).toContain("DEFER_INSUFFICIENT_MATERIAL");
     expect(generateSlice).toContain("insufficient_editorial_material");
     // BLOG DEFER must not require a ModelRun errorType literal — throw is before createModelRun.

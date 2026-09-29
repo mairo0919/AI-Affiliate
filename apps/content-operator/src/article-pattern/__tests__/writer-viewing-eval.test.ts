@@ -8,6 +8,11 @@ import { buildOptionBBloggerGeneratorPrompt } from "../../editorial-brain/genera
 import { buildArticlePlanViolationFeedback } from "../../editorial-brain/generation/plan-aware-generation.js";
 import { hasUnattributedViewingEvaluation } from "../plan-surface-attestation.js";
 import { articleSemanticRole } from "../plan-execution-contract.js";
+import {
+  factMeaningCovered,
+  isFactRealized,
+  resolveFactRealization,
+} from "../../editorial-brain/generation/plan-fact-matching.js";
 
 const rocketPlan = {
   schemaVersion: 1 as const,
@@ -191,5 +196,72 @@ describe("writer viewing evaluation", () => {
         sourceFactType: "OFFICIAL_DESCRIPTION",
       }),
     ).toBe("SERIES");
+  });
+
+  it("blocks unknown evaluative paraphrases that are not in the planned facts", () => {
+    const facts = ["同性羞恥いじめに特化した革命AVドラマ", "無様エロの元祖"];
+    expect(hasUnattributedViewingEvaluation("革新的なAVドラマである。", facts)).toBe(true);
+    expect(hasUnattributedViewingEvaluation("無様エロの元祖とも言える。", facts)).toBe(true);
+    expect(hasUnattributedViewingEvaluation("余すことなく描かれている。", facts)).toBe(true);
+    expect(
+      hasUnattributedViewingEvaluation("公式では革命AVドラマと紹介されている。", [
+        "同性羞恥いじめに特化した革命AVドラマ",
+      ]),
+    ).toBe(false);
+  });
+
+  it("counts a meaning-preserving paraphrase as fact coverage", () => {
+    const fact = "掃除中に無防備な尻を見せる";
+    const sentence = "掃除中の無防備な姿が描かれる";
+    expect(factMeaningCovered(sentence, fact)).toBe(true);
+    expect(isFactRealized(resolveFactRealization(sentence, fact).status)).toBe(true);
+    expect(factMeaningCovered("掃除中に無防備な尻を隠す", fact)).toBe(false);
+    expect(
+      factMeaningCovered("119分にわたって収録されている。", "120分にわたって収録されている"),
+    ).toBe(false);
+  });
+
+  it("blocks an editorial title frame that is outside title authority", () => {
+    const result = validateArticlePlanCompliance({
+      article: {
+        title: "逢沢みゆと密室タクシードライバーの世界",
+        summary: "",
+        sections: [{ paragraphs: ["逢沢みゆが出演する。65分。"] }],
+      },
+      articlePlan: {
+        schemaVersion: 1 as const,
+        materialDepth: "standard" as const,
+        productTitle: "密室タクシードライバー",
+        title: { job: "editorial_headline" as const, facts: ["逢沢みゆ"] },
+        lead: { job: "opening_facts" as const, facts: [] },
+        body: [{ job: "body_facts" as const, facts: ["密室タクシードライバー", "65分"] }],
+      },
+    });
+    expect(result.findings.some((f) => f.code === "PLAN_TITLE_INVENT" && f.message.includes("世界"))).toBe(
+      true,
+    );
+  });
+
+  it("puts the semantic class and allowed facts on the rewrite note", () => {
+    const article = {
+      title: "私立花園女子校いじめ学級会",
+      summary: "",
+      lead: "",
+      sections: [
+        {
+          paragraphs: ["革新的なAVドラマとして無様エロの元祖とも言える。"],
+        },
+      ],
+    };
+    const result = validateArticlePlanCompliance({ article, articlePlan: rocketPlan });
+    const feedback = buildArticlePlanViolationFeedback(2, result, null, rocketPlan, {
+      title: article.title,
+      body: article.sections[0]!.paragraphs[0],
+    });
+    const evalV = feedback.violations?.find((v) => v.code === "PLAN_UNSUPPORTED_EVAL");
+    expect(evalV?.violationType).toMatch(/UNSUPPORTED_EVALUATION|VIEWING_EXPERIENCE/);
+    expect(evalV?.unsupportedMeaning ?? "").toMatch(/革新的|とも言える/);
+    expect(evalV?.offendingSentence ?? "").toMatch(/革新的/);
+    expect(feedback.instruction ?? "").toMatch(/violationType|allowedSupportingFacts/);
   });
 });

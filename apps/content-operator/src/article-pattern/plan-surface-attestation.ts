@@ -9,6 +9,7 @@
  * - Maker promotional wording — allowed only as a quoted plan span or with source attribution
  */
 
+import { blockingSemanticClaims } from "./article-semantic-claim.js";
 import { WORK_THEME_FACET_RE } from "./evidence-material-role.js";
 
 /** Bare work-theme / genre-tag surfaces that SEMANTIC may connect, but must not invent psychology/story for. */
@@ -92,24 +93,6 @@ export const UNATTRIBUTED_VIEWING_EVAL_RE =
 const SOFT_EDITORIAL_FRAME_RE =
   /(?:存分に|楽しめます|楽しめる(?:内容)?(?:となっています)?|味わえます|堪能でき(?:る|ます)(?:内容)?|余すところなく|魅力的な|魅力のひとつ(?:です)?|魅力の一つ(?:です)?|魅力が詰ま(?:って(?:いる|います)?)?|充実した内容|ボリューム満点|ボリュームたっぷり|大ボリューム)/u;
 
-function viewingHits(sentence: string): string[] {
-  return sentence.match(new RegExp(UNATTRIBUTED_VIEWING_EVAL_RE.source, "gu")) ?? [];
-}
-
-function hitQuotedFromPlan(
-  sentence: string,
-  hit: string,
-  planFacts: readonly string[],
-): boolean {
-  return planFacts.some((raw) => {
-    const fact = raw.trim();
-    if (!fact.includes(hit) || fact.length < 8) return false;
-    const i = fact.indexOf(hit);
-    const slice = fact.slice(Math.max(0, i - 4), Math.min(fact.length, i + hit.length + 4));
-    return slice.length >= hit.length + 2 && sentence.includes(slice);
-  });
-}
-
 /**
  * True when the sentence adds an evaluation, recommendation, or viewing claim
  * that is not a quoted plan span and not source-attributed maker copy.
@@ -118,16 +101,7 @@ export function hasUnattributedViewingEvaluation(
   sentence: string,
   planFacts: readonly string[],
 ): boolean {
-  const hits = viewingHits(sentence);
-  if (hits.length === 0) return false;
-  const attributed = /公式では|公式紹介|と紹介され/.test(sentence);
-  return hits.some((hit) => {
-    const inPlan = planFacts.some((f) => f.includes(hit));
-    if (!inPlan) return true;
-    if (hitQuotedFromPlan(sentence, hit, planFacts)) return false;
-    if (attributed) return false;
-    return true;
-  });
+  return blockingSemanticClaims(sentence, planFacts).length > 0;
 }
 
 function realizesSubstantialPlanFact(

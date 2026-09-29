@@ -46,6 +46,18 @@ export type PlanRegenViolation = {
   unexpectedMeaning?: string[];
   /** Exact Writer sentence that triggered BLOCKING (eval/overreach) — delete, do not rewrite Plan */
   unsupportedSentence?: string;
+  /** Semantic class: UNSUPPORTED_EVALUATION, RECOMMENDATION, VIEWING_EXPERIENCE, EDITORIAL_EMBELLISHMENT, or omission. */
+  violationType?: string;
+  /** Sentence to rewrite. Same span as unsupportedSentence when the violation is evaluative. */
+  offendingSentence?: string;
+  /** The unsupported meaning, not a synonym to swap in. */
+  unsupportedMeaning?: string;
+  /** Planned facts the rewrite may keep. */
+  allowedSupportingFacts?: string[];
+  /** Planned facts the rewrite must still realize. */
+  requiredFactCoverage?: string[];
+  /** Title stems the rewrite may use: performer, work identity, series, campaign, premise, factual feature. */
+  titleAuthority?: string[];
 };
 
 export type PlanViolationFeedback = {

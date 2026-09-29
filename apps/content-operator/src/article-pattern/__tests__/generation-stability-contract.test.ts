@@ -178,14 +178,14 @@ describe("pure unsupported eval closer strip — ofje", () => {
     expect(prompt.userPrompt).not.toMatch(/SOURCE FACT TYPE \(per/);
   });
 
-  it("allows concrete explanation; blocks unattributed viewing and external reputation", () => {
+  it("blocks reader recommendation, unattributed viewing, and external reputation", () => {
     const facts = plan.body.flatMap((b) => b.facts);
     expect(
       hasUnsupportedEvaluativeResidue(
         "多彩なシーンと豊富な収録量が特徴のため、彼女のファンはもちろん、まとめて見たい人にも適したボリュームのあるベスト盤です。",
         facts,
       ),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       hasUnsupportedEvaluativeResidue(
         "人妻、NTR、痴女、追撃ピストンといった多様なプレイスタイルを網羅しており、一つの方向性に偏らない幅広いエロティシズムを横断して楽しめる内容となっています。",
