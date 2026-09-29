@@ -75,6 +75,7 @@ export function toWriterVisibleExecution(execution: unknown): unknown {
       allowed: r.allowed,
       notAllowed: r.notAllowed,
       ...(r.informationAxis ? { informationAxis: r.informationAxis } : {}),
+      ...(r.articleRole ? { articleRole: r.articleRole } : {}),
     };
   });
 }
@@ -149,10 +150,11 @@ export function buildOptionBBloggerGeneratorPrompt(input: {
       ? [
           "ARTICLE_PLAN_EXECUTION (FACT safety per contribution — obey executionMode / mustPreserve / notAllowed; do not invent):",
           JSON.stringify(execution),
-          "TITLE: Write a fresh article headline from ARTICLE_PLAN.editorialDecision (angle/readerHook/whyThisWork). title.facts are optional grounding — do not assemble/concatenate them into the title. Do not shorten productTitle. Prefer EXACT_SURFACE only for performer names / quantities when you choose to use them. HARD BAN in title: any use of 魅せる, が贈る, or 「注目は…｜」. Also forbidden: package-copy rephrase, performer+keyword glue, catalog shells. Prefer 描く/紹介する/味わう/軸にする/繰り広げる.",
-          "SEMANTIC_PRESERVE body: natural grammar and editorial connection OK; no new concrete facts. Combine related facts into coherent paragraphs.",
-          "Write continuous adult product-intro prose. Weave short tags into the story of the product — do not explain internal labels (genre/play-style/direction categories) to the reader.",
-          "End with a short grounded reader orientation when natural — optional when SOURCE is thin (THEME_LEVEL / METADATA). Forbidden unless planned: external reputation/market claims (～で知られている / 売上No.1 / 大人気 / ファンから高評価).",
+          "TITLE: Write the headline from performer, work identity, official premise, series/campaign, or a work-specific factual feature in ARTICLE_PLAN. editorialDecision is only a factual cut. Do not assemble/concatenate title.facts. Do not paste productTitle wholesale. Do not invent evaluative or viewing copy (禁断, 快楽劇, 艶やか, 濃密, 味わう, 屈辱, おすすめ). HARD BAN in title: 魅せる, が贈る, or 「注目は…｜」. Also forbidden: package-copy rephrase, performer+keyword glue, catalog shells.",
+          "articleRole on each execution target is WHO / WORK / PREMISE / FEATURE / FORMAT / VOLUME / SERIES / GENRE / SOURCE_ATTRIBUTED. Explain PREMISE and FEATURE as concrete prose. SOURCE_ATTRIBUTED wording stays attributed (公式では…と紹介されている) and is not your verdict.",
+          "SEMANTIC_PRESERVE body: natural grammar that restates planned facts. No new concrete facts. No evaluation, recommendation, or claim that you watched or experienced the work. Combine related facts into coherent paragraphs.",
+          "Write continuous adult product explanation. Weave short tags into what the work specifically contains — do not explain internal labels, and do not turn tags into a scene you were not given.",
+          "Stop when the planned facts are covered. Do not close with おすすめ / 楽しめる / 味わえる / 見逃せません / 体験できる. Forbidden unless planned and attributed: external reputation/market claims (～で知られている / 売上No.1 / 大人気 / ファンから高評価).",
           "If ARTICLE_PLAN.sourceExpansion.writerDensityNote is present, obey it as a length/expansion ceiling. Stop when planned facts are naturally covered.",
         ].join("\n")
       : "",

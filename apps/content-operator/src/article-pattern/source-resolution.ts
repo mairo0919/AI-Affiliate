@@ -75,9 +75,9 @@ export function expansionPolicyForResolution(
         resolution,
         maxBodyFacts: 18,
         maxThemeTagFacts: 10,
-        requireAllThemeTagCoverage: true,
+        requireAllThemeTagCoverage: false,
         writerDensityNote:
-          "SOURCE is RICH: develop recorded scene/play/detail naturally across paragraphs. Do not invent beyond planned facts. Length follows material — do not pad empty prose.",
+          "SOURCE is RICH: explain the recorded situation, people, project, format, and volume in prose. Short theme tags are representative — do not list every genre. Do not add evaluation, recommendation, or a viewing claim. Do not invent beyond planned facts.",
       };
     case "THEME_LEVEL_EVIDENCE":
       return {

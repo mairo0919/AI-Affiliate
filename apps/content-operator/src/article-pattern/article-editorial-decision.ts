@@ -267,6 +267,8 @@ export function buildEditorialDecisionPlannerPrompt(input: {
     "作品全体を理解し、記事としてどの切り口で紹介するかを決める。",
     "出力はJSONのみ。タイトル文そのものを書かない。",
     "Evidenceにない出演者・企画・評価・人気・断定を作らない。",
+    "angle/readerHook/whyThisWorkに評価・推薦・視聴体験（印象的、おすすめ、味わう、楽しめる、魅力的、見逃せない、禁断、濃密、屈辱）を書かない。",
+    "切り口は出演者、状況、企画、シリーズ、収録内容などEvidenceにある事実だけにする。",
     "固定カテゴリ（出演者/設定/フェチ等）から選ばない。作品ごとに自由文で書く。",
     "公式商品名の短縮版やキーワード羅列をangleにしない。",
   ].join("");
@@ -301,6 +303,14 @@ export function parseEditorialDecisionJson(
     if (!angle || angle.length < 4) return null;
     // Reject if model returned a finished title-looking short glue phrase as angle
     if (looksLikePerformerKeywordGlue(angle) && angle.length <= 28) return null;
+    const voice = `${angle}${readerHook}${whyThisWork}`;
+    if (
+      /(?:おすすめ|オススメ|味わ[えうい]|楽しめ|体験でき|印象的|魅了|見逃せ|たまらな|臨場感|存分に|魅力的|堪能|必見|革命的|濃密|圧巻|刺激的|禁断|快楽|屈辱|決め手|差別化)/u.test(
+        voice,
+      )
+    ) {
+      return null;
+    }
     return {
       angle: angle.slice(0, 160),
       readerHook: (readerHook || angle).slice(0, 160),
@@ -321,15 +331,28 @@ export function buildDeterministicEditorialDecisionFallback(input: {
   evidenceSurfaces: string[];
   performers: string[];
 }): ArticleEditorialDecision {
-  const surfaces = input.evidenceSurfaces.map((s) => s.trim()).filter((s) => s.length >= 4).slice(0, 6);
+  const evaluative =
+    /(?:おすすめ|オススメ|味わ[えうい]|楽しめ|体験でき|印象的|魅了|見逃せ|たまらな|臨場感|存分に|魅力的|堪能|必見|革命的|濃密|圧巻|刺激的|禁断|快楽|屈辱|決め手|差別化)/u;
+  const surfaces = input.evidenceSurfaces
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 4 && !evaluative.test(s))
+    .slice(0, 6);
   const who = input.performers[0]?.trim();
-  const theme = surfaces.find((s) => s !== who && s.length >= 4) ?? input.productTitle.slice(0, 40);
+  const theme =
+    surfaces.find((s) => s !== who && s.length >= 4) ??
+    (evaluative.test(input.productTitle) ? "" : input.productTitle.slice(0, 40));
   const angle = who
-    ? `${who}を軸に、${theme}が作品選びの決め手になる点を紹介する`
-    : `${theme}を軸に、この作品を選ぶ理由を紹介する`;
+    ? theme
+      ? `${who}が出演する作品として、${theme}という状況を説明する`
+      : `${who}が出演する作品の、公式に記録された状況を説明する`
+    : theme
+      ? `${theme}という状況を説明する`
+      : `公式に記録された状況を説明する`;
   return {
     angle: angle.slice(0, 160),
-    readerHook: `読者が作品一覧で気になる差別化点として「${theme.slice(0, 40)}」を先に示す`.slice(0, 160),
+    readerHook: theme
+      ? `「${theme.slice(0, 40)}」という作品固有の状況を先に示す`.slice(0, 160)
+      : "公式に記録された状況を先に示す",
     whyThisWork: `公式情報から確認できる具体点（${surfaces.slice(0, 3).join(" / ") || theme}）を記事の切り口にする`.slice(
       0,
       160,
@@ -352,8 +375,18 @@ export function validateEditorialDecisionGrounding(input: {
     if (p.length < 2) continue;
     if (text.includes(p)) continue;
   }
-  // Reject obvious reputation invention
-  if (/(?:売上No\.?1|大人気|必見|見逃せ|今すぐ買え)/u.test(text)) {
+  const cast = text.match(/([^、。「」]{2,18})が出演/);
+  if (cast && input.performers.length > 0) {
+    const name = cast[1].replace(/^.*として/u, "").trim();
+    const known = input.performers.some((p) => p.length >= 2 && (name.includes(p) || p.includes(name)));
+    if (!known) return { ok: false, reason: "FALSE_CAST" };
+  }
+  // Reject reputation, recommendation, and viewing-experience invention.
+  if (
+    /(?:売上No\.?1|大人気|必見|見逃せ|今すぐ買え|おすすめ|オススメ|味わ[えうい]|楽しめ|体験でき|印象的|魅了|たまらな|臨場感|存分に|魅力的|堪能|革命的|濃密|圧巻|刺激的|禁断|快楽|屈辱|決め手|差別化)/u.test(
+      text,
+    )
+  ) {
     return { ok: false, reason: "PROMO_INVENTION" };
   }
   if (allowed.size === 0) return { ok: true };

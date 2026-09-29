@@ -114,13 +114,13 @@ describe("pure unsupported eval closer strip — ofje", () => {
       ],
     };
 
-    // Fact-bearing sentence with soft editorial frame should not BLOCK.
+    // Fact-bearing sentence that adds 堪能できる is still an unattributed viewing claim.
     expect(
       hasUnsupportedEvaluativeResidue(
         article.sections[0]!.paragraphs[0]!,
         plan.body.flatMap((b) => b.facts),
       ),
-    ).toBe(false);
+    ).toBe(true);
 
     const before = validateArticlePlanCompliance({ article, articlePlan: plan });
     expect(
@@ -135,24 +135,31 @@ describe("pure unsupported eval closer strip — ofje", () => {
     const stripped = stripPureUnsupportedEvalClosers({ article, articlePlan: plan });
     expect(stripped.mutated).toBe(true);
     expect(stripped.droppedSentences.some((s) => s.includes("楽しめます"))).toBe(true);
-    // Keep grounded editorial sentence
+    // Fact sentence stays for rewrite; the empty closer is the only strip.
     const kept = stripped.article.sections.flatMap((s) => s.paragraphs).join("\n");
     expect(kept).toContain("円熟した濃厚なセックス");
+    expect(kept).not.toContain("充実した内容で楽しめます");
 
     const after = validateArticlePlanCompliance({
       article: stripped.article,
       articlePlan: plan,
     });
     expect(
-      after.findings.some((f) => f.code === "PLAN_UNSUPPORTED_EVAL" && f.severity === "BLOCKING"),
-    ).toBe(false);
+      after.findings.some(
+        (f) =>
+          f.code === "PLAN_UNSUPPORTED_EVAL" &&
+          f.severity === "BLOCKING" &&
+          f.message.includes("堪能できる"),
+      ),
+    ).toBe(true);
   });
 
-  it("Writer policy allows grounded editorial interpretation; forbids external claims", () => {
+  it("Writer policy explains planned facts and forbids unattributed evaluation", () => {
     expect(OPTION_B_WRITER_SYSTEM).toMatch(/EDITORIAL INTERPRETATION/);
     expect(OPTION_B_WRITER_SYSTEM).toMatch(/EXTERNAL FACTUAL CLAIMS/);
     expect(OPTION_B_WRITER_SYSTEM).toMatch(/で知られて|として知られて/);
-    expect(OPTION_B_WRITER_SYSTEM).toMatch(/ファンはもちろん|まとめて見たい人/);
+    expect(OPTION_B_WRITER_SYSTEM).toMatch(/おすすめ/);
+    expect(OPTION_B_WRITER_SYSTEM).toMatch(/have not watched the work/i);
     expect(OPTION_B_WRITER_SYSTEM).toMatch(/fact formatter/i);
     const prompt = buildOptionBBloggerGeneratorPrompt({
       productTitle: "ofje00230",
@@ -171,9 +178,8 @@ describe("pure unsupported eval closer strip — ofje", () => {
     expect(prompt.userPrompt).not.toMatch(/SOURCE FACT TYPE \(per/);
   });
 
-  it("allows EDITORIAL reader-address; blocks EXTERNAL reputation-as-fact", () => {
+  it("allows concrete explanation; blocks unattributed viewing and external reputation", () => {
     const facts = plan.body.flatMap((b) => b.facts);
-    // EDITORIAL — keep
     expect(
       hasUnsupportedEvaluativeResidue(
         "多彩なシーンと豊富な収録量が特徴のため、彼女のファンはもちろん、まとめて見たい人にも適したボリュームのあるベスト盤です。",
@@ -185,7 +191,7 @@ describe("pure unsupported eval closer strip — ofje", () => {
         "人妻、NTR、痴女、追撃ピストンといった多様なプレイスタイルを網羅しており、一つの方向性に偏らない幅広いエロティシズムを横断して楽しめる内容となっています。",
         facts,
       ),
-    ).toBe(false);
+    ).toBe(true);
     // EXTERNAL — block (third-party reputation asserted as fact)
     expect(
       hasUnsupportedEvaluativeResidue(

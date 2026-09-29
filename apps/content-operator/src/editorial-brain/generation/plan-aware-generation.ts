@@ -22,23 +22,23 @@ import { resolveFactRealization } from "./plan-fact-matching.js";
 
 export const MAX_PLAN_EXECUTION_ATTEMPTS = Math.max(
   1,
-  Math.min(2, Number(process.env.BLOG_MAX_PLAN_ATTEMPTS ?? 2) || 2),
+  Math.min(3, Number(process.env.BLOG_MAX_PLAN_ATTEMPTS ?? 3) || 3),
 );
 
 export const PLAN_REGEN_CORRECTION_INSTRUCTION =
-  "Correct only the reported ArticlePlan execution failures. Preserve fact identity and realize omitted facts in their assigned slots. Natural grammar and editorial interpretation grounded in planned facts are allowed. Do not rewrite ARTICLE_PLAN. Do not add external factual claims (売上No.1 / 大人気 / ファンから高評価 / 最高傑作) absent from the plan.";
+  "Correct only the reported ArticlePlan execution failures. Preserve fact identity and realize omitted facts in their assigned slots. Natural grammar that restates planned facts is allowed. Do not add evaluation, recommendation, viewing-experience claims, or new facts. Do not rewrite ARTICLE_PLAN. Do not add external factual claims (売上No.1 / 大人気 / ファンから高評価 / 最高傑作) absent from the plan.";
 
 const CONTRASTIVE_REGEN_HINT =
   "Preserve concessive/contrastive relation (e.g. 言えど, ではあるものの, にもかかわらず) — do not replace with neutral copula (である) that removes the planned contrast.";
 
 const EVAL_REGEN_HINT =
-  "For PLAN_UNSUPPORTED_EVAL / external factual claims: remove the unsupported external claim or empty promo closer. You may keep or rewrite as editorial interpretation that stays grounded in planned facts (volume/theme/trait). Do not replace with another unsupported external claim.";
+  "For PLAN_UNSUPPORTED_EVAL: delete the unattributed evaluation, recommendation, or viewing-experience claim (印象的 / 魅力的 / 楽しめる / 味わえる / おすすめ / 見逃せない / 体験できる / 臨場感 / 存分に / 堪能). Keep the planned factual clause. Do not replace it with another evaluation. If the planned fact itself is maker promotional wording, keep it only as 公式では…と紹介されている, and prefer the factual situation.";
 
 const OMISSION_REGEN_HINT =
-  "For PLAN_FACT_OMISSION on body/lead: realize each listed fact in its assigned slot (weave with related facts OK). Do not drop required body facts. Title uses editorialDecision — do NOT force-assemble title.facts into the headline.";
+  "For PLAN_FACT_OMISSION on body/lead: realize each listed fact in its assigned slot as concrete explanation (weave with related facts OK). Do not drop required body facts. Do not add evaluation to cover the omission. Title: performer, official premise, series, or a planned factual feature — do NOT force-assemble title.facts and do not invent a hook.";
 
 const TITLE_EDITORIAL_REGEN_HINT =
-  "For PLAN_TITLE_EDITORIAL_QUALITY: rewrite the title as a fresh article headline from ARTICLE_PLAN.editorialDecision (angle/readerHook/whyThisWork). HARD BAN: never write 「が魅せる」「が贈る」. Reject package-copy shortening, performer+keyword glue, catalog shells. title.facts are optional grounding only. Example direction: 「逢沢みゆのメンズエステで辿る癒しと濃密な時間」 not 「逢沢みゆが魅せる…」.";
+  "For title defects (PLAN_TITLE_EDITORIAL_QUALITY / PLAN_TITLE_INVENT): rewrite the headline from performer, work identity, official premise, series/campaign, or a work-specific factual feature already in ARTICLE_PLAN. Do not invent evaluative copy (禁断, 快楽劇, 艶やか, 濃密, 屈辱, 味わう, おすすめ). Do not paste productTitle wholesale. HARD BAN: never write 「が魅せる」「が贈る」. Reject package-copy shortening, performer+keyword glue, catalog shells.";
 
 function regenInstructionForViolations(violations: PlanRegenViolation[]): string {
   const parts = [PLAN_REGEN_CORRECTION_INSTRUCTION];
@@ -138,7 +138,7 @@ export function buildStructuredPlanRegenViolations(
         reason:
           finding.code === "PLAN_THEME_OVERREACH"
             ? "Short theme fact expanded beyond membership/attested surface — remove the invented psychology/role/plot meaning."
-            : "Sentence adds an unsupported external factual claim or empty promo closer. Remove the external claim / empty closer, or rewrite as editorial interpretation grounded in planned facts (volume/theme/trait). Do not invent 売上No.1 / 大人気 / ファンから高評価 / 最高傑作.",
+            : "Sentence adds an unattributed evaluation, recommendation, viewing-experience claim, or external factual claim. Delete that claim and keep the planned factual clause. Do not add a new evaluation or a new fact. Do not invent 売上No.1 / 大人気 / ファンから高評価 / 最高傑作 / おすすめ / 味わえる / 楽しめる.",
         unsupportedSentence: unsupportedSentence ?? undefined,
       });
       continue;
@@ -147,12 +147,13 @@ export function buildStructuredPlanRegenViolations(
     if (
       finding.code !== "PLAN_FACT_OMISSION" &&
       finding.code !== "PLAN_SLOT_VIOLATION" &&
-      finding.code !== "PLAN_TITLE_EDITORIAL_QUALITY"
+      finding.code !== "PLAN_TITLE_EDITORIAL_QUALITY" &&
+      finding.code !== "PLAN_TITLE_INVENT"
     ) {
       continue;
     }
 
-    if (finding.code === "PLAN_TITLE_EDITORIAL_QUALITY") {
+    if (finding.code === "PLAN_TITLE_EDITORIAL_QUALITY" || finding.code === "PLAN_TITLE_INVENT") {
       const key = `${finding.code}::${finding.message}`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -161,7 +162,10 @@ export function buildStructuredPlanRegenViolations(
         slot: "title",
         fact: "",
         reason:
-          "Title fails editorial headline quality — rewrite from editorialDecision; do not assemble title.facts; avoid package-copy / が魅せる / catalog shells.",
+          finding.code === "PLAN_TITLE_INVENT"
+            ? "Title invents evaluative copy or material absent from planned facts. Rewrite from performer, official premise, series, or a planned factual feature. Do not add 禁断 / 味わう / おすすめ / 濃密."
+            : "Title fails headline quality — rewrite from performer, official premise, series, or a planned factual feature; avoid package-copy / が魅せる / catalog shells / evaluative hooks.",
+        unsupportedSentence: finding.slot === "title" ? articleText?.title?.slice(0, 120) : undefined,
       });
       continue;
     }
@@ -259,8 +263,8 @@ export function buildArticlePlanViolationFeedback(
     note: [
       "Bounded regen — fix only listed violations.",
       "Realize any omitted ARTICLE_PLAN facts in assigned slots.",
-      "If unsupportedSentence is an external factual claim or empty promo closer, remove or rewrite it as plan-grounded editorial interpretation (volume/theme/who-it-suits). Grounded wrap-ups are allowed.",
-      "Coverage of planned facts is required; after coverage you MAY add a short grounded editorial ending. Do not invent external-world claims.",
+      "If unsupportedSentence is an evaluation, recommendation, viewing-experience claim, or external factual claim, delete that claim and keep the planned facts. Do not add a new evaluation or a new fact.",
+      "Coverage of planned facts is required. Do not add a review ending.",
     ].join(" "),
     violations: violations.length > 0 ? violations : undefined,
     instruction:

@@ -149,6 +149,11 @@ export function deriveInformationAxis(
   const f = (fact ?? "").trim();
   if (!f) return "other";
 
+  // Official situation clauses group with scene so the Writer explains them as premise.
+  if (sourceFactType === "OFFICIAL_DESCRIPTION" && f.length >= 12 && /[がを]/u.test(f)) {
+    return "scene";
+  }
+
   // GENRE_TAG never groups as scene — classification / membership axis.
   if (sourceFactType === "GENRE_TAG") return "trait";
   if (sourceFactType === "ACTION" && f.length <= 16) return "trait";
@@ -273,10 +278,16 @@ function notAllowedFor(
   const base = [
     "new concrete facts",
     "new promotional meaning",
+    "unattributed evaluation, recommendation, or viewing-experience claims",
     "quantity alteration",
     "performer role alteration",
     "title reinterpretation",
   ];
+  if (/(?:おすすめ|必見|圧倒的|最高|魅力的|革命的|濃密|圧巻|禁断)/u.test(fact)) {
+    base.push(
+      "repeating this fact's promotional wording as the writer's own verdict; attribute with 公式では or omit it",
+    );
+  }
   if (relations.includes("CONTRAST")) {
     base.push("turning contrast into simple identity/property (e.g. である without concessive)");
   }
@@ -397,6 +408,44 @@ export function buildArticlePlanExecutionContract(input: {
   return out;
 }
 
+export type ArticleSemanticRole =
+  | "WHO"
+  | "WORK"
+  | "PREMISE"
+  | "FEATURE"
+  | "FORMAT"
+  | "VOLUME"
+  | "SERIES"
+  | "GENRE"
+  | "SOURCE_ATTRIBUTED";
+
+/** Role label for the Writer. Derived from existing source type and axis, not a second planner. */
+export function articleSemanticRole(input: {
+  fact: string;
+  sourceFactType?: SourceFactType | null;
+  informationAxis?: PlanInformationAxis | null;
+}): ArticleSemanticRole {
+  const fact = input.fact.trim();
+  const st = input.sourceFactType ?? null;
+  if (/(?:おすすめ|必見|圧倒的な魅力|最高|革命的|圧巻|果たして|美味そう|禁断|極上|革命AV)/u.test(fact)) {
+    return "SOURCE_ATTRIBUTED";
+  }
+  if (/シリーズ|キャンペーン|周年/u.test(fact)) return "SERIES";
+  if (st === "QUANTITY" || input.informationAxis === "quantity") return "VOLUME";
+  if (st === "GENRE_TAG") return "GENRE";
+  if (st === "IDENTITY" || input.informationAxis === "cast") return "WHO";
+  if (
+    (st === "OFFICIAL_DESCRIPTION" || input.informationAxis === "scene") &&
+    fact.length >= 12 &&
+    /[がを]/u.test(fact)
+  ) {
+    return "PREMISE";
+  }
+  if (input.informationAxis === "form" || /収録|VR|ベスト|総集編/u.test(fact)) return "FORMAT";
+  if (st === "OFFICIAL_DESCRIPTION") return "FEATURE";
+  return "FEATURE";
+}
+
 /** Slim Writer-visible view — identity/qty EXACT; scene/trait HOW left to Writer. */
 export function toWriterExecutionContractView(
   targets: PlanFactExecutionTarget[],
@@ -415,6 +464,7 @@ export function toWriterExecutionContractView(
   presentationPurpose?: string;
   sourceFactType?: SourceFactType;
   sourceFactTypeNote?: string;
+  articleRole: ArticleSemanticRole;
 }> {
   return targets.map((t) => {
     const exact = t.executionMode === "EXACT_SURFACE";
@@ -441,6 +491,11 @@ export function toWriterExecutionContractView(
       notAllowed: t.notAllowed,
       ...(t.informationAxis ? { informationAxis: t.informationAxis } : {}),
       ...(t.readerJob ? { readerJob: t.readerJob } : {}),
+      articleRole: articleSemanticRole({
+        fact: t.fact,
+        sourceFactType: t.sourceFactType,
+        informationAxis: t.informationAxis,
+      }),
       // presentationPurpose / sourceFactTypeNote stay Planner-internal — not Writer HOW dump.
     };
   });

@@ -150,7 +150,7 @@ export function sourceFactTypeWriterNote(t: SourceFactType): string {
     case "QUANTITY":
       return "QUANTITY: scale/count membership.";
     case "OFFICIAL_DESCRIPTION":
-      return "OFFICIAL_DESCRIPTION: product form / official copy surface.";
+      return "OFFICIAL_DESCRIPTION: official situation, project, or recorded content. Explain it concretely. Do not add evaluation. If the surface itself is maker promotion, attribute it as 公式では and prefer the factual clause.";
     default:
       return "OTHER: stay within planned surface; no invented scene/story.";
   }

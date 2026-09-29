@@ -154,7 +154,7 @@ describe("promotional framing residue", () => {
     ).toBe(false);
   });
 
-  it("compliance BLOCKS hard promo 見どころ; allows grounded soft editorial 存分に", () => {
+  it("compliance BLOCKS hard promo 見どころ and unattributed 存分に味わえる", () => {
     const plan = {
       schemaVersion: 1 as const,
       materialDepth: "standard" as const,
@@ -202,8 +202,10 @@ describe("promotional framing residue", () => {
       },
       articlePlan: plan,
     });
-    // Soft editorial on a plan-grounded sentence → allowed (editorial interpretation).
-    expect(mixed.findings.some((f) => f.code === "PLAN_UNSUPPORTED_EVAL")).toBe(false);
+    // Viewing/recommendation on a fact-bearing sentence is still BLOCKING.
+    expect(
+      mixed.findings.some((f) => f.code === "PLAN_UNSUPPORTED_EVAL" && f.severity === "BLOCKING"),
+    ).toBe(true);
   });
 
   it("OPTION B forbids post-LLM prose mutation", () => {

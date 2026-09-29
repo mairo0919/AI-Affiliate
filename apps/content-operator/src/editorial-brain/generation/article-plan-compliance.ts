@@ -11,6 +11,7 @@ import { articlePlanAllFacts } from "../../article-pattern/article-plan.js";
 import {
   hasExternalFactualClaimResidue,
   hasShortThemeSemanticOverreach,
+  hasUnattributedViewingEvaluation,
   hasUnsupportedEvaluativeResidue,
   isPureUnsupportedEvaluativePadding,
 } from "../../article-pattern/plan-surface-attestation.js";
@@ -293,16 +294,24 @@ function checkTitleAuthority(
   const ed = (plan as { editorialDecision?: { supportingEvidenceRefs?: string[]; angle?: string } })
     .editorialDecision;
   const bodyFacts = plan.body.flatMap((b) => b.facts);
-  const allowed = [
+  const factGrounding = [
     ...plan.title.facts,
     ...bodyFacts,
     plan.productTitle ?? "",
     ...(ed?.supportingEvidenceRefs ?? []),
-    ed?.angle ?? "",
   ]
     .map((f) => f.trim())
     .filter(Boolean);
-  const allowedBlob = allowed.join("");
+  if (hasUnattributedViewingEvaluation(title, factGrounding)) {
+    findings.push({
+      code: "PLAN_TITLE_INVENT",
+      message: `title adds unattributed evaluation or viewing copy: ${title.slice(0, 80)}`,
+      severity: "BLOCKING",
+      slot: "title",
+    });
+  }
+  const allowed = factGrounding;
+  const allowedBlob = factGrounding.join("\n");
   const runs = title.match(/[\u4e00-\u9fffァ-ヶーA-Za-z0-9]{2,}/gu) ?? [];
   for (const run of runs) {
     if (TITLE_STRUCTURAL_GLUE_RE.test(run)) continue;
@@ -331,7 +340,30 @@ function checkTitleAuthority(
       titleFacts: plan.title.facts,
       editorialAngle: ed?.angle ?? null,
     });
+    const contentRuns = runs.filter(
+      (run) => !TITLE_STRUCTURAL_GLUE_RE.test(run) && !/^\d+$/u.test(run),
+    );
+    const groundedHeadline =
+      contentRuns.length > 0 &&
+      contentRuns.every((run) => factGrounding.some((f) => f.includes(run)));
     for (const d of defects) {
+      // A headline built from planned performer / premise / series facts does not
+      // need an evaluative frame, and must not be rejected for overlapping the work name.
+      const genreGlueTail =
+        /(?:巨乳|人妻|NTR|ハメ撮り|中出し|ローション|オイル|キス|接吻)$/u.test(title);
+      const titleIsPlanFact = factGrounding.some(
+        (f) => f === title || f.includes(title),
+      );
+      if (
+        groundedHeadline &&
+        (d === "NO_EDITORIAL_ANGLE" ||
+          d === "LOW_INFORMATION" ||
+          d === "PACKAGE_COPY_REPHRASE" ||
+          ((d === "CATALOG_SHELL" || d === "GENERIC_LABEL") && titleIsPlanFact) ||
+          (d === "FACT_ASSEMBLY" && !genreGlueTail))
+      ) {
+        continue;
+      }
       findings.push({
         code: "PLAN_TITLE_EDITORIAL_QUALITY",
         message: `title editorial defect ${d}: ${title.slice(0, 80)}`,
@@ -484,11 +516,12 @@ function checkPlanAttestationSurplus(
       if (hasUnsupportedEvaluativeResidue(sent, planFacts)) {
         const external = hasExternalFactualClaimResidue(sent, planFacts);
         const pure = isPureUnsupportedEvaluativePadding(sent, planFacts);
+        const viewing = hasUnattributedViewingEvaluation(sent, planFacts);
         findings.push({
           code: "PLAN_UNSUPPORTED_EVAL",
-          message: `body paragraph ${i} has unsupported external claim or ungrounded promo residue (editorial interpretation grounded in plan facts is allowed): ${sent.slice(0, 200)}`,
-          // External-world claims are always BLOCKING; empty promo closers BLOCKING; soft frames on fact sentences WARNING.
-          severity: external || pure ? "BLOCKING" : "WARNING",
+          message: `body paragraph ${i} has unsupported evaluation, recommendation, viewing claim, or external claim: ${sent.slice(0, 200)}`,
+          // External claims, empty closers, and unattributed viewing/recommendation are BLOCKING even on fact-bearing sentences.
+          severity: external || pure || viewing ? "BLOCKING" : "WARNING",
           slot: "body",
         });
       }

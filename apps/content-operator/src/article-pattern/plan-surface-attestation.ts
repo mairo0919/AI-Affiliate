@@ -3,9 +3,10 @@
  *
  * Distinguish:
  * - EXTERNAL factual claims (売上No.1, 大人気, …) — unsupported without plan Evidence
- * - EDITORIAL interpretation grounded in planned facts — allowed
- * - Hard promotional frames with no plan grounding — unsupported
- * - Soft editorial frames on fact-bearing sentences — allowed when grounded
+ * - Concrete explanation of planned situation / cast / project — allowed
+ * - Unattributed evaluation, recommendation, or viewing-experience claims — unsupported
+ *   even when the same sentence also realizes a planned fact
+ * - Maker promotional wording — allowed only as a quoted plan span or with source attribution
  */
 
 import { WORK_THEME_FACET_RE } from "./evidence-material-role.js";
@@ -64,27 +65,70 @@ export function hasShortThemeSemanticOverreach(
 
 /**
  * External-world factual claims — third-party / market / reputation as fact.
- * Not the same as Writer editorial opinion (向き先・おすすめ・楽しめる).
  * Require Evidence / planned facts; never invent from vibe.
- *
- * Claim-type patterns (not bare-word bans of ファン / おすすめ / 魅力 / 楽しめる).
  */
 export const EXTERNAL_FACTUAL_CLAIM_RE =
   /(?:売上(?:No\.?1|ナンバーワン|一位|１位)|大人気|大ヒット|爆発的人気|ファンから高評価|ファンに(?:支持|好評)|多くの(?:ユーザー|人|ファン)から(?:支持|高評価|評価)|世間から(?:高く)?評価|最高傑作(?:と評価)?|必見の一作|他の作品より優|必ず興奮|絶対にハマ|ランキング上位|人気急上昇|話題沸騰|話題になって(?:いる|います)?|売れ筋|(?:として|で)知られて(?:いる|います)?|と称される)/u;
 
 /**
  * Hard purchase-urgency / empty spotlight frames without plan grounding.
- * Do NOT treat bare おすすめ / ファン / 楽しめる / 魅力 as hard promo — those may be editorial.
  */
 const HARD_PROMO_FRAME_RE =
   /(?:情熱的(?:な|に)|甘美な|見どころとなって(?:いる|います)?|見どころです|見どころの一つ(?:です)?|見どころのひとつ(?:です)?|目を離せませ(?:ん)?|見逃せませ(?:ん)?|格別の|必見の|買うべき|今すぐ|お届けします)/u;
 
 /**
- * Soft editorial frames — OK when sentence already realizes planned facts /
- * quantity / theme grounding (editorial interpretation). Unsupported only as empty closers.
+ * Recommendation / viewing-experience / evaluative predicates.
+ * A hit is allowed only when it is inside a quoted plan span, or the sentence
+ * attributes maker copy (公式では / と紹介され) and the wording is in the plan.
+ * Bare 魅力 inside an attested source phrase such as 「が魅力」 is not this pattern.
+ */
+export const UNATTRIBUTED_VIEWING_EVAL_RE =
+  /(?:おすすめ|オススメ|味わ[えうい]|楽し[めむ]|体験でき|印象的|魅了|見逃せ|たまらな|ぴったり|臨場感|存分に|惹きつ|存在感|大きな魅力|魅力的|魅力が詰ま|堪能|見どころ|必見|革命的|濃密|圧巻|刺激的|リアルな|禁断|快楽劇|深い)/u;
+
+/**
+ * Soft frames kept for empty-closer stripping. Viewing/recommendation hits are
+ * decided by UNATTRIBUTED_VIEWING_EVAL_RE, including on fact-bearing sentences.
  */
 const SOFT_EDITORIAL_FRAME_RE =
   /(?:存分に|楽しめます|楽しめる(?:内容)?(?:となっています)?|味わえます|堪能でき(?:る|ます)(?:内容)?|余すところなく|魅力的な|魅力のひとつ(?:です)?|魅力の一つ(?:です)?|魅力が詰ま(?:って(?:いる|います)?)?|充実した内容|ボリューム満点|ボリュームたっぷり|大ボリューム)/u;
+
+function viewingHits(sentence: string): string[] {
+  return sentence.match(new RegExp(UNATTRIBUTED_VIEWING_EVAL_RE.source, "gu")) ?? [];
+}
+
+function hitQuotedFromPlan(
+  sentence: string,
+  hit: string,
+  planFacts: readonly string[],
+): boolean {
+  return planFacts.some((raw) => {
+    const fact = raw.trim();
+    if (!fact.includes(hit) || fact.length < 8) return false;
+    const i = fact.indexOf(hit);
+    const slice = fact.slice(Math.max(0, i - 4), Math.min(fact.length, i + hit.length + 4));
+    return slice.length >= hit.length + 2 && sentence.includes(slice);
+  });
+}
+
+/**
+ * True when the sentence adds an evaluation, recommendation, or viewing claim
+ * that is not a quoted plan span and not source-attributed maker copy.
+ */
+export function hasUnattributedViewingEvaluation(
+  sentence: string,
+  planFacts: readonly string[],
+): boolean {
+  const hits = viewingHits(sentence);
+  if (hits.length === 0) return false;
+  const attributed = /公式では|公式紹介|と紹介され/.test(sentence);
+  return hits.some((hit) => {
+    const inPlan = planFacts.some((f) => f.includes(hit));
+    if (!inPlan) return true;
+    if (hitQuotedFromPlan(sentence, hit, planFacts)) return false;
+    if (attributed) return false;
+    return true;
+  });
+}
 
 function realizesSubstantialPlanFact(
   sentence: string,
@@ -160,16 +204,16 @@ export function hasExternalFactualClaimResidue(
 
 /**
  * True when sentence adds unsupported surplus:
+ * - unattributed evaluation / recommendation / viewing-experience claims, OR
  * - external factual claims without plan Evidence, OR
  * - hard promo frames without attestation, OR
- * - soft editorial frames used as empty closers (no plan grounding)
- *
- * Soft editorial interpretation on fact-bearing / volume-grounded sentences is allowed.
+ * - soft frames used as empty closers (no plan grounding)
  */
 export function hasUnsupportedEvaluativeResidue(
   sentence: string,
   planFacts: readonly string[],
 ): boolean {
+  if (hasUnattributedViewingEvaluation(sentence, planFacts)) return true;
   if (hasExternalFactualClaimResidue(sentence, planFacts)) return true;
 
   const planBlob = planFacts.join("");

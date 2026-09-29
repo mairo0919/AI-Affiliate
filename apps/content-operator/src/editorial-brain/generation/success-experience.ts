@@ -171,7 +171,7 @@ export const R77_SUCCESS_LESSONS: SuccessLessonPayload[] = [
     qualityDimensions: ["EDITORIAL_INTERPRETATION", "READER_ORIENTATION", "ENDING"],
     applicableWhen: ["quantity_evidence", "best_compilation"],
     positivePattern:
-      "After concrete Evidence is developed, a short grounded editorial wrap (who it suits / how to read the volume) is valuable — without inventing external reputation claims.",
+      "After concrete Evidence is developed, stop. A further sentence may restate planned volume or situation. Do not add a recommendation, a viewing claim, or who-it-suits copy.",
     rationale:
       "Reader orientation worked when it followed developed Evidence rather than replacing it.",
     humanValidated: true,
@@ -187,7 +187,7 @@ export const POST20_MIXED_LESSONS: SuccessLessonPayload[] = [
     qualityDimensions: ["EDITORIAL_INTERPRETATION", "READER_ORIENTATION", "ENDING"],
     applicableWhen: ["best_compilation", "quantity_evidence"],
     positivePattern:
-      "Evidence-grounded editorial interpretation and reader orientation (向き先) are kept: they improve product understanding without becoming external factual claims.",
+      "Concrete explanation of planned situation, people, project, format, and volume is kept. Do not add おすすめ, 楽しめる, 味わえる, or a claim of having watched the work.",
     rationale: "post 20 human review treated claim-boundary-safe editorial closes as a positive.",
     humanValidated: true,
     experienceKey: "post20.human_positive.editorial_orientation",
