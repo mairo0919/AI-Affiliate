@@ -2,7 +2,14 @@
  * Daily candidate selection — CORRECTED against newness-only bias.
  * Mix bucket first (when provided), then evidence/score within bucket.
  * Older titles are never excluded solely for age.
+ * Blog article order can place FANZA demand above that mix when observations exist.
  */
+
+import {
+  compareDemandPriority,
+  demandPriorityReason,
+  demandTier,
+} from "../daily-ops/demand-signal.js";
 
 export interface DailyCandidateScore {
   researchItemId: string;
@@ -23,6 +30,14 @@ export interface DailyCandidateScore {
   publishedAt?: string | null;
   /** Precomputed age bucket when available */
   releaseAgeBucket?: "RECENT" | "MID" | "OLDER" | "UNKNOWN";
+  /** Latest FANZA_RECOMMENDED_PRODUCT rank, 1–10. */
+  recommendedRank?: number | null;
+  /** Demand keywords that matched this work's official evidence. */
+  matchedDemandKeywords?: string[];
+  /** Lowest matched FANZA_INTERNAL_SEARCH rank. Ordinal, not volume. */
+  bestInternalSearchRank?: number | null;
+  /** Informative only. NO_NATURAL_QUERY does not remove the candidate. */
+  seoQueryStatus?: "VALID" | "NO_NATURAL_QUERY" | null;
 }
 
 export interface DailySelectionConfig {
@@ -46,6 +61,19 @@ export interface DailySelectionConfig {
    * LLM never invents ranks.
    */
   sortMode?: "default" | "popularity" | "performer";
+  /**
+   * Blog path only. When the pool has demand observations, recommended rank
+   * then evidence-matched search rank order the full eligible pool.
+   * Evidence thresholds still apply. X leaves this unset.
+   */
+  applyDemandPriority?: boolean;
+}
+
+export interface ArticleCandidateOrderRow {
+  candidate: DailyCandidateScore;
+  priorityReason: string;
+  evidenceEligible: boolean;
+  generationOrder: number | null;
 }
 
 export interface DailySelectionResult {
@@ -118,17 +146,31 @@ function sortPerformerFirst(
   return out;
 }
 
-export function selectDailyProductCandidate(
+function baseComparator(config: DailySelectionConfig): (a: DailyCandidateScore, b: DailyCandidateScore) => number {
+  if (config.sortMode === "popularity") return sortByPopularity;
+  return sortWithinBucket;
+}
+
+function inPreferredBucket(candidate: DailyCandidateScore, bucket: DailySelectionConfig["preferAgeBucket"]): boolean {
+  if (!bucket) return false;
+  return (candidate.releaseAgeBucket ?? "UNKNOWN") === bucket;
+}
+
+/**
+ * Full article candidate order. Not truncated to a daily count.
+ * Callers consume the front up to generation capacity.
+ */
+export function explainArticleCandidateOrder(
   pool: DailyCandidateScore[],
   config: DailySelectionConfig,
-): DailySelectionResult {
+): { rows: ArticleCandidateOrderRow[]; bucketUsed: string | null; fellBackFromBucket: boolean } {
   const base = pool.filter((c) => c.totalScore >= config.minTotalScore);
   let bucketUsed: string | null = null;
   let fellBackFromBucket = false;
   let working = base;
 
   if (config.preferAgeBucket) {
-    const matched = base.filter((c) => (c.releaseAgeBucket ?? "UNKNOWN") === config.preferAgeBucket);
+    const matched = base.filter((c) => inPreferredBucket(c, config.preferAgeBucket));
     if (matched.length > 0) {
       working = matched;
       bucketUsed = config.preferAgeBucket;
@@ -138,12 +180,54 @@ export function selectDailyProductCandidate(
     }
   }
 
-  const ranked =
-    config.sortMode === "popularity"
-      ? working.slice().sort(sortByPopularity)
-      : config.sortMode === "performer"
-        ? sortPerformerFirst(working, config.recentActressKeys)
-        : working.slice().sort(sortWithinBucket);
+  const demandActive =
+    Boolean(config.applyDemandPriority) && base.some((candidate) => demandTier(candidate) < 3);
+  let ranked: DailyCandidateScore[];
+  if (demandActive) {
+    bucketUsed = bucketUsed ? `demand_priority+${bucketUsed}` : "demand_priority";
+    const compareBase = baseComparator(config);
+    ranked = base.slice().sort((a, b) => {
+      const demand = compareDemandPriority(a, b);
+      if (demand !== 0) return demand;
+      if (config.preferAgeBucket) {
+        const aIn = inPreferredBucket(a, config.preferAgeBucket);
+        const bIn = inPreferredBucket(b, config.preferAgeBucket);
+        if (aIn !== bIn) return aIn ? -1 : 1;
+      }
+      if (config.sortMode === "performer") return sortWithinBucket(a, b);
+      return compareBase(a, b);
+    });
+  } else if (config.sortMode === "popularity") {
+    ranked = working.slice().sort(sortByPopularity);
+  } else if (config.sortMode === "performer") {
+    ranked = sortPerformerFirst(working, config.recentActressKeys);
+  } else {
+    ranked = working.slice().sort(sortWithinBucket);
+  }
+
+  let generationOrder = 0;
+  const rows = ranked.map((candidate) => {
+    const evidenceEligible =
+      candidate.sampleImageCount >= config.minSampleImages &&
+      candidate.pageEvidenceRichness >= config.minEvidenceRichness;
+    return {
+      candidate,
+      priorityReason: config.applyDemandPriority ? demandPriorityReason(candidate) : "NORMAL",
+      evidenceEligible,
+      generationOrder: evidenceEligible ? ++generationOrder : null,
+    };
+  });
+  return { rows, bucketUsed, fellBackFromBucket };
+}
+
+export function selectDailyProductCandidate(
+  pool: DailyCandidateScore[],
+  config: DailySelectionConfig,
+): DailySelectionResult {
+  const explained = explainArticleCandidateOrder(pool, config);
+  const { bucketUsed, fellBackFromBucket } = explained;
+  const ranked = explained.rows.map((row) => row.candidate);
+  const reasonById = new Map(explained.rows.map((row) => [row.candidate.canonicalId, row.priorityReason]));
 
   let skippedDiversity = 0;
   let skippedEvidence = 0;
@@ -166,7 +250,7 @@ export function selectDailyProductCandidate(
     }
     return {
       selected: c,
-      reason: `bucket=${bucketUsed};core_rank;score=${c.totalScore};evidence=${c.pageEvidenceRichness}`,
+      reason: `bucket=${bucketUsed};priority=${reasonById.get(c.canonicalId) ?? "NORMAL"};core_rank;score=${c.totalScore};evidence=${c.pageEvidenceRichness}`,
       considered: ranked.length,
       skippedDiversity,
       skippedEvidence,
@@ -181,7 +265,7 @@ export function selectDailyProductCandidate(
     }
     return {
       selected: c,
-      reason: `fallback_without_diversity;bucket=${bucketUsed};score=${c.totalScore}`,
+      reason: `fallback_without_diversity;bucket=${bucketUsed};priority=${reasonById.get(c.canonicalId) ?? "NORMAL"};score=${c.totalScore}`,
       considered: ranked.length,
       skippedDiversity,
       skippedEvidence,

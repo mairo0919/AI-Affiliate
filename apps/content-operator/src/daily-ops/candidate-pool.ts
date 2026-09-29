@@ -7,6 +7,14 @@
 import type { DatabaseClient } from "@ai-affiliate/database";
 import type { ChannelCandidate } from "./channel-selection.js";
 import { classifyReleaseAge, type ReleaseAgeThresholds } from "./release-age.js";
+import {
+  buildWorkEvidenceSurface,
+  priorityFieldsForWork,
+  type DemandObservationDraft,
+  type WorkEvidenceSurface,
+} from "./demand-signal.js";
+import { loadLatestDemandSnapshot } from "./demand-store.js";
+import { readPageEvidenceFromDocMetadata } from "../stock/ensure-official-enrichment.js";
 
 function asRecord(v: unknown): Record<string, unknown> {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
@@ -158,6 +166,101 @@ export async function loadWordPressPublishedCandidates(
   return out;
 }
 
+function tagNames(
+  tags: Array<{ researchTag: { type: string; name: string } }>,
+  type: string,
+): string[] {
+  return tags
+    .filter((tag) => tag.researchTag.type.toLowerCase() === type.toLowerCase())
+    .map((tag) => tag.researchTag.name);
+}
+
+function surfaceFromResearchItem(item: {
+  externalId: string;
+  title: string;
+  description: string | null;
+  tags: Array<{ researchTag: { type: string; name: string } }>;
+}): WorkEvidenceSurface {
+  return buildWorkEvidenceSurface({
+    contentId: item.externalId,
+    titles: [item.title],
+    descriptions: item.description ? [item.description] : [],
+    performers: tagNames(item.tags, "actress"),
+    genres: tagNames(item.tags, "genre"),
+    series: tagNames(item.tags, "series"),
+    campaigns: tagNames(item.tags, "campaign"),
+  });
+}
+
+function mergePageEvidence(
+  surface: WorkEvidenceSurface,
+  metadata: unknown,
+  documentTitle: string | null,
+): WorkEvidenceSurface {
+  const page = readPageEvidenceFromDocMetadata(metadata);
+  if (!page) return surface;
+  const actors = Array.isArray(page.actors) ? page.actors.filter((name) => typeof name === "string") : [];
+  const genres = (page.catalog?.genres ?? []).map((genre) => genre.value).filter(Boolean);
+  const description = page.description?.text?.trim() || "";
+  return buildWorkEvidenceSurface({
+    contentId: surface.contentId,
+    titles: [...surface.titles, documentTitle ?? "", page.productName ?? ""],
+    descriptions: [...surface.descriptions, description],
+    performers: [...surface.performers, ...actors],
+    genres: [...surface.genres, ...genres.filter((genre): genre is string => Boolean(genre))],
+    series: [...surface.series, page.catalog?.series?.value ?? ""],
+    campaigns: surface.campaigns,
+    features: surface.features,
+  });
+}
+
+async function attachDemandPriority(
+  prisma: DatabaseClient["prisma"],
+  pool: ChannelCandidate[],
+  surfaces: Map<string, WorkEvidenceSurface>,
+): Promise<ChannelCandidate[]> {
+  if (pool.length === 0) return pool;
+  const cids = [...new Set(pool.map((candidate) => candidate.canonicalId.trim()).filter(Boolean))];
+  const missing = cids.filter((cid) => !surfaces.has(cid.toLowerCase()));
+  if (missing.length > 0) {
+    const items = await prisma.researchItem.findMany({
+      where: { externalId: { in: missing } },
+      include: { tags: { include: { researchTag: true } } },
+    });
+    for (const item of items) {
+      surfaces.set(item.externalId.trim().toLowerCase(), surfaceFromResearchItem(item));
+    }
+  }
+  const docs = await prisma.sourceDocument.findMany({
+    where: { externalId: { in: cids } },
+    orderBy: { retrievedAt: "desc" },
+    select: { externalId: true, metadata: true, title: true },
+    take: Math.min(cids.length * 4, 800),
+  });
+  const seenDocs = new Set<string>();
+  for (const doc of docs) {
+    const cid = doc.externalId?.trim().toLowerCase();
+    if (!cid || seenDocs.has(cid)) continue;
+    seenDocs.add(cid);
+    const current = surfaces.get(cid);
+    if (!current) continue;
+    surfaces.set(cid, mergePageEvidence(current, doc.metadata, doc.title));
+  }
+  const snapshot: DemandObservationDraft[] = await loadLatestDemandSnapshot(prisma);
+  if (snapshot.length === 0) return pool;
+  return pool.map((candidate) => {
+    const cid = candidate.canonicalId.trim().toLowerCase();
+    const surface = surfaces.get(cid) ?? buildWorkEvidenceSurface({ contentId: candidate.canonicalId, titles: [candidate.title] });
+    const fields = priorityFieldsForWork(candidate.canonicalId, snapshot, surface);
+    return {
+      ...candidate,
+      recommendedRank: fields.recommendedRank,
+      matchedDemandKeywords: fields.matchedDemandKeywords,
+      bestInternalSearchRank: fields.bestInternalSearchRank,
+    };
+  });
+}
+
 function mergeCandidatePools(
   primary: ChannelCandidate[],
   extra: ChannelCandidate[],
@@ -258,8 +361,18 @@ export async function loadDailyCandidatePool(
       };
     });
 
+    const surfaces = new Map<string, WorkEvidenceSurface>();
+    for (const analysis of analyses) {
+      const item = analysis.researchItem;
+      surfaces.set(item.externalId.trim().toLowerCase(), surfaceFromResearchItem(item));
+    }
+    const pool = await attachDemandPriority(
+      prisma,
+      mergeCandidatePools(analysisPool, wpPublished, Math.max(limit, wpPublished.length + 20)),
+      surfaces,
+    );
     return {
-      pool: mergeCandidatePools(analysisPool, wpPublished, Math.max(limit, wpPublished.length + 20)),
+      pool,
       analysisRunId: latestRun.id,
     };
   }
@@ -303,8 +416,17 @@ export async function loadDailyCandidatePool(
     };
   });
 
+  const surfaces = new Map<string, WorkEvidenceSurface>();
+  for (const item of items) {
+    surfaces.set(item.externalId.trim().toLowerCase(), surfaceFromResearchItem(item));
+  }
+  const pool = await attachDemandPriority(
+    prisma,
+    mergeCandidatePools(researchPool, wpPublished, Math.max(limit, wpPublished.length + 20)),
+    surfaces,
+  );
   return {
-    pool: mergeCandidatePools(researchPool, wpPublished, Math.max(limit, wpPublished.length + 20)),
+    pool,
     analysisRunId: null,
   };
 }

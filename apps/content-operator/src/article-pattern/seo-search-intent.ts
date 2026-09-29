@@ -530,6 +530,38 @@ export function decideSeoSearchIntent(input: SeoIntentEvidence): SeoSearchIntent
   };
 }
 
+function demandTokenNorm(value: string): string {
+  return value.normalize("NFKC").replace(/[\s　・]/g, "").toLowerCase();
+}
+
+/**
+ * Record that an evidence-grounded primary query already matches a demand keyword.
+ * Does not replace primaryQuery. NO_NATURAL_QUERY stays empty.
+ */
+export function noteInternalDemandMatch(
+  intent: SeoSearchIntent,
+  keywords: readonly string[] | null | undefined,
+): SeoSearchIntent {
+  if (!keywords || keywords.length === 0) return intent;
+  if (intent.status !== "VALID" || !intent.primaryQuery.trim()) return intent;
+  const queryNorm = demandTokenNorm(intent.primaryQuery);
+  const queryTokens = new Set(
+    intent.primaryQuery
+      .split(/[\s　]+/)
+      .map((part) => demandTokenNorm(part))
+      .filter(Boolean),
+  );
+  const matched = keywords.some((keyword) => {
+    const norm = demandTokenNorm(keyword);
+    return norm.length > 0 && (norm === queryNorm || queryTokens.has(norm));
+  });
+  if (!matched || intent.queryRationale.includes("FANZA internal demand matchあり")) return intent;
+  return {
+    ...intent,
+    queryRationale: `${intent.queryRationale}FANZA internal demand matchあり。`,
+  };
+}
+
 export function readSeoSearchIntent(
   seo: Record<string, unknown> | null | undefined,
 ): SeoSearchIntent | null {

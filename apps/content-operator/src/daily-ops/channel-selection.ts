@@ -106,6 +106,8 @@ function pickForSlot(
     recentActressKeys: string[];
     recentMakerKeys: string[];
     recentSeriesKeys: string[];
+    /** Blog article order only. X stays on the existing score sort. */
+    applyDemandPriority?: boolean;
   },
 ): DailySelectionResult {
   return selectDailyProductCandidate(pool, {
@@ -118,6 +120,7 @@ function pickForSlot(
     recentSeriesKeys: opts.recentSeriesKeys,
     preferAgeBucket: slotToAgeBucket(slot),
     sortMode: slotToSortMode(slot),
+    applyDemandPriority: opts.applyDemandPriority,
   });
 }
 
@@ -166,6 +169,7 @@ export function planDailyChannels(input: ChannelSelectionInput): ChannelDayPlan 
     recentActressKeys: input.blogRecentActressKeys ?? [],
     recentMakerKeys: input.blogRecentMakerKeys ?? [],
     recentSeriesKeys: input.blogRecentSeriesKeys ?? [],
+    applyDemandPriority: true,
   });
 
   let blogBlocked = false;

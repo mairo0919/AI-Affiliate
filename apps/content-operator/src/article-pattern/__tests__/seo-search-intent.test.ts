@@ -8,6 +8,7 @@ import {
   evaluateSeoIntentReview,
   groundSeoCopy,
   preserveSeoSearchIntentFields,
+  noteInternalDemandMatch,
 } from "../seo-search-intent.js";
 
 describe("SEO search intent on the production article path", () => {
@@ -329,5 +330,39 @@ describe("SEO search intent on the production article path", () => {
     expect(meta.seoTitle).not.toMatch(/240分|4時間|ksbj00447/i);
     expect(meta.metaDescription).not.toMatch(/見どころ|おすすめ|240分|お届けします/);
     expect(meta.title).toBe("上戸まりのギュっと！");
+  });
+
+  it("notes a natural demand match without replacing the evidence query", () => {
+    const base = decideSeoSearchIntent({
+      productTitle: "俺の教え子、セフレに変わる 松本彩花",
+      contentId: "55fays00016",
+      performers: ["松本彩花"],
+      attestedFacts: ["俺の教え子、セフレに変わる"],
+    });
+    const noted = noteInternalDemandMatch(base, ["俺の教え子"]);
+    expect(noted.primaryQuery).toBe(base.primaryQuery);
+    expect(noted.secondaryQueries).toEqual(base.secondaryQueries);
+    expect(noted.status).toBe(base.status);
+    expect(noted.queryRationale).toContain("FANZA internal demand matchあり");
+    const unrelated = noteInternalDemandMatch(base, ["需要専用語"]);
+    expect(unrelated.primaryQuery).toBe(base.primaryQuery);
+    expect(unrelated.queryRationale).toBe(base.queryRationale);
+    expect(unrelated.queryRationale).not.toContain("需要専用語");
+  });
+
+  it("leaves NO_NATURAL_QUERY empty when a demand keyword is present", () => {
+    const empty = noteInternalDemandMatch(
+      {
+        status: "NO_NATURAL_QUERY",
+        primaryQuery: "",
+        secondaryQueries: [],
+        searchIntent: "",
+        queryRationale: "自然な検索クエリがない。",
+      },
+      ["需要専用語"],
+    );
+    expect(empty.primaryQuery).toBe("");
+    expect(empty.status).toBe("NO_NATURAL_QUERY");
+    expect(empty.queryRationale).not.toContain("FANZA internal demand matchあり");
   });
 });

@@ -533,6 +533,28 @@ model ContentCandidate {
   @@index([status])
 }
 
+/// Append-only FANZA demand observations for article candidate priority.
+/// Not a sales ranking, not search volume, and not an article fact source.
+model DemandObservation {
+  id           String   @id @default(cuid())
+  /// FANZA_RECOMMENDED_PRODUCT | FANZA_INTERNAL_SEARCH
+  source       String
+  /// video
+  scope        String   @default("video")
+  contentId    String?
+  keyword      String?
+  rank         Int
+  /// PERFORMER | GENRE | THEME | OTHER
+  semanticType String?
+  provenance   String
+  observedAt   DateTime
+  createdAt    DateTime @default(now())
+
+  @@index([source, observedAt])
+  @@index([contentId, observedAt])
+  @@index([keyword, observedAt])
+}
+
 enum ContentGenerationRunStatus {
   PENDING
   RUNNING

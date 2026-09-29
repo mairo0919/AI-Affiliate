@@ -145,6 +145,8 @@ export async function runStockGenerationBatch(deps: {
       ? Math.max(0, Math.floor(deps.forceBatch))
       : runtime.generationBatch;
   const toGenerate = Math.min(requested, remainingDaily);
+  // toGenerate is this tick's generation capacity. Demand order covers the
+  // whole pool; later ticks consume the rest. X slots stay separate.
 
   if (toGenerate <= 0) {
     return {
@@ -314,6 +316,7 @@ export async function runStockGenerationBatch(deps: {
           ctaUrl,
           route: "STOCK_GENERATION",
           objective: "stock_blog_option_b",
+          demandMatchKeywords: selected.matchedDemandKeywords,
           autoApprove: true,
           approveActor: "stock-auto-review",
           auxiliarySafetyOk: ({ title, structuredContent }) =>

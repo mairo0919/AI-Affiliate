@@ -126,6 +126,7 @@ import {
   decideSeoSearchIntent,
   evaluateSeoIntentReview,
   groundSeoCopy,
+  noteInternalDemandMatch,
   preserveSeoSearchIntentFields,
   readSeoSearchIntent,
 } from "../article-pattern/seo-search-intent.js";
@@ -171,6 +172,11 @@ export interface GenerateBloggerInput {
    * @deprecated R117 — ignored. Legacy Brain observe/repair removed from production route.
    */
   brainGuidedRepair?: boolean;
+  /**
+   * Evidence-matched FANZA internal-search keywords for the selected work.
+   * Provenance on queryRationale only. Not copied into facts or primaryQuery.
+   */
+  demandMatchKeywords?: string[];
 }
 
 export interface GenerateXInput {
@@ -758,17 +764,20 @@ export class ContentGenerationService {
       .filter(Boolean)
       .slice(0, 8);
     const planBodyFacts = articlePlanBase.body.flatMap((b) => b.facts).slice(0, 20);
-    const seoSearchIntent = decideSeoSearchIntent({
-      productTitle: input.productTitle,
-      contentId: input.productCanonicalId ?? pageEvidenceMeta?.contentId ?? null,
-      performers,
-      maker: pageEvidenceMeta?.catalog?.maker?.value ?? null,
-      series: pageEvidenceMeta?.catalog?.series?.value ?? null,
-      genres: (pageEvidenceMeta?.catalog?.genres ?? [])
-        .map((genre) => genre.value)
-        .filter((value): value is string => Boolean(value?.trim())),
-      attestedFacts: evidenceSurfaces,
-    });
+    const seoSearchIntent = noteInternalDemandMatch(
+      decideSeoSearchIntent({
+        productTitle: input.productTitle,
+        contentId: input.productCanonicalId ?? pageEvidenceMeta?.contentId ?? null,
+        performers,
+        maker: pageEvidenceMeta?.catalog?.maker?.value ?? null,
+        series: pageEvidenceMeta?.catalog?.series?.value ?? null,
+        genres: (pageEvidenceMeta?.catalog?.genres ?? [])
+          .map((genre) => genre.value)
+          .filter((value): value is string => Boolean(value?.trim())),
+        attestedFacts: evidenceSurfaces,
+      }),
+      input.demandMatchKeywords,
+    );
     let editorialDecision: ArticleEditorialDecision =
       buildDeterministicEditorialDecisionFallback({
         productTitle: input.productTitle,

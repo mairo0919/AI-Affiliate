@@ -367,6 +367,7 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
           ctaUrl,
           route: "DAILY_OPS",
           objective: "daily_blog_option_b",
+          demandMatchKeywords: selected.matchedDemandKeywords,
           autoApprove: false,
           approveActor: "daily-ops-auto-review",
         });

@@ -49,6 +49,8 @@ export type CanonicalPipelineInput = {
     title: string;
     structuredContent: Record<string, unknown>;
   }) => { ok: true } | { ok: false; reason: string };
+  /** Evidence-matched demand keywords. Provenance only; not article facts. */
+  demandMatchKeywords?: string[];
 };
 
 export type CanonicalPipelineResult =
@@ -215,6 +217,7 @@ export async function runCanonicalArticlePipeline(
     ctaUrl: input.ctaUrl,
     productCanonicalId: input.productCanonicalId,
     claimIds: boot.claimIds,
+    demandMatchKeywords: input.demandMatchKeywords,
   });
 
   const sc = (generated.version.structuredContent ?? {}) as Record<string, unknown>;
