@@ -48,6 +48,7 @@ import {
   type LocalPageCollectResult,
 } from "../stock/local-page-collector.js";
 import { probeEnabledAdultProviders } from "../providers/adult-provider-registry.js";
+import { runScheduledFanzaDemandCollection } from "../daily-ops/demand-collector.js";
 
 export const DEFAULT_DUE_SCHEDULE_LIMIT = 20;
 export const DEFAULT_DUE_RETRY_LIMIT = 20;
@@ -503,6 +504,29 @@ export class SchedulerPipeline {
     } catch (error) {
       this.logger.warn(`analysis phase failed: ${String(error)}`);
       analysis = { skipped: true, skipReason: `analysis error: ${String(error)}` };
+    }
+
+    try {
+      const demand = await runScheduledFanzaDemandCollection({
+        prisma: this.database.prisma,
+        config: this.config,
+        logger: this.logger,
+        now: this.now(),
+      });
+      const counts = Object.entries(demand.inserted)
+        .map(([source, count]) => `${source}=${count}`)
+        .join(",");
+      this.logger.info(
+        `demand collection skipped=${demand.skipped} reason=${demand.reason ?? "-"} inserted=${counts || "-"} errors=${demand.errors.length}`,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `demand collection failed: ${message
+          .replace(/api_id=[^&\s]+/gi, "api_id=[redacted]")
+          .replace(/affiliate_id=[^&\s]+/gi, "affiliate_id=[redacted]")
+          .slice(0, 300)}`,
+      );
     }
 
     try {

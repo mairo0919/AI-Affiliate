@@ -9,6 +9,9 @@ import {
 import { planDailyChannels } from "../channel-selection.js";
 import { noteInternalDemandMatch } from "../../article-pattern/seo-search-intent.js";
 import {
+  FANZA_API_NEW,
+  FANZA_API_POPULAR,
+  FANZA_API_PERFORMER_POPULAR,
   FANZA_INTERNAL_SEARCH,
   FANZA_RECOMMENDED_PRODUCT,
   buildWorkEvidenceSurface,
@@ -39,8 +42,11 @@ function work(
     title: partial.title ?? partial.canonicalId,
     releaseAgeBucket: partial.releaseAgeBucket ?? "MID",
     recommendedRank: partial.recommendedRank,
+    popularRank: partial.popularRank,
     matchedDemandKeywords: partial.matchedDemandKeywords,
     bestInternalSearchRank: partial.bestInternalSearchRank,
+    segmentSignals: partial.segmentSignals,
+    bestSegmentRank: partial.bestSegmentRank,
     seoQueryStatus: partial.seoQueryStatus,
   };
 }
@@ -272,5 +278,128 @@ describe("FANZA demand candidate priority", () => {
     expect(writer.userPrompt).toContain("FANZA internal demand matchあり");
     expect(writer.userPrompt).not.toContain("需要専用語");
     expect(writer.userPrompt).toContain("not a fact source");
+  });
+
+  it("ranks API popular above internal search and keeps every matched signal in the reason", () => {
+    const observedAt = "2026-09-30T00:00:00.000Z";
+    const parsed = parseDemandIngest([
+      {
+        source: FANZA_API_POPULAR,
+        scope: "video",
+        contentId: "pop-1",
+        rank: 4,
+        observedAt,
+        provenance: "DMM ItemList sort=rank",
+      },
+      {
+        source: FANZA_API_NEW,
+        scope: "video",
+        contentId: "new-only",
+        rank: 1,
+        observedAt,
+        provenance: "DMM ItemList sort=date",
+      },
+      {
+        source: FANZA_API_PERFORMER_POPULAR,
+        scope: "video",
+        contentId: "seg-1",
+        keyword: "松本彩花",
+        semanticType: "PERFORMER",
+        rank: 2,
+        observedAt,
+        provenance: "DMM ItemList article=actress",
+      },
+      {
+        source: FANZA_INTERNAL_SEARCH,
+        scope: "video",
+        keyword: "松本彩花",
+        semanticType: "PERFORMER",
+        rank: 6,
+        observedAt,
+        provenance: "dashboard",
+      },
+    ]);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const surface = buildWorkEvidenceSurface({
+      contentId: "pop-1",
+      performers: ["松本彩花"],
+      titles: ["松本彩花の作品"],
+    });
+    const fields = priorityFieldsForWork("pop-1", parsed.rows, surface);
+    expect(fields.popularRank).toBe(4);
+    expect(fields.bestInternalSearchRank).toBe(6);
+    expect(fields.recommendedRank).toBeNull();
+    const newOnly = priorityFieldsForWork(
+      "new-only",
+      parsed.rows,
+      buildWorkEvidenceSurface({ contentId: "new-only", titles: ["新しい作品"] }),
+    );
+    expect(newOnly.popularRank).toBeNull();
+    expect(newOnly.bestSegmentRank).toBeNull();
+
+    const pool = [
+      work({ canonicalId: "pop-1", totalScore: 30, popularRank: 4, matchedDemandKeywords: ["松本彩花"], bestInternalSearchRank: 6 }),
+      work({ canonicalId: "search-only", totalScore: 99, matchedDemandKeywords: ["松本彩花"], bestInternalSearchRank: 1 }),
+      work({ canonicalId: "seg-1", totalScore: 90, segmentSignals: [{ kind: "performer", name: "松本彩花", rank: 2 }], bestSegmentRank: 2 }),
+      work({ canonicalId: "new-only", totalScore: 100 }),
+    ];
+    const order = explainArticleCandidateOrder(pool, demandConfig);
+    expect(order.rows.map((row) => row.candidate.canonicalId)).toEqual([
+      "pop-1",
+      "search-only",
+      "seg-1",
+      "new-only",
+    ]);
+    expect(order.rows[0]?.priorityReason).toContain("FANZA_API_POPULAR rank=4");
+    expect(order.rows[0]?.priorityReason).toContain("FANZA_INTERNAL_SEARCH_MATCH rank=6");
+    expect(order.rows[3]?.priorityReason).toBe("NORMAL");
+  });
+
+  it("drops a popular rank that is absent from the newest snapshot", () => {
+    const parsed = parseDemandIngest([
+      {
+        source: FANZA_API_POPULAR,
+        scope: "video",
+        contentId: "old-pop",
+        rank: 1,
+        observedAt: "2026-09-29T00:00:00.000Z",
+        provenance: "older",
+      },
+      {
+        source: FANZA_API_POPULAR,
+        scope: "video",
+        contentId: "new-pop",
+        rank: 1,
+        observedAt: "2026-09-30T00:00:00.000Z",
+        provenance: "newer",
+      },
+    ]);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const latest = selectLatestDemandSnapshot(parsed.rows);
+    expect(latest.map((row) => row.contentId)).toEqual(["new-pop"]);
+  });
+
+  it("rejects a duplicate rank inside one API snapshot", () => {
+    const parsed = parseDemandIngest([
+      {
+        source: FANZA_API_POPULAR,
+        scope: "video",
+        contentId: "a",
+        rank: 1,
+        observedAt: "2026-09-30T00:00:00.000Z",
+        provenance: "dup",
+      },
+      {
+        source: FANZA_API_POPULAR,
+        scope: "video",
+        contentId: "b",
+        rank: 1,
+        observedAt: "2026-09-30T00:00:00.000Z",
+        provenance: "dup",
+      },
+    ]);
+    expect(parsed.ok).toBe(false);
   });
 });

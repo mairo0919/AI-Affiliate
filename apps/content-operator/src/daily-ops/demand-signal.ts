@@ -5,12 +5,48 @@
 
 export const FANZA_RECOMMENDED_PRODUCT = "FANZA_RECOMMENDED_PRODUCT";
 export const FANZA_INTERNAL_SEARCH = "FANZA_INTERNAL_SEARCH";
+/** ItemList sort=rank. Not the affiliate-admin recommended TOP10. */
+export const FANZA_API_POPULAR = "FANZA_API_POPULAR";
+export const FANZA_API_NEW = "FANZA_API_NEW";
+export const FANZA_API_REVIEW = "FANZA_API_REVIEW";
+export const FANZA_API_PERFORMER_POPULAR = "FANZA_API_PERFORMER_POPULAR";
+export const FANZA_API_GENRE_POPULAR = "FANZA_API_GENRE_POPULAR";
+export const FANZA_API_SERIES_POPULAR = "FANZA_API_SERIES_POPULAR";
+export const FANZA_API_MAKER_POPULAR = "FANZA_API_MAKER_POPULAR";
+
+export const DEMAND_PRODUCT_LIST_SOURCES = [
+  FANZA_RECOMMENDED_PRODUCT,
+  FANZA_API_POPULAR,
+  FANZA_API_NEW,
+  FANZA_API_REVIEW,
+] as const;
+
+export const DEMAND_SEGMENT_SOURCES = [
+  FANZA_API_PERFORMER_POPULAR,
+  FANZA_API_GENRE_POPULAR,
+  FANZA_API_SERIES_POPULAR,
+  FANZA_API_MAKER_POPULAR,
+] as const;
+
+export const DEMAND_SOURCES = [
+  FANZA_INTERNAL_SEARCH,
+  ...DEMAND_PRODUCT_LIST_SOURCES,
+  ...DEMAND_SEGMENT_SOURCES,
+] as const;
+
+export type DemandSource = (typeof DEMAND_SOURCES)[number];
 
 export const DEMAND_SEMANTIC_TYPES = ["PERFORMER", "GENRE", "THEME", "OTHER"] as const;
 export type DemandSemanticType = (typeof DEMAND_SEMANTIC_TYPES)[number];
 
+export type SegmentDemandSignal = {
+  kind: "performer" | "genre" | "series" | "maker";
+  name: string;
+  rank: number;
+};
+
 export type DemandObservationDraft = {
-  source: typeof FANZA_RECOMMENDED_PRODUCT | typeof FANZA_INTERNAL_SEARCH;
+  source: DemandSource;
   scope: "video";
   contentId: string | null;
   keyword: string | null;
@@ -33,8 +69,12 @@ export type WorkEvidenceSurface = {
 
 export type DemandPriorityFields = {
   recommendedRank?: number | null;
+  /** Latest FANZA_API_POPULAR rank. Not recommended TOP10 and not NEW/REVIEW. */
+  popularRank?: number | null;
   matchedDemandKeywords?: string[];
   bestInternalSearchRank?: number | null;
+  segmentSignals?: SegmentDemandSignal[];
+  bestSegmentRank?: number | null;
   /** Informative only. Selection does not drop NO_NATURAL_QUERY. */
   seoQueryStatus?: "VALID" | "NO_NATURAL_QUERY" | null;
 };
@@ -228,10 +268,90 @@ export function parseDemandIngest(input: unknown):
       });
       return;
     }
-    errors.push(`${where}: source must be FANZA_RECOMMENDED_PRODUCT or FANZA_INTERNAL_SEARCH`);
+    if (isProductListSource(source) && source !== FANZA_RECOMMENDED_PRODUCT) {
+      const contentId = readString(row.contentId);
+      if (!contentId) {
+        errors.push(`${where}: contentId is required`);
+        return;
+      }
+      if (rank > 100) {
+        errors.push(`${where}: API list rank must be 1-100`);
+        return;
+      }
+      rows.push({
+        source,
+        scope: "video",
+        contentId,
+        keyword: null,
+        rank,
+        semanticType: null,
+        provenance,
+        observedAt,
+      });
+      return;
+    }
+    if (isSegmentSource(source)) {
+      const contentId = readString(row.contentId);
+      const keyword = readString(row.keyword);
+      if (!contentId) {
+        errors.push(`${where}: contentId is required`);
+        return;
+      }
+      if (!keyword) {
+        errors.push(`${where}: keyword is required`);
+        return;
+      }
+      if (rank > 100) {
+        errors.push(`${where}: segment rank must be 1-100`);
+        return;
+      }
+      rows.push({
+        source,
+        scope: "video",
+        contentId,
+        keyword,
+        rank,
+        semanticType,
+        provenance,
+        observedAt,
+      });
+      return;
+    }
+    errors.push(`${where}: source is not a FANZA demand source`);
   });
   if (errors.length > 0) return { ok: false, errors };
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const key = observationSnapshotKey(row);
+    if (seen.has(key)) {
+      return { ok: false, errors: [`duplicate ${key} in one snapshot`] };
+    }
+    seen.add(key);
+  }
   return { ok: true, rows };
+}
+
+export function isDemandSource(value: string): value is DemandSource {
+  return (DEMAND_SOURCES as readonly string[]).includes(value);
+}
+
+function isProductListSource(value: string): value is (typeof DEMAND_PRODUCT_LIST_SOURCES)[number] {
+  return (DEMAND_PRODUCT_LIST_SOURCES as readonly string[]).includes(value);
+}
+
+function isSegmentSource(value: string): value is (typeof DEMAND_SEGMENT_SOURCES)[number] {
+  return (DEMAND_SEGMENT_SOURCES as readonly string[]).includes(value);
+}
+
+function observationSnapshotKey(row: DemandObservationDraft): string {
+  const at = row.observedAt.toISOString();
+  if (row.source === FANZA_INTERNAL_SEARCH) {
+    return `${at}|${row.source}|${row.scope}|${keywordKey(row.keyword ?? "")}|${row.rank}`;
+  }
+  if (isSegmentSource(row.source)) {
+    return `${at}|${row.source}|${row.scope}|${keywordKey(row.keyword ?? "")}|${row.rank}`;
+  }
+  return `${at}|${row.source}|${row.scope}|${row.rank}`;
 }
 
 function contentKey(contentId: string): string {
@@ -242,23 +362,56 @@ function keywordKey(keyword: string): string {
   return normalizeDemandText(keyword);
 }
 
-/** Latest observation per contentId or keyword. Older rows stay in the input. */
+/**
+ * Latest snapshot per source.
+ * Product lists use the newest observedAt as a whole.
+ * Search keywords and segment lists keep the newest row for that key.
+ * Older rows stay in storage; they are not returned.
+ */
 export function selectLatestDemandSnapshot(rows: DemandObservationDraft[]): DemandObservationDraft[] {
-  const recommended = new Map<string, DemandObservationDraft>();
-  const search = new Map<string, DemandObservationDraft>();
-  const ordered = rows.slice().sort((a, b) => b.observedAt.getTime() - a.observedAt.getTime());
-  for (const row of ordered) {
-    if (row.source === FANZA_RECOMMENDED_PRODUCT && row.contentId) {
-      const key = contentKey(row.contentId);
-      if (!recommended.has(key)) recommended.set(key, row);
+  const grouped = new Map<string, DemandObservationDraft[]>();
+  for (const row of rows) {
+    const list = grouped.get(row.source) ?? [];
+    list.push(row);
+    grouped.set(row.source, list);
+  }
+  const kept: DemandObservationDraft[] = [];
+  for (const [source, group] of grouped) {
+    if (source === FANZA_INTERNAL_SEARCH) {
+      const latest = new Map<string, DemandObservationDraft>();
+      const ordered = group.slice().sort((a, b) => b.observedAt.getTime() - a.observedAt.getTime());
+      for (const row of ordered) {
+        if (!row.keyword) continue;
+        const key = keywordKey(row.keyword);
+        if (key && !latest.has(key)) latest.set(key, row);
+      }
+      kept.push(...latest.values());
       continue;
     }
-    if (row.source === FANZA_INTERNAL_SEARCH && row.keyword) {
-      const key = keywordKey(row.keyword);
-      if (key && !search.has(key)) search.set(key, row);
+    if (isSegmentSource(source)) {
+      const newestByKeyword = new Map<string, number>();
+      for (const row of group) {
+        if (!row.keyword) continue;
+        const key = keywordKey(row.keyword);
+        const at = row.observedAt.getTime();
+        const prev = newestByKeyword.get(key);
+        if (prev == null || at > prev) newestByKeyword.set(key, at);
+      }
+      kept.push(
+        ...group.filter((row) => {
+          if (!row.keyword || !row.contentId) return false;
+          return row.observedAt.getTime() === newestByKeyword.get(keywordKey(row.keyword));
+        }),
+      );
+      continue;
     }
+    if (!isProductListSource(source)) continue;
+    const newest = Math.max(...group.map((row) => row.observedAt.getTime()));
+    kept.push(
+      ...group.filter((row) => row.contentId && row.observedAt.getTime() === newest),
+    );
   }
-  return [...recommended.values(), ...search.values()];
+  return kept;
 }
 
 export function validRecommendedRank(rank: number | null | undefined): number | null {
@@ -276,52 +429,95 @@ export function validMatchedSearchRank(
   return rank;
 }
 
-export function demandTier(fields: DemandPriorityFields): 1 | 2 | 3 {
-  if (validRecommendedRank(fields.recommendedRank) != null) return 1;
-  if (validMatchedSearchRank(fields.bestInternalSearchRank, fields.matchedDemandKeywords) != null) {
-    return 2;
-  }
-  return 3;
+export function validPopularRank(rank: number | null | undefined): number | null {
+  if (typeof rank !== "number" || !Number.isInteger(rank) || rank < 1 || rank > 100) return null;
+  return rank;
 }
 
-function compareSearchTie(a: DemandPriorityFields, b: DemandPriorityFields): number {
-  const left = validMatchedSearchRank(a.bestInternalSearchRank, a.matchedDemandKeywords);
-  const right = validMatchedSearchRank(b.bestInternalSearchRank, b.matchedDemandKeywords);
+export function validSegmentRank(rank: number | null | undefined): number | null {
+  if (typeof rank !== "number" || !Number.isInteger(rank) || rank < 1 || rank > 100) return null;
+  return rank;
+}
+
+export function demandTier(fields: DemandPriorityFields): 1 | 2 | 3 | 4 | 5 {
+  if (validRecommendedRank(fields.recommendedRank) != null) return 1;
+  if (validPopularRank(fields.popularRank) != null) return 2;
+  if (validMatchedSearchRank(fields.bestInternalSearchRank, fields.matchedDemandKeywords) != null) {
+    return 3;
+  }
+  if (validSegmentRank(fields.bestSegmentRank) != null) return 4;
+  return 5;
+}
+
+function compareNullableRank(left: number | null, right: number | null): number {
   if (left == null && right == null) return 0;
   if (left == null) return 1;
   if (right == null) return -1;
   return left - right;
 }
 
-/** Lower recommended rank, then lower matched search rank. 0 means use the existing score sort. */
+function compareSearchTie(a: DemandPriorityFields, b: DemandPriorityFields): number {
+  const left = validMatchedSearchRank(a.bestInternalSearchRank, a.matchedDemandKeywords);
+  const right = validMatchedSearchRank(b.bestInternalSearchRank, b.matchedDemandKeywords);
+  return compareNullableRank(left, right);
+}
+
+function compareSegmentTie(a: DemandPriorityFields, b: DemandPriorityFields): number {
+  return compareNullableRank(validSegmentRank(a.bestSegmentRank), validSegmentRank(b.bestSegmentRank));
+}
+
+/**
+ * Authority: recommended, API popular, evidence-matched internal search, segment popularity.
+ * 0 means use the existing score sort. NEW and REVIEW lists do not reorder candidates.
+ */
 export function compareDemandPriority(a: DemandPriorityFields, b: DemandPriorityFields): number {
   const leftTier = demandTier(a);
   const rightTier = demandTier(b);
   if (leftTier !== rightTier) return leftTier - rightTier;
   if (leftTier === 1) {
-    const leftRank = validRecommendedRank(a.recommendedRank)!;
-    const rightRank = validRecommendedRank(b.recommendedRank)!;
-    if (leftRank !== rightRank) return leftRank - rightRank;
-    return compareSearchTie(a, b);
+    const byRecommended = compareNullableRank(
+      validRecommendedRank(a.recommendedRank),
+      validRecommendedRank(b.recommendedRank),
+    );
+    if (byRecommended !== 0) return byRecommended;
   }
-  if (leftTier === 2) return compareSearchTie(a, b);
+  if (leftTier <= 2) {
+    const byPopular = compareNullableRank(validPopularRank(a.popularRank), validPopularRank(b.popularRank));
+    if (byPopular !== 0) return byPopular;
+  }
+  if (leftTier <= 3) {
+    const bySearch = compareSearchTie(a, b);
+    if (bySearch !== 0) return bySearch;
+  }
+  if (leftTier <= 4) {
+    const bySegment = compareSegmentTie(a, b);
+    if (bySegment !== 0) return bySegment;
+  }
   return 0;
 }
 
+function formatSegmentSignals(signals: SegmentDemandSignal[] | null | undefined): string {
+  const rows = (signals ?? [])
+    .filter((signal) => validSegmentRank(signal.rank) != null && signal.name.trim())
+    .slice()
+    .sort((a, b) => a.rank - b.rank || a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name, "ja"));
+  if (rows.length === 0) return "";
+  return rows.map((signal) => `${signal.kind}:${signal.name} rank=${signal.rank}`).join(", ");
+}
+
 export function demandPriorityReason(fields: DemandPriorityFields): string {
+  const parts: string[] = [];
   const recommended = validRecommendedRank(fields.recommendedRank);
+  const popular = validPopularRank(fields.popularRank);
   const search = validMatchedSearchRank(fields.bestInternalSearchRank, fields.matchedDemandKeywords);
   const keywords = (fields.matchedDemandKeywords ?? []).join(",");
-  if (recommended != null && search != null) {
-    return `FANZA_RECOMMENDED_PRODUCT rank=${recommended}; internal_search_tiebreak rank=${search}; keywords=${keywords}`;
-  }
-  if (recommended != null) {
-    return `FANZA_RECOMMENDED_PRODUCT rank=${recommended}`;
-  }
-  if (search != null) {
-    return `FANZA_INTERNAL_SEARCH_MATCH rank=${search}; keywords=${keywords}`;
-  }
-  return "NORMAL";
+  const segments = formatSegmentSignals(fields.segmentSignals);
+  if (recommended != null) parts.push(`FANZA_RECOMMENDED_PRODUCT rank=${recommended}`);
+  if (popular != null) parts.push(`FANZA_API_POPULAR rank=${popular}`);
+  if (search != null) parts.push(`FANZA_INTERNAL_SEARCH_MATCH rank=${search}; keywords=${keywords}`);
+  if (segments) parts.push(`segment ${segments}`);
+  if (parts.length === 0) return "NORMAL";
+  return parts.join("; ");
 }
 
 export function priorityFieldsForWork(
@@ -330,14 +526,23 @@ export function priorityFieldsForWork(
   surface: WorkEvidenceSurface,
 ): {
   recommendedRank: number | null;
+  popularRank: number | null;
   matchedDemandKeywords: string[];
   bestInternalSearchRank: number | null;
+  segmentSignals: SegmentDemandSignal[];
+  bestSegmentRank: number | null;
 } {
   const latest = selectLatestDemandSnapshot(observations);
   const cid = contentKey(contentId);
   const recommended = latest.find(
     (row) =>
       row.source === FANZA_RECOMMENDED_PRODUCT &&
+      row.contentId != null &&
+      contentKey(row.contentId) === cid,
+  );
+  const popular = latest.find(
+    (row) =>
+      row.source === FANZA_API_POPULAR &&
       row.contentId != null &&
       contentKey(row.contentId) === cid,
   );
@@ -348,9 +553,30 @@ export function priorityFieldsForWork(
     matched.push({ keyword: row.keyword, rank: row.rank });
   }
   matched.sort((a, b) => a.rank - b.rank || a.keyword.localeCompare(b.keyword, "ja"));
+  const segmentSignals: SegmentDemandSignal[] = [];
+  for (const row of latest) {
+    if (!isSegmentSource(row.source) || !row.contentId || !row.keyword) continue;
+    if (contentKey(row.contentId) !== cid) continue;
+    segmentSignals.push({
+      kind: segmentKind(row.source),
+      name: row.keyword,
+      rank: row.rank,
+    });
+  }
+  segmentSignals.sort((a, b) => a.rank - b.rank || a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name, "ja"));
   return {
     recommendedRank: recommended ? recommended.rank : null,
+    popularRank: popular ? popular.rank : null,
     matchedDemandKeywords: matched.map((row) => row.keyword),
     bestInternalSearchRank: matched[0]?.rank ?? null,
+    segmentSignals,
+    bestSegmentRank: segmentSignals[0]?.rank ?? null,
   };
+}
+
+function segmentKind(source: (typeof DEMAND_SEGMENT_SOURCES)[number]): SegmentDemandSignal["kind"] {
+  if (source === FANZA_API_PERFORMER_POPULAR) return "performer";
+  if (source === FANZA_API_GENRE_POPULAR) return "genre";
+  if (source === FANZA_API_SERIES_POPULAR) return "series";
+  return "maker";
 }

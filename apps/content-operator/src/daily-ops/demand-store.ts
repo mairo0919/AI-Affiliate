@@ -4,10 +4,15 @@
 
 import type { DatabaseClient } from "@ai-affiliate/database";
 import {
+  DEMAND_PRODUCT_LIST_SOURCES,
+  DEMAND_SEGMENT_SOURCES,
+  FANZA_INTERNAL_SEARCH,
+  isDemandSource,
   parseDemandIngest,
   selectLatestDemandSnapshot,
   type DemandObservationDraft,
   type DemandSemanticType,
+  type DemandSource,
 } from "./demand-signal.js";
 
 type Prisma = DatabaseClient["prisma"];
@@ -41,24 +46,56 @@ export async function appendDemandObservations(
   return { inserted: result.count };
 }
 
+function toDraft(row: {
+  source: string;
+  contentId: string | null;
+  keyword: string | null;
+  rank: number;
+  semanticType: string | null;
+  provenance: string;
+  observedAt: Date;
+}): DemandObservationDraft | null {
+  if (!isDemandSource(row.source)) return null;
+  return {
+    source: row.source,
+    scope: "video",
+    contentId: row.contentId,
+    keyword: row.keyword,
+    rank: row.rank,
+    semanticType: semanticTypeOf(row.semanticType),
+    provenance: row.provenance,
+    observedAt: row.observedAt,
+  };
+}
+
 export async function loadLatestDemandSnapshot(prisma: Prisma): Promise<DemandObservationDraft[]> {
-  const rows = await prisma.demandObservation.findMany({
-    orderBy: [{ observedAt: "desc" }, { createdAt: "desc" }],
-    take: 800,
-  });
-  return selectLatestDemandSnapshot(
-    rows.map((row) => ({
-      source:
-        row.source === "FANZA_RECOMMENDED_PRODUCT" || row.source === "FANZA_INTERNAL_SEARCH"
-          ? row.source
-          : "FANZA_INTERNAL_SEARCH",
-      scope: "video",
-      contentId: row.contentId,
-      keyword: row.keyword,
-      rank: row.rank,
-      semanticType: semanticTypeOf(row.semanticType),
-      provenance: row.provenance,
-      observedAt: row.observedAt,
-    })),
-  );
+  const collected: DemandObservationDraft[] = [];
+  const listSources: DemandSource[] = [FANZA_INTERNAL_SEARCH, ...DEMAND_PRODUCT_LIST_SOURCES];
+  for (const source of listSources) {
+    const latest = await prisma.demandObservation.findFirst({
+      where: { source },
+      orderBy: [{ observedAt: "desc" }, { createdAt: "desc" }],
+      select: { observedAt: true },
+    });
+    if (!latest) continue;
+    const rows = await prisma.demandObservation.findMany({
+      where: { source, observedAt: latest.observedAt },
+    });
+    for (const row of rows) {
+      const draft = toDraft(row);
+      if (draft) collected.push(draft);
+    }
+  }
+  for (const source of DEMAND_SEGMENT_SOURCES) {
+    const rows = await prisma.demandObservation.findMany({
+      where: { source },
+      orderBy: [{ observedAt: "desc" }, { createdAt: "desc" }],
+      take: 500,
+    });
+    for (const row of rows) {
+      const draft = toDraft(row);
+      if (draft) collected.push(draft);
+    }
+  }
+  return selectLatestDemandSnapshot(collected);
 }

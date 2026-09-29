@@ -255,8 +255,11 @@ async function attachDemandPriority(
     return {
       ...candidate,
       recommendedRank: fields.recommendedRank,
+      popularRank: fields.popularRank,
       matchedDemandKeywords: fields.matchedDemandKeywords,
       bestInternalSearchRank: fields.bestInternalSearchRank,
+      segmentSignals: fields.segmentSignals,
+      bestSegmentRank: fields.bestSegmentRank,
     };
   });
 }

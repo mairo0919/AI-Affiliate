@@ -32,10 +32,15 @@ export interface DailyCandidateScore {
   releaseAgeBucket?: "RECENT" | "MID" | "OLDER" | "UNKNOWN";
   /** Latest FANZA_RECOMMENDED_PRODUCT rank, 1–10. */
   recommendedRank?: number | null;
+  /** Latest FANZA_API_POPULAR rank. Independent from recommended TOP10. */
+  popularRank?: number | null;
   /** Demand keywords that matched this work's official evidence. */
   matchedDemandKeywords?: string[];
   /** Lowest matched FANZA_INTERNAL_SEARCH rank. Ordinal, not volume. */
   bestInternalSearchRank?: number | null;
+  /** Content is on a performer/genre/series/maker popularity list. */
+  segmentSignals?: Array<{ kind: "performer" | "genre" | "series" | "maker"; name: string; rank: number }>;
+  bestSegmentRank?: number | null;
   /** Informative only. NO_NATURAL_QUERY does not remove the candidate. */
   seoQueryStatus?: "VALID" | "NO_NATURAL_QUERY" | null;
 }
@@ -62,8 +67,9 @@ export interface DailySelectionConfig {
    */
   sortMode?: "default" | "popularity" | "performer";
   /**
-   * Blog path only. When the pool has demand observations, recommended rank
-   * then evidence-matched search rank order the full eligible pool.
+   * Blog path only. When the pool has demand observations, recommended rank,
+   * API popular rank, evidence-matched search rank, then segment rank
+   * order the full eligible pool.
    * Evidence thresholds still apply. X leaves this unset.
    */
   applyDemandPriority?: boolean;
@@ -181,7 +187,7 @@ export function explainArticleCandidateOrder(
   }
 
   const demandActive =
-    Boolean(config.applyDemandPriority) && base.some((candidate) => demandTier(candidate) < 3);
+    Boolean(config.applyDemandPriority) && base.some((candidate) => demandTier(candidate) < 5);
   let ranked: DailyCandidateScore[];
   if (demandActive) {
     bucketUsed = bucketUsed ? `demand_priority+${bucketUsed}` : "demand_priority";
