@@ -121,6 +121,14 @@ import {
   validateEditorialDecisionGrounding,
   type ArticleEditorialDecision,
 } from "../article-pattern/article-editorial-decision.js";
+import {
+  buildSeoReviewPrompt,
+  decideSeoSearchIntent,
+  evaluateSeoIntentReview,
+  groundSeoCopy,
+  preserveSeoSearchIntentFields,
+  readSeoSearchIntent,
+} from "../article-pattern/seo-search-intent.js";
 import type { ArticlePatternRepository } from "@ai-affiliate/database";
 import {
   toWritingSkeletonPromptContract,
@@ -750,11 +758,23 @@ export class ContentGenerationService {
       .filter(Boolean)
       .slice(0, 8);
     const planBodyFacts = articlePlanBase.body.flatMap((b) => b.facts).slice(0, 20);
+    const seoSearchIntent = decideSeoSearchIntent({
+      productTitle: input.productTitle,
+      contentId: input.productCanonicalId ?? pageEvidenceMeta?.contentId ?? null,
+      performers,
+      maker: pageEvidenceMeta?.catalog?.maker?.value ?? null,
+      series: pageEvidenceMeta?.catalog?.series?.value ?? null,
+      genres: (pageEvidenceMeta?.catalog?.genres ?? [])
+        .map((genre) => genre.value)
+        .filter((value): value is string => Boolean(value?.trim())),
+      attestedFacts: evidenceSurfaces,
+    });
     let editorialDecision: ArticleEditorialDecision =
       buildDeterministicEditorialDecisionFallback({
         productTitle: input.productTitle,
         evidenceSurfaces,
         performers,
+        seoSearchIntent,
       });
     try {
       const edPrompt = buildEditorialDecisionPlannerPrompt({
@@ -762,6 +782,7 @@ export class ContentGenerationService {
         evidenceSurfaces,
         planBodyFacts,
         performers,
+        seoSearchIntent,
       });
       const edLlm = await this.llm.executeTask({
         taskType: "GENERATION_BLOGGER",
@@ -793,6 +814,7 @@ export class ContentGenerationService {
     const articlePlanWithDecision = {
       ...articlePlanBase,
       editorialDecision,
+      seoSearchIntent,
     };
     const articlePlanExecution = toWriterExecutionContractView(
       buildArticlePlanExecutionContract(articlePlanWithDecision),
@@ -1109,6 +1131,7 @@ export class ContentGenerationService {
         editorialPatternId: selectedEditorialPattern?.patternId ?? null,
         editorialPatternLabel: selectedEditorialPattern?.label ?? null,
         editorialPattern: slimEditorial,
+        seoSearchIntent,
         editorialExecution: {
           source: editorialExecution.source,
           openingStrategy: editorialExecution.openingStrategy,
@@ -1437,7 +1460,24 @@ export class ContentGenerationService {
                 referenceExecution: { ...refExec, observeOnly: true },
               };
             }
-            article = leadlessParsed;
+            const groundedSeo = groundSeoCopy({
+              seoTitle: leadlessParsed.seoTitle,
+              metaDescription: leadlessParsed.metaDescription,
+              articleTitle: leadlessParsed.title,
+              body: leadlessParsed.sections.flatMap((section) => section.paragraphs).join("\n"),
+              allowedText: [
+                input.productTitle,
+                seoSearchIntent.primaryQuery,
+                ...seoSearchIntent.secondaryQueries,
+                ...evidenceSurfaces,
+                ...planBodyFacts,
+              ].join("\n"),
+            });
+            article = {
+              ...leadlessParsed,
+              seoTitle: groundedSeo.seoTitle,
+              metaDescription: groundedSeo.metaDescription,
+            };
             break;
           }
 
@@ -1824,6 +1864,11 @@ export class ContentGenerationService {
             title: article.seoTitle,
             metaDescription: article.metaDescription,
             labels: article.labels,
+            status: seoSearchIntent.status,
+            primaryQuery: seoSearchIntent.primaryQuery,
+            secondaryQueries: seoSearchIntent.secondaryQueries,
+            searchIntent: seoSearchIntent.searchIntent,
+            queryRationale: seoSearchIntent.queryRationale,
           },
         },
         status: "REVIEWING",
@@ -2422,6 +2467,41 @@ export class ContentGenerationService {
         title: version.title,
         body: version.body,
       });
+      const structuredSeo =
+        version.structuredContent &&
+        typeof version.structuredContent === "object" &&
+        !Array.isArray(version.structuredContent)
+          ? ((version.structuredContent as Record<string, unknown>).seo as
+              | Record<string, unknown>
+              | undefined)
+          : undefined;
+      const articleRecord =
+        version.structuredContent &&
+        typeof version.structuredContent === "object" &&
+        !Array.isArray(version.structuredContent)
+          ? ((version.structuredContent as Record<string, unknown>).article as
+              | Record<string, unknown>
+              | undefined)
+          : undefined;
+      const lockedIntent = readSeoSearchIntent(structuredSeo);
+      const seoReview =
+        reviewType === "seo-basic"
+          ? buildSeoReviewPrompt({
+              intent: lockedIntent,
+              title: version.title,
+              body: version.body,
+              seoTitle:
+                (typeof structuredSeo?.title === "string" && structuredSeo.title) ||
+                (typeof articleRecord?.seoTitle === "string" && articleRecord.seoTitle) ||
+                null,
+              metaDescription:
+                (typeof structuredSeo?.metaDescription === "string" &&
+                  structuredSeo.metaDescription) ||
+                (typeof articleRecord?.metaDescription === "string" &&
+                  articleRecord.metaDescription) ||
+                null,
+            })
+          : null;
       await this.budget.assertCanSpend(0.5);
 
       const modelRun = await this.repo.createModelRun({
@@ -2438,8 +2518,8 @@ export class ContentGenerationService {
         taskType: "REVIEW",
         promptIdentifier: prompt.identifier,
         promptVersion: prompt.version,
-        systemInstruction: rendered.systemInstruction,
-        userPrompt: rendered.userPrompt,
+        systemInstruction: seoReview?.system ?? rendered.systemInstruction,
+        userPrompt: seoReview?.user ?? rendered.userPrompt,
         model: this.models.review,
         input: { title: version.title, body: version.body, reviewType },
       });
@@ -2467,7 +2547,7 @@ export class ContentGenerationService {
       });
 
       const resultRaw = String(llm.output.result ?? "passed").toUpperCase();
-      const mapped =
+      let mapped: ReviewResult =
         resultRaw === "FAILED"
           ? "FAILED"
           : resultRaw === "WARNING"
@@ -2475,6 +2555,29 @@ export class ContentGenerationService {
             : resultRaw === "MANUAL_REVIEW_REQUIRED"
               ? "MANUAL_REVIEW_REQUIRED"
               : "PASSED";
+      const findings = Array.isArray(llm.output.findings) ? [...llm.output.findings] : [];
+      if (reviewType === "seo-basic") {
+        const hard = evaluateSeoIntentReview({
+          intent: lockedIntent,
+          title: version.title,
+          body: version.body,
+          seoTitle:
+            (typeof structuredSeo?.title === "string" && structuredSeo.title) ||
+            (typeof articleRecord?.seoTitle === "string" && articleRecord.seoTitle) ||
+            null,
+          metaDescription:
+            (typeof structuredSeo?.metaDescription === "string" &&
+              structuredSeo.metaDescription) ||
+            (typeof articleRecord?.metaDescription === "string" &&
+              articleRecord.metaDescription) ||
+            null,
+          allowedText: `${version.title}\n${version.body}`,
+        });
+        if (hard.hardFail) {
+          mapped = "FAILED";
+          findings.push(...hard.findings);
+        }
+      }
 
       const review = await this.repo.createReview({
         reviewType,
@@ -2490,7 +2593,7 @@ export class ContentGenerationService {
         },
         result: mapped,
         score: typeof llm.output.score === "number" ? llm.output.score : null,
-        findings: Array.isArray(llm.output.findings) ? llm.output.findings : [],
+        findings,
         requiredActions: Array.isArray(llm.output.requiredActions)
           ? llm.output.requiredActions
           : [],
@@ -2686,6 +2789,18 @@ export class ContentGenerationService {
         images: priorImages,
         imageMeta: sourceStructured.imageMeta ?? null,
         disclosure: true,
+        seo: preserveSeoSearchIntentFields(
+          sourceStructured.seo && typeof sourceStructured.seo === "object"
+            ? (sourceStructured.seo as Record<string, unknown>)
+            : null,
+          {
+            ...(sourceStructured.seo && typeof sourceStructured.seo === "object"
+              ? (sourceStructured.seo as Record<string, unknown>)
+              : {}),
+            title: article.seoTitle,
+            metaDescription: article.metaDescription,
+          },
+        ),
       },
       status: "REVIEWING",
       createdBy: "llm-revision",

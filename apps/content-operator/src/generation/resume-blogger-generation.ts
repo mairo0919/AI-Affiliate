@@ -7,6 +7,7 @@ import {
   structuredToPlainBody,
   type BloggerArticleStructured,
 } from "./structured-article.js";
+import { readSeoSearchIntent } from "../article-pattern/seo-search-intent.js";
 
 export class ResumeBloggerGenerationError extends Error {
   readonly code: string;
@@ -157,6 +158,11 @@ export async function resumeBloggerGenerationFromModelRun(
         title: article.seoTitle,
         metaDescription: article.metaDescription,
         labels: article.labels,
+        ...(readSeoSearchIntent(
+          meta.seoSearchIntent && typeof meta.seoSearchIntent === "object"
+            ? (meta.seoSearchIntent as Record<string, unknown>)
+            : null,
+        ) ?? {}),
       },
     },
     status: "REVIEWING",

@@ -261,6 +261,12 @@ export function buildEditorialDecisionPlannerPrompt(input: {
   evidenceSurfaces: string[];
   planBodyFacts: string[];
   performers: string[];
+  seoSearchIntent?: {
+    status?: string;
+    primaryQuery: string;
+    secondaryQueries: string[];
+    searchIntent: string;
+  } | null;
 }): { system: string; user: string } {
   const system = [
     "あなたは日本語アダルトアフィリエイト記事の編集者です。",
@@ -271,15 +277,20 @@ export function buildEditorialDecisionPlannerPrompt(input: {
     "切り口は出演者、状況、企画、シリーズ、収録内容などEvidenceにある事実だけにする。",
     "固定カテゴリ（出演者/設定/フェチ等）から選ばない。作品ごとに自由文で書く。",
     "公式商品名の短縮版やキーワード羅列をangleにしない。",
+    "seoSearchIntentが渡されたら、読者が何を知りたくて来たかをangleとreaderHookの方向に使う。",
+    "検索意図に合わせるために、Evidenceにない評価語・宣伝語・ジャンル解釈をangleへ足さない。",
+    "primaryQueryを詰め込まない。検索クエリを別のものに変えない。キーワードだけの節を足さない。",
+    "Search Intentはfact sourceではない。",
   ].join("");
   const user = JSON.stringify(
     {
       instruction:
-        "Return JSON {angle, readerHook, whyThisWork, supportingEvidenceRefs}. angle/readerHook/whyThisWork are short Japanese editorial notes (not titles). supportingEvidenceRefs: subset of evidenceSurfaces or planBodyFacts that ground the angle.",
+        "Return JSON {angle, readerHook, whyThisWork, supportingEvidenceRefs}. angle/readerHook/whyThisWork are short Japanese editorial notes (not titles). supportingEvidenceRefs: subset of evidenceSurfaces or planBodyFacts that ground the angle. Align the cut with seoSearchIntent when present. Do not change primaryQuery.",
       productTitle: input.productTitle,
       performers: input.performers.slice(0, 8),
       evidenceSurfaces: input.evidenceSurfaces.slice(0, 24),
       planBodyFacts: input.planBodyFacts.slice(0, 16),
+      seoSearchIntent: input.seoSearchIntent ?? null,
     },
     null,
     2,
@@ -330,6 +341,7 @@ export function buildDeterministicEditorialDecisionFallback(input: {
   productTitle: string;
   evidenceSurfaces: string[];
   performers: string[];
+  seoSearchIntent?: { status?: string; searchIntent: string } | null;
 }): ArticleEditorialDecision {
   const evaluative =
     /(?:おすすめ|オススメ|味わ[えうい]|楽しめ|体験でき|印象的|魅了|見逃せ|たまらな|臨場感|存分に|魅力的|堪能|必見|革命的|濃密|圧巻|刺激的|禁断|快楽|屈辱|決め手|差別化)/u;
@@ -348,11 +360,17 @@ export function buildDeterministicEditorialDecisionFallback(input: {
     : theme
       ? `${theme}という状況を説明する`
       : `公式に記録された状況を説明する`;
+  const intentNote =
+    input.seoSearchIntent?.status === "NO_NATURAL_QUERY"
+      ? ""
+      : input.seoSearchIntent?.searchIntent?.trim() ?? "";
   return {
     angle: angle.slice(0, 160),
-    readerHook: theme
-      ? `「${theme.slice(0, 40)}」という作品固有の状況を先に示す`.slice(0, 160)
-      : "公式に記録された状況を先に示す",
+    readerHook: intentNote
+      ? `読者が知りたいのは、${intentNote}`.slice(0, 160)
+      : theme
+        ? `「${theme.slice(0, 40)}」という作品固有の状況を先に示す`.slice(0, 160)
+        : "公式に記録された状況を先に示す",
     whyThisWork: `公式情報から確認できる具体点（${surfaces.slice(0, 3).join(" / ") || theme}）を記事の切り口にする`.slice(
       0,
       160,

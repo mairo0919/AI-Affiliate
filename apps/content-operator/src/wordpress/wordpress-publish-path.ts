@@ -39,6 +39,7 @@ import {
   type PublicationMetadata,
 } from "./publication-metadata.js";
 import { createLLMProvider } from "../adapters/llm/create-llm-provider.js";
+import { preserveSeoSearchIntentFields } from "../article-pattern/seo-search-intent.js";
 import { resolveWordPressPostDates } from "./wordpress-datetime.js";
 import type { ArticleImage } from "../generation/article-images.js";
 import { parseArticleImages, selectArticleImages } from "../generation/article-images.js";
@@ -712,10 +713,12 @@ export async function publishContentVersionToWordPress(
       publicationMetadata = await generatePublicationMetadata({ evidence, llm: null });
     }
     structuredForHtml.publicationMetadata = publicationMetadata;
-    structuredForHtml.seo = {
-      ...((structuredForHtml.seo && typeof structuredForHtml.seo === "object"
-        ? structuredForHtml.seo
-        : {}) as Record<string, unknown>),
+    const previousSeo =
+      structuredForHtml.seo && typeof structuredForHtml.seo === "object"
+        ? (structuredForHtml.seo as Record<string, unknown>)
+        : {};
+    structuredForHtml.seo = preserveSeoSearchIntentFields(previousSeo, {
+      ...previousSeo,
       title: publicationMetadata.seoTitle,
       metaDescription: publicationMetadata.metaDescription,
       categories: publicationMetadata.categories,
@@ -723,7 +726,7 @@ export async function publishContentVersionToWordPress(
       performers: publicationMetadata.performers,
       seriesName: publicationMetadata.seriesNames[0] ?? null,
       seriesNames: publicationMetadata.seriesNames,
-    };
+    });
     if (typeof deps.lifecycle.updateContentVersionStructuredContent === "function") {
       await deps.lifecycle.updateContentVersionStructuredContent(version.id, {
         ...structuredWithImages,

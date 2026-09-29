@@ -46,6 +46,9 @@ export function toWriterVisibleArticlePlan(plan: unknown): unknown {
   if (p.purpose) out.purpose = p.purpose;
   if (p.coreAngle) out.coreAngle = p.coreAngle;
   if (p.editorialDecision) out.editorialDecision = p.editorialDecision;
+  if (p.seoSearchIntent && typeof p.seoSearchIntent === "object") {
+    out.seoSearchIntent = p.seoSearchIntent;
+  }
   // SOURCE density ceiling — length permission, not a paragraph template.
   if (p.sourceExpansion && typeof p.sourceExpansion === "object") {
     const se = p.sourceExpansion as Record<string, unknown>;
@@ -142,6 +145,36 @@ export function buildOptionBBloggerGeneratorPrompt(input: {
   ].join("\n");
 
   const correcting = Boolean(input.planViolationNote);
+  const seoIntent =
+    plan &&
+    typeof plan === "object" &&
+    "seoSearchIntent" in (plan as object) &&
+    (plan as { seoSearchIntent?: unknown }).seoSearchIntent &&
+    typeof (plan as { seoSearchIntent?: unknown }).seoSearchIntent === "object"
+      ? ((plan as { seoSearchIntent: {
+          status?: string;
+          primaryQuery?: string;
+          secondaryQueries?: string[];
+          searchIntent?: string;
+        } }).seoSearchIntent)
+      : null;
+  const seoBlock = seoIntent
+    ? [
+        "SEO_SEARCH_INTENT (locked; do not replace primaryQuery, secondaryQueries, or searchIntent):",
+        JSON.stringify(seoIntent),
+        seoIntent.status === "NO_NATURAL_QUERY" || !seoIntent.primaryQuery
+          ? "No natural search query was found. Do not invent one."
+          : [
+              "This says what the reader came to confirm. It is not a fact source and not title authority.",
+              "Do not repeat primaryQuery mechanically. Do not add a content word absent from ARTICLE_PLAN.",
+              "Use primaryQuery in the title only when every content word is already in title authority.",
+              "seoTitle and metaDescription may differ from the headline, but must not change its meaning. Use planned facts only. Do not add evaluation, おすすめ, a viewing experience, or a scene that is not in the plan.",
+            ].join(" "),
+        correcting ? "Do not change the locked primaryQuery during correction." : "",
+      ]
+        .filter(Boolean)
+        .join("\n")
+    : "";
   const userPrompt = [
     correcting
       ? "GROUNDED CORRECTION. Do not freely regenerate. Apply correctionPlan: keep KEEP sentences and mustKeep facts, repair REPAIR sentences from replaceWithFacts only, delete REMOVE sentences. Do not paraphrase an evaluation, recommendation, viewing experience, or editorial frame into another word of the same class. Title content words come only from correctionPlan.title.titleAuthority; if a natural title cannot be formed, use correctionPlan.title.strongest. Do not join keywords with spaces."
@@ -149,6 +182,7 @@ export function buildOptionBBloggerGeneratorPrompt(input: {
     `outputChannel=BLOGGER articleFormat=${JSON.stringify(input.articleFormat)}`,
     "ARTICLE_PLAN (factual boundary — weave into prose; do not dump as taxonomy):",
     JSON.stringify(plan),
+    seoBlock,
     execution
       ? [
           "ARTICLE_PLAN_EXECUTION (FACT safety per contribution — obey executionMode / mustPreserve / notAllowed; do not invent):",

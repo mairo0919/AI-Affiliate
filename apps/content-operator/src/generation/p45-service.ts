@@ -432,7 +432,7 @@ export async function seedP45Prompts(repo: LifecycleRepository): Promise<void> {
     {
       identifier: "review.seo",
       taskType: "REVIEW",
-      body: "SEO basic review for {{title}} / {{body}}",
+      body: "SEO basic review for title={{title}} body={{body}}. Production runQualityReviews supplies the locked primaryQuery, secondaryQueries, searchIntent, seoTitle, and metaDescription.",
       systemInstruction: "Return JSON review result for basic SEO.",
     },
     {

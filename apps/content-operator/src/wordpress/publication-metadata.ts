@@ -16,6 +16,11 @@ import {
   extractSynopsisTheme,
   isBareGenreToken,
 } from "../stock/repair-quality-guard.js";
+import {
+  readSeoSearchIntent,
+  seoCopyAddsUngroundedClaim,
+  type SeoSearchIntent,
+} from "../article-pattern/seo-search-intent.js";
 
 export type TitleAxis =
   | "feature"
@@ -72,6 +77,8 @@ export type PublicationMetadataEvidence = {
   sectionHeadings?: string[];
   /** First body paragraphs (for description grounding). */
   bodySnippets?: string[];
+  /** Locked once after Evidence. Publication must not replace the query. */
+  lockedSeoSearchIntent?: SeoSearchIntent | null;
 };
 
 const BANNED_TAGS = new Set([
@@ -462,7 +469,8 @@ export function buildDeterministicSeoTitle(
 
   // Prefer editorial title as base; enrich lightly for SERP without stuffing.
   parts.push(clipTitle(editorialTitle, 36));
-  if (cid && !editorialTitle.toLowerCase().includes(cid.toLowerCase())) {
+  const locked = evidence.lockedSeoSearchIntent?.status === "VALID";
+  if (!locked && cid && !editorialTitle.toLowerCase().includes(cid.toLowerCase())) {
     parts.push(cid.toUpperCase());
   } else if (performer && !editorialTitle.includes(performer) && workType) {
     parts.push(workType);
@@ -475,6 +483,26 @@ export function buildDeterministicMetaDescription(
   editorialTitle: string,
   evidence: PublicationMetadataEvidence,
 ): string {
+  if (evidence.lockedSeoSearchIntent) {
+    const allowed = [
+      evidence.officialTitle,
+      evidence.officialDescription,
+      evidence.lockedSeoSearchIntent?.primaryQuery,
+      ...(evidence.lockedSeoSearchIntent?.secondaryQueries ?? []),
+      ...(evidence.performers ?? []),
+      ...(evidence.seriesNames ?? []),
+    ]
+      .filter((part): part is string => Boolean(part?.trim()))
+      .join("\n");
+    const snippet = (evidence.bodySnippets ?? []).find(
+      (part) => part.trim().length >= 28 && !seoCopyAddsUngroundedClaim(part, allowed),
+    );
+    if (snippet) return truncateMetaDescription(snippet.trim(), 120);
+    return truncateMetaDescription(
+      "公開情報で確認できる作品の内容を、短く整理した記事です。",
+      120,
+    );
+  }
   const performer = primaryPerformer(evidence);
   const feature = featurePhrase(evidence);
   const workType = workTypePhrase(evidence);
@@ -662,7 +690,7 @@ export async function generatePublicationMetadata(input: {
       promptVersion: "2",
       model: input.model,
       systemInstruction:
-        "あなたは日本語アダルトアフィリエイト媒体の編集者です。JSONのみ返してください。事実の捏造禁止。Evidenceにない出演者・シリーズ・評価・人気を作らない。titleは変更禁止（既に確定済み）。seoTitleはtitleと差別化しkeyword stuffing禁止。metaDescriptionは本文切り抜きではなく検索結果向けの自然文。",
+        "あなたは日本語アダルトアフィリエイト媒体の編集者です。JSONのみ返してください。事実の捏造禁止。Evidenceにない出演者・シリーズ・評価・人気を作らない。titleは変更禁止（既に確定済み）。seoTitleはtitleと差別化しkeyword stuffing禁止。metaDescriptionは本文切り抜きではなく検索結果向けの自然文。lockedSeoSearchIntentがある場合、primaryQuery・secondaryQueries・searchIntentは変更禁止。別の検索意図へ書き換えてはいけない。Evidenceにない評価、おすすめ、視聴体験、架空のシーンをseoTitleとmetaDescriptionへ足さない。",
       userPrompt: JSON.stringify(
         {
           instruction:
@@ -682,6 +710,7 @@ export async function generatePublicationMetadata(input: {
             suggestedAxis: selectTitleAxis(input.evidence),
             seoTitleHint: fallback.seoTitle,
             metaDescriptionHint: fallback.metaDescription,
+            lockedSeoSearchIntent: input.evidence.lockedSeoSearchIntent ?? null,
           },
         },
         null,
@@ -704,13 +733,31 @@ export async function generatePublicationMetadata(input: {
     ) as LlmMetaJson | null;
     if (!json?.seoTitle || !json.metaDescription) return fallback;
 
+    const allowedSeoText = [
+      input.evidence.officialTitle,
+      input.evidence.officialDescription,
+      input.evidence.writerTitle,
+      input.evidence.articleSummary,
+      ...(input.evidence.bodySnippets ?? []),
+      input.evidence.lockedSeoSearchIntent?.primaryQuery,
+      ...(input.evidence.lockedSeoSearchIntent?.secondaryQueries ?? []),
+      ...(input.evidence.performers ?? []),
+      ...(input.evidence.seriesNames ?? []),
+    ]
+      .filter((part): part is string => Boolean(part?.trim()))
+      .join("\n");
+    const proposedTitle = clipTitle(String(json.seoTitle), 70);
+    const proposedMeta = truncateMetaDescription(String(json.metaDescription), 120);
+    const invented =
+      seoCopyAddsUngroundedClaim(proposedTitle, allowedSeoText) ||
+      seoCopyAddsUngroundedClaim(proposedMeta, allowedSeoText);
     const base = {
       ...fallback,
       // Locked: never replace ContentVersion semantic title.
       title: fallback.title,
       titleAuthority: "content_version" as const,
-      seoTitle: clipTitle(String(json.seoTitle), 70),
-      metaDescription: truncateMetaDescription(String(json.metaDescription), 120),
+      seoTitle: invented ? fallback.seoTitle : proposedTitle,
+      metaDescription: invented ? fallback.metaDescription : proposedMeta,
       titleAxis: (json.titleAxis as TitleAxis) || fallback.titleAxis,
     };
     let quality = evaluatePublicationMetadataQuality(base, input.evidence);
@@ -866,6 +913,7 @@ export function evidenceFromStructuredContent(input: {
       null,
     sectionHeadings,
     bodySnippets: bodySnippets.slice(0, 3),
+    lockedSeoSearchIntent: readSeoSearchIntent(seo),
   };
 }
 

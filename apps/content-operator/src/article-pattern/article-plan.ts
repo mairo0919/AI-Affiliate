@@ -136,6 +136,11 @@ export type ArticlePlan = {
    * Writer writes the headline from this decision + grounding — not by assembling title.facts.
    */
   editorialDecision?: import("./article-editorial-decision.js").ArticleEditorialDecision | null;
+  /**
+   * Locked SEO intent from official Evidence. Planner recognizes it.
+   * Writer and Rewrite must reuse this object; they must not replace the query.
+   */
+  seoSearchIntent?: import("./seo-search-intent.js").SeoSearchIntent | null;
 };
 
 export const ARTICLE_PLAN_JOBS = {
