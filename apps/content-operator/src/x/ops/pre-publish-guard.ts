@@ -65,6 +65,26 @@ export function stripLegacyHashPr(body: string): string {
     .trim();
 }
 
+/**
+ * Text actually sent to createPost.
+ * Frozen snapshots may still end the CTA with #PR. That hashtag is removed
+ * here, and the commercial reply gets the plain PR label. ROOT copy is not
+ * given a disclosure line.
+ */
+export function outgoingXPostText(input: {
+  body: string;
+  role: string;
+  disclosure: string | null | undefined;
+}): string {
+  const cleaned = stripLegacyHashPr(input.body);
+  const commercial = input.role === "CTA" || input.role === "HUB";
+  if (!commercial) return cleaned;
+  const label = normalizeDisclosureLabel(input.disclosure);
+  if (!label) return cleaned;
+  if (hasClearAdDisclosure(cleaned) || cleaned.includes(label)) return cleaned;
+  return `${label}\n${cleaned}`.trim();
+}
+
 /** True when the text clearly says the post is an ad. Does not require the #PR hashtag. */
 export function hasClearAdDisclosure(text: string): boolean {
   if (/アフィリエイト|広告/.test(text)) return true;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { planPostMediaIds } from "../publication-media-plan.js";
+import { planPostMediaIds, resolveRootMediaUrl } from "../publication-media-plan.js";
 
 describe("ROOT product image attachment", () => {
   it("requires mediaIds on ROOT when a product image URL was resolved", () => {
@@ -30,6 +30,29 @@ describe("ROOT product image attachment", () => {
         uploadedMediaId: null,
       }),
     ).toBeUndefined();
+  });
+
+  it("recovers an ALLOWED research image when the frozen snapshot has no media URL", () => {
+    const url = resolveRootMediaUrl({
+      snapshotUrl: null,
+      fallbackImages: [
+        {
+          role: "auxiliary",
+          sourceUrl: "https://pics.dmm.co.jp/digital/video/example/examplejp-1.jpg",
+          imageType: "sample_large",
+          researchImageId: "img-1",
+          usageStatus: "ALLOWED",
+          adopted: true,
+          excludeReason: null,
+          altText: "商品画像",
+        },
+      ],
+    });
+    expect(url).toContain("examplejp-1.jpg");
+  });
+
+  it("stays text-only when neither the snapshot nor official images have a URL", () => {
+    expect(resolveRootMediaUrl({ snapshotUrl: null, fallbackImages: [] })).toBeNull();
   });
 
   it("never attaches an image to the CTA", () => {

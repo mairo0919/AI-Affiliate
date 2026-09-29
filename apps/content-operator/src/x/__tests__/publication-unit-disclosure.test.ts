@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { publicationUnitDisclosureMissing } from "../ops/pre-publish-guard.js";
+import { outgoingXPostText, publicationUnitDisclosureMissing } from "../ops/pre-publish-guard.js";
 import { composeXThreadPublication } from "../x-thread-publication.js";
 
 describe("publication unit disclosure", () => {
@@ -64,5 +64,22 @@ describe("publication unit disclosure", () => {
         bodies: posts.map((p) => p.body),
       }),
     ).toBe(false);
+  });
+
+  it("sends a frozen #PR CTA as plain PR and leaves the ROOT body without a disclosure", () => {
+    const root = outgoingXPostText({
+      body: "美波こづえが出演するリメイク作品です。",
+      role: "ROOT",
+      disclosure: "PR",
+    });
+    const cta = outgoingXPostText({
+      body: "紹介記事はこちら\nhttps://otonaselect.net/example/ #PR",
+      role: "CTA",
+      disclosure: "PR",
+    });
+    expect(root).not.toMatch(/#PR|(?:^|[\s\n])PR(?=$|[\s\n])/);
+    expect(cta.startsWith("PR\n")).toBe(true);
+    expect(cta).toContain("https://otonaselect.net/example/");
+    expect(cta).not.toContain("#PR");
   });
 });

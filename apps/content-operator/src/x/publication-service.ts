@@ -20,10 +20,10 @@ import { XRelatedPostSelector } from "./related-selector.js";
 import { XStrategySelector } from "./strategy-selector.js";
 import type { XPublishingProvider } from "./providers/index.js";
 import { createXPublishingProvider } from "./providers/index.js";
-import { planPostMediaIds } from "./publication-media-plan.js";
+import { planPostMediaIds, resolveRootMediaUrl } from "./publication-media-plan.js";
 import { XPublishError, type GeneratedXPublication } from "./types.js";
 import { STRATEGY_VERSION } from "./types.js";
-import { XPrePublishGuard } from "./ops/pre-publish-guard.js";
+import { outgoingXPostText, XPrePublishGuard } from "./ops/pre-publish-guard.js";
 import {
   buildProductKey,
   extractProviderProductId,
@@ -75,6 +75,11 @@ export interface XPublicationServiceDeps {
   }>;
   loadCandidateType?: (contentCandidateId: string) => Promise<string | undefined>;
   loadResearchExternalId?: (researchItemId: string) => Promise<string | undefined>;
+  /**
+   * ALLOWED images for a frozen TEXT_ONLY snapshot.
+   * Used only when the stored adaptation has no media URL.
+   */
+  loadAllowedArticleImages?: (researchItemId: string) => Promise<unknown>;
 }
 
 function safeErrorMessage(error: unknown): string {
@@ -108,6 +113,7 @@ export class XPublicationService {
   private readonly loadItemTags: XPublicationServiceDeps["loadItemTags"];
   private readonly loadCandidateType: XPublicationServiceDeps["loadCandidateType"];
   private readonly loadResearchExternalId: XPublicationServiceDeps["loadResearchExternalId"];
+  private readonly loadAllowedArticleImages: XPublicationServiceDeps["loadAllowedArticleImages"];
   private readonly random: () => number;
   private readonly ops?: XOpsRepository;
   private readonly optimization?: XOptimizationRepository;
@@ -129,6 +135,7 @@ export class XPublicationService {
     this.loadItemTags = deps.loadItemTags;
     this.loadCandidateType = deps.loadCandidateType;
     this.loadResearchExternalId = deps.loadResearchExternalId;
+    this.loadAllowedArticleImages = deps.loadAllowedArticleImages;
     this.ops = deps.ops;
     this.optimization = deps.optimization;
     this.checkApiBudget = deps.checkApiBudget;
@@ -801,7 +808,22 @@ export class XPublicationService {
 
         try {
           const isRoot = post.sequence === 1 || post.role === "ROOT";
-          const mediaUrl = isRoot ? resolvePublicationMediaUrl(content) : null;
+          const snapshotMediaUrl = isRoot ? resolvePublicationMediaUrl(content) : null;
+          const fallbackImages =
+            isRoot && !snapshotMediaUrl && this.loadAllowedArticleImages
+              ? await this.loadAllowedArticleImages(publication.researchItemId)
+              : null;
+          const mediaUrl = isRoot
+            ? resolveRootMediaUrl({
+                snapshotUrl: snapshotMediaUrl,
+                fallbackImages,
+              })
+            : null;
+          const text = outgoingXPostText({
+            body: post.body,
+            role: post.role,
+            disclosure: this.config.xAffiliateDisclosure,
+          });
           let uploadedMediaId: string | null = null;
           // Product image stays on ROOT. CTA/replies never receive mediaIds.
           if (isRoot && mediaUrl) {
@@ -832,7 +854,7 @@ export class XPublicationService {
           });
 
           const result = await this.provider.createPost({
-            text: post.body,
+            text,
             replyToPostId,
             mediaIds,
             idempotencyKey: `${publication.idempotencyKey}:seq:${post.sequence}`,

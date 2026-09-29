@@ -1,4 +1,21 @@
+import { selectXMediaFromArticleImages } from "./x-article-media.js";
 import { XPublishError } from "./types.js";
+
+/**
+ * Snapshot media URL wins. When an old TEXT_ONLY snapshot stored no URL,
+ * ALLOWED article/research images recovered at publish time are used.
+ * A real absence of official images stays text-only.
+ */
+export function resolveRootMediaUrl(input: {
+  snapshotUrl: string | null;
+  fallbackImages?: unknown;
+}): string | null {
+  const snapshot = input.snapshotUrl?.trim() ?? "";
+  if (snapshot) return snapshot;
+  const pick = selectXMediaFromArticleImages({ articleImages: input.fallbackImages });
+  if (pick.decision === "SAFE_IMAGE" && pick.selectedUrl?.trim()) return pick.selectedUrl.trim();
+  return null;
+}
 
 /**
  * ROOT is the only post that may carry a product image.
