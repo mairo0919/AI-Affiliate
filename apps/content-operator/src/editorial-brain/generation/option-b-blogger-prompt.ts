@@ -141,8 +141,11 @@ export function buildOptionBBloggerGeneratorPrompt(input: {
     JSON.stringify(example),
   ].join("\n");
 
+  const correcting = Boolean(input.planViolationNote);
   const userPrompt = [
-    `Write ARTICLE_PLAN as a natural Japanese product intro (${required}). productTitle in the plan is identity only — do not paste wholesale as title.`,
+    correcting
+      ? "GROUNDED CORRECTION. Do not freely regenerate. Apply correctionPlan: keep KEEP sentences and mustKeep facts, repair REPAIR sentences from replaceWithFacts only, delete REMOVE sentences. Do not paraphrase an evaluation, recommendation, viewing experience, or editorial frame into another word of the same class. Title content words come only from correctionPlan.title.titleAuthority; if a natural title cannot be formed, use correctionPlan.title.strongest. Do not join keywords with spaces."
+      : `Write ARTICLE_PLAN as a natural Japanese product intro (${required}). productTitle in the plan is identity only — do not paste wholesale as title.`,
     `outputChannel=BLOGGER articleFormat=${JSON.stringify(input.articleFormat)}`,
     "ARTICLE_PLAN (factual boundary — weave into prose; do not dump as taxonomy):",
     JSON.stringify(plan),
@@ -150,12 +153,18 @@ export function buildOptionBBloggerGeneratorPrompt(input: {
       ? [
           "ARTICLE_PLAN_EXECUTION (FACT safety per contribution — obey executionMode / mustPreserve / notAllowed; do not invent):",
           JSON.stringify(execution),
-          "TITLE: Title authority is only performer, official work identity, series, campaign, premise, and a work-specific factual feature in ARTICLE_PLAN. Particles and word order may change. editorialDecision is only a factual cut. Do not assemble/concatenate title.facts. Do not paste productTitle wholesale. Do not add editorial copy that is not in that authority (の世界, 繰り広げられる, 禁断, 濃密, 味わう, おすすめ). HARD BAN in title: 魅せる, が贈る, or 「注目は…｜」. Also forbidden: package-copy rephrase, performer+keyword glue, catalog shells.",
-          "articleRole on each execution target is WHO / WORK / PREMISE / FEATURE / FORMAT / VOLUME / SERIES / GENRE / SOURCE_ATTRIBUTED. Explain PREMISE and FEATURE as concrete prose. SOURCE_ATTRIBUTED wording stays attributed (公式では…と紹介されている) and is not your verdict.",
-          "SEMANTIC_PRESERVE body: natural grammar that restates planned facts. No new concrete facts. No evaluation, recommendation, or claim that you watched or experienced the work. Combine related facts into coherent paragraphs.",
-          "Write continuous adult product explanation. Weave short tags into what the work specifically contains — do not explain internal labels, and do not turn tags into a scene you were not given.",
-          "Stop when the planned facts are covered. Do not close with おすすめ / 楽しめる / 味わえる / 見逃せません / 体験できる. Forbidden unless planned and attributed: external reputation/market claims (～で知られている / 売上No.1 / 大人気 / ファンから高評価).",
-          "If ARTICLE_PLAN.sourceExpansion.writerDensityNote is present, obey it as a length/expansion ceiling. Stop when planned facts are naturally covered.",
+          correcting
+            ? "TITLE CORRECTION: content words only from correctionPlan.title.titleAuthority. Particles and word order may change. Use correctionPlan.title.strongest when a natural title cannot be formed from that authority. Do not add a content word absent from titleAuthority. Do not join keywords with spaces. HARD BAN: 魅せる, が贈る."
+            : "TITLE: Title authority is only performer, official work identity, series, campaign, premise, and a work-specific factual feature in ARTICLE_PLAN. Particles and word order may change. editorialDecision is only a factual cut. Do not assemble/concatenate title.facts. Do not paste productTitle wholesale. Do not add editorial copy that is not in that authority (の世界, 繰り広げられる, 禁断, 濃密, 味わう, おすすめ). HARD BAN in title: 魅せる, が贈る, or 「注目は…｜」. Also forbidden: package-copy rephrase, performer+keyword glue, catalog shells.",
+          correcting
+            ? "On correction, do not write a new article. Copy KEEP. Restate REPAIR from replaceWithFacts as factual sentences. Delete REMOVE. Realize requiredFacts with coveredBySentence null. Do not drop mustKeep facts. Do not add a content word that is not in those facts."
+            : [
+                "articleRole on each execution target is WHO / WORK / PREMISE / FEATURE / FORMAT / VOLUME / SERIES / GENRE / SOURCE_ATTRIBUTED. Explain PREMISE and FEATURE as concrete prose. SOURCE_ATTRIBUTED wording stays attributed (公式では…と紹介されている) and is not your verdict.",
+                "SEMANTIC_PRESERVE body: natural grammar that restates planned facts. No new concrete facts. No evaluation, recommendation, or claim that you watched or experienced the work. Combine related facts into coherent paragraphs.",
+                "Write continuous adult product explanation. Weave short tags into what the work specifically contains — do not explain internal labels, and do not turn tags into a scene you were not given.",
+                "Stop when the planned facts are covered. Do not close with おすすめ / 楽しめる / 味わえる / 見逃せません / 体験できる. Forbidden unless planned and attributed: external reputation/market claims (～で知られている / 売上No.1 / 大人気 / ファンから高評価).",
+                "If ARTICLE_PLAN.sourceExpansion.writerDensityNote is present, obey it as a length/expansion ceiling. Stop when planned facts are naturally covered.",
+              ].join("\n"),
         ].join("\n")
       : "",
     qualityGuidanceText

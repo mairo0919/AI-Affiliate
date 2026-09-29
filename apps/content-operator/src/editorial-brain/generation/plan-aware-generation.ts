@@ -9,11 +9,14 @@ import {
   ungroundedTitleStems,
 } from "../../article-pattern/article-semantic-claim.js";
 import {
+  articleSemanticRole,
+  buildArticlePlanExecutionContract,
   buildPlanFactExecutionTarget,
   missingAnchorsInSentence,
   missingRelationsInSentence,
 } from "../../article-pattern/plan-execution-contract.js";
 import type {
+  GroundedCorrectionPlan,
   PlanRegenViolation,
   PlanViolationFeedback,
 } from "../../generation/generation-authority.js";
@@ -22,7 +25,8 @@ import type {
   ArticlePlanComplianceResult,
 } from "./article-plan-compliance.js";
 import type { RawFailureRouting } from "./raw-failure-routing.js";
-import { resolveFactRealization } from "./plan-fact-matching.js";
+import { isFactRealized, resolveFactRealization } from "./plan-fact-matching.js";
+import { splitIntoSentences } from "./text-surface.js";
 
 export const MAX_PLAN_EXECUTION_ATTEMPTS = Math.max(
   1,
@@ -30,19 +34,19 @@ export const MAX_PLAN_EXECUTION_ATTEMPTS = Math.max(
 );
 
 export const PLAN_REGEN_CORRECTION_INSTRUCTION =
-  "Correct only the reported ArticlePlan execution failures. Each violation has violationType, offendingSentence, unsupportedMeaning, allowedSupportingFacts, requiredFactCoverage, and titleAuthority. Rewrite the offending sentence as FACTUAL_DESCRIPTION from allowedSupportingFacts. Realize requiredFactCoverage. Do not replace unsupportedMeaning with another word of UNSUPPORTED_EVALUATION, RECOMMENDATION, VIEWING_EXPERIENCE, or EDITORIAL_EMBELLISHMENT. Do not add a fact. Title words must come from titleAuthority; particles and word order may change. Do not rewrite ARTICLE_PLAN.";
+  "GROUNDED CORRECTION, not a new article. Follow correctionPlan KEEP, REPAIR, and REMOVE. Content words may come only from requiredFacts, allowedSupportingFacts, titleAuthority, and Evidence words already in those facts. Particles and copulas may connect them. Do not invent an evaluation, recommendation, viewing experience, catch copy, interpretation, or a new work-specific content word. Do not paraphrase UNSUPPORTED_EVALUATION into another adjective, RECOMMENDATION into another recommendation, VIEWING_EXPERIENCE into another experience claim, or EDITORIAL_EMBELLISHMENT into another catch copy. Delete that meaning or restate the allowed fact as FACTUAL_DESCRIPTION. Do not drop a requiredFacts item whose mustKeep is true. Do not rewrite ARTICLE_PLAN.";
 
 const CONTRASTIVE_REGEN_HINT =
   "Preserve concessive/contrastive relation (e.g. 言えど, ではあるものの, にもかかわらず) — do not replace with neutral copula (である) that removes the planned contrast.";
 
 const EVAL_REGEN_HINT =
-  "For PLAN_UNSUPPORTED_EVAL: the violationType names the class (UNSUPPORTED_EVALUATION, RECOMMENDATION, VIEWING_EXPERIENCE, EDITORIAL_EMBELLISHMENT). Remove that meaning. Restate allowedSupportingFacts. Do not swap in 印象的, 魅力, おすすめ, 楽しめる, 味わえる, 体験できる, 余すことなく, or any other word of the same class. If a planned fact is maker wording, keep it only as 公式では…と紹介されている.";
+  "For PLAN_UNSUPPORTED_EVAL: REPAIR or REMOVE that sentence. Do not replace UNSUPPORTED_EVALUATION, RECOMMENDATION, VIEWING_EXPERIENCE, or EDITORIAL_EMBELLISHMENT with another word of the same class (印象的, 特徴的, 情熱的, 魅力, おすすめ, 楽しめる, 味わえる, 体験できる, 余すことなく). Restate allowedSupportingFacts only. Maker wording stays only as 公式では…と紹介されている.";
 
 const OMISSION_REGEN_HINT =
-  "For PLAN_FACT_OMISSION: realize requiredFactCoverage in the assigned slot. A paraphrase that keeps the same agent, relation, and numbers counts. Do not change the meaning, strengthen the fact, or add a new act. Do not add evaluation to cover the omission.";
+  "For PLAN_FACT_OMISSION: realize each requiredFacts item whose coveredBySentence is null. Copy that fact's authority into the body when a paraphrase is unclear. Keep every item whose mustKeep is true. Do not change the agent, relation, or numbers, and do not add an evaluation.";
 
 const TITLE_EDITORIAL_REGEN_HINT =
-  "For title defects: use only titleAuthority (performer, official work identity, series, campaign, premise, work-specific factual feature). Do not add an editorial frame such as の世界, 繰り広げられる, 禁断, or 濃密. Particles and word order may change. HARD BAN: never write 「が魅せる」「が贈る」.";
+  "For title defects: emit correctionPlan.title.strongest, or the same authority words joined only by particles such as の. Do not concatenate those words into one token. Do not add a content word absent from titleAuthority. Do not join keywords with spaces. HARD BAN: never write 「が魅せる」「が贈る」.";
 
 function regenInstructionForViolations(violations: PlanRegenViolation[]): string {
   const parts = [PLAN_REGEN_CORRECTION_INSTRUCTION];
@@ -271,6 +275,125 @@ function extractUnsupportedSentenceFromFinding(
   return null;
 }
 
+function titleAuthorityOf(plan: ArticlePlan): string[] {
+  return [...plan.title.facts, ...plan.body.flatMap((b) => b.facts), plan.productTitle ?? ""]
+    .map((f) => f.trim())
+    .filter(Boolean)
+    .slice(0, 16);
+}
+
+function strongestTitle(plan: ArticlePlan, authority: string[]): string {
+  const clean = (f: string) => f.trim();
+  const usable = authority.map(clean).filter((f) => f.length >= 2 && f.length <= 32 && !/[。！？]/.test(f));
+  const titleFacts = plan.title.facts.map(clean).filter((f) => usable.includes(f) || (f.length >= 2 && f.length <= 32 && !/[。！？]/.test(f)));
+  const names = usable.filter(
+    (f) => /^[\u4e00-\u9fffぁ-んァ-ヶー]{2,8}$/u.test(f) && articleSemanticRole({ fact: f }) === "WHO",
+  );
+  const who = names
+    .filter((n) => !names.some((other) => other !== n && other.includes(n)))
+    .sort((a, b) => b.length - a.length)[0];
+  const work = [...titleFacts, ...usable].find(
+    (f) =>
+      f !== who &&
+      !/\s/u.test(f) &&
+      f.length <= 24 &&
+      articleSemanticRole({ fact: f }) !== "WHO" &&
+      articleSemanticRole({ fact: f }) !== "VOLUME",
+  );
+  const series = usable.find((f) => articleSemanticRole({ fact: f }) === "SERIES" && !/\s/u.test(f));
+  if (who && work && !work.includes(who)) return `${who}の${work}`.slice(0, 40);
+  if (titleFacts[0] && !/[。！？]/.test(titleFacts[0])) return titleFacts[0].slice(0, 40);
+  if (series && work) return `${series}の${work}`.slice(0, 40);
+  if (work) return work;
+  return usable[0]?.slice(0, 32) ?? "";
+}
+
+function sentenceCoversFact(sentence: string, fact: string): boolean {
+  return isFactRealized(resolveFactRealization(sentence, fact, { padBearing: false }).status);
+}
+
+/** Correction plan for the production rewrite call. Does not change Review. */
+export function buildGroundedCorrectionPlan(
+  plan: ArticlePlan,
+  articleText?: { title?: string; lead?: string; body?: string },
+  titleNeedsRepair = false,
+): GroundedCorrectionPlan {
+  const authority = titleAuthorityOf(plan);
+  const body = [articleText?.lead, articleText?.body].filter(Boolean).join("\n");
+  const sentences = splitIntoSentences(body).map((s) => s.trim()).filter((s) => s.length >= 8);
+  const facts = articlePlanAllFacts(plan);
+  const keep: GroundedCorrectionPlan["keep"] = [];
+  const repair: GroundedCorrectionPlan["repair"] = [];
+  const remove: GroundedCorrectionPlan["remove"] = [];
+
+  for (const sentence of sentences) {
+    const claims = blockingSemanticClaims(sentence, facts);
+    const covered = facts.filter((f) => sentenceCoversFact(sentence, f));
+    if (claims.length === 0) {
+      if (covered.length > 0) keep.push({ sentence: sentence.slice(0, 240), facts: covered.slice(0, 6) });
+      continue;
+    }
+    const violationType = claims[0]?.class ?? "UNSUPPORTED_EVALUATION";
+    const unsupportedMeaning = claims.map((c) => `${c.class}:${c.span}`).join("; ");
+    if (covered.length === 0) {
+      remove.push({ sentence: sentence.slice(0, 240), violationType, unsupportedMeaning });
+      continue;
+    }
+    repair.push({
+      sentence: sentence.slice(0, 240),
+      violationType,
+      unsupportedMeaning,
+      replaceWithFacts: covered.slice(0, 4),
+    });
+  }
+
+  let targets: ReturnType<typeof buildArticlePlanExecutionContract> = [];
+  try {
+    targets = buildArticlePlanExecutionContract(plan);
+  } catch {
+    targets = [];
+  }
+  const requiredFacts: GroundedCorrectionPlan["requiredFacts"] = [];
+  const seenFact = new Set<string>();
+  for (const target of targets) {
+    if (target.slot === "title") continue;
+    const fact = target.fact.trim();
+    if (!fact || seenFact.has(fact)) continue;
+    seenFact.add(fact);
+    const coveredBy = sentences.find((s) => sentenceCoversFact(s, fact)) ?? null;
+    requiredFacts.push({
+      factId: target.contributionId,
+      fact,
+      articleRole: articleSemanticRole({
+        fact,
+        sourceFactType: target.sourceFactType,
+        informationAxis: target.informationAxis,
+      }),
+      authority: fact,
+      coveredBySentence: coveredBy ? coveredBy.slice(0, 180) : null,
+      mustKeep: coveredBy != null,
+    });
+  }
+  const titleBlocked =
+    titleNeedsRepair || ungroundedTitleStems(articleText?.title ?? "", authority).length > 0;
+  return {
+    mode: "GROUNDED_CORRECTION",
+    keep: keep.slice(0, 8),
+    repair: repair.slice(0, 6),
+    remove: remove.slice(0, 6),
+    title: {
+      action: titleBlocked ? "REPAIR" : "KEEP",
+      current: (articleText?.title ?? "").slice(0, 80),
+      titleAuthority: authority,
+      strongest: strongestTitle(plan, authority),
+    },
+    requiredFacts: [
+      ...requiredFacts.filter((f) => !f.mustKeep),
+      ...requiredFacts.filter((f) => f.mustKeep),
+    ].slice(0, 16),
+  };
+}
+
 export function buildArticlePlanViolationFeedback(
   attempt: number,
   result: ArticlePlanComplianceResult,
@@ -282,6 +405,17 @@ export function buildArticlePlanViolationFeedback(
     articlePlan != null
       ? buildStructuredPlanRegenViolations(articlePlan, result, articleText)
       : [];
+  const titleNeedsRepair = result.findings.some(
+    (f) =>
+      f.severity === "BLOCKING" &&
+      (f.code === "PLAN_TITLE_INVENT" ||
+        f.code === "PLAN_TITLE_EDITORIAL_QUALITY" ||
+        f.code === "PLAN_TITLE_SURFACE"),
+  );
+  const correctionPlan =
+    articlePlan != null
+      ? buildGroundedCorrectionPlan(articlePlan, articleText, titleNeedsRepair)
+      : undefined;
 
   return {
     attempt,
@@ -303,6 +437,7 @@ export function buildArticlePlanViolationFeedback(
     violations: violations.length > 0 ? violations : undefined,
     instruction:
       violations.length > 0 ? regenInstructionForViolations(violations) : undefined,
+    correctionPlan,
   };
 }
 
@@ -312,6 +447,7 @@ export function buildPlanViolationRegenNote(feedback: PlanViolationFeedback): st
     return JSON.stringify({
       codes: feedback.codes,
       violatedSegments: feedback.violatedSegments,
+      correctionPlan: feedback.correctionPlan,
       violations: feedback.violations,
       instruction: feedback.instruction ?? PLAN_REGEN_CORRECTION_INSTRUCTION,
     });

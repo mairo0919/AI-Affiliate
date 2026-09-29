@@ -5,7 +5,11 @@
 import { describe, expect, it } from "vitest";
 import { validateArticlePlanCompliance } from "../../editorial-brain/generation/article-plan-compliance.js";
 import { buildOptionBBloggerGeneratorPrompt } from "../../editorial-brain/generation/option-b-blogger-prompt.js";
-import { buildArticlePlanViolationFeedback } from "../../editorial-brain/generation/plan-aware-generation.js";
+import {
+  buildArticlePlanViolationFeedback,
+  buildGroundedCorrectionPlan,
+  buildPlanViolationRegenNote,
+} from "../../editorial-brain/generation/plan-aware-generation.js";
 import { hasUnattributedViewingEvaluation } from "../plan-surface-attestation.js";
 import { articleSemanticRole } from "../plan-execution-contract.js";
 import {
@@ -263,5 +267,96 @@ describe("writer viewing evaluation", () => {
     expect(evalV?.unsupportedMeaning ?? "").toMatch(/革新的|とも言える/);
     expect(evalV?.offendingSentence ?? "").toMatch(/革新的/);
     expect(feedback.instruction ?? "").toMatch(/violationType|allowedSupportingFacts/);
+    const evalOps = [
+      ...(feedback.correctionPlan?.repair ?? []),
+      ...(feedback.correctionPlan?.remove ?? []),
+    ];
+    expect(evalOps.some((r) => r.unsupportedMeaning.includes("革新的"))).toBe(true);
+    expect(feedback.instruction ?? "").toMatch(/Do not paraphrase UNSUPPORTED_EVALUATION/);
+    const note = buildPlanViolationRegenNote(feedback);
+    expect(note).toContain("GROUNDED_CORRECTION");
+    expect(note).toContain("KEEP");
+  });
+
+  it("keeps covered facts and requires the omitted sioz brand fact", () => {
+    const plan = {
+      schemaVersion: 1 as const,
+      materialDepth: "standard" as const,
+      productTitle: "塩対応ベスト",
+      title: { job: "editorial_headline" as const, facts: ["塩対応ベスト"] },
+      lead: { job: "opening_facts" as const, facts: [] },
+      body: [
+        {
+          job: "body_facts" as const,
+          facts: [
+            "しろうとまんまん",
+            "年上の男を金ヅルとしか見ていないナメ腐った未成熟なP活女ども",
+          ],
+        },
+      ],
+    };
+    const body =
+      "塩対応ベストは、年上の男を金ヅルとしか見ていないナメ腐った未成熟なP活女どもを描く。リアルな素人感がある。";
+    const result = validateArticlePlanCompliance({
+      article: { title: "塩対応ベスト", summary: "", sections: [{ paragraphs: [body] }] },
+      articlePlan: plan,
+    });
+    const feedback = buildArticlePlanViolationFeedback(2, result, null, plan, {
+      title: "塩対応ベスト",
+      body,
+    });
+    const omitted = feedback.correctionPlan?.requiredFacts.find((f) => f.fact === "しろうとまんまん");
+    expect(omitted?.coveredBySentence ?? null).toBeNull();
+    expect(omitted?.mustKeep).toBe(false);
+    const kept = feedback.correctionPlan?.requiredFacts.find((f) => f.fact.includes("金ヅル"));
+    expect(kept?.mustKeep).toBe(true);
+    expect(kept?.factId).toBeTruthy();
+    expect(kept?.articleRole).toBeTruthy();
+    const evalOps = [
+      ...(feedback.correctionPlan?.repair ?? []),
+      ...(feedback.correctionPlan?.remove ?? []),
+    ];
+    expect(evalOps.some((r) => r.unsupportedMeaning.includes("リアルな"))).toBe(true);
+    expect(feedback.correctionPlan?.keep.length).toBeGreaterThan(0);
+  });
+
+  it("requires the omitted orecs clause without dropping the covered investigation", () => {
+    const omittedFact = "収入が高い家庭に生まれた子女は変態に育つという学説をご存じですか";
+    const coveredFact = "いわゆるお嬢さんが溢れる都内のある街に行きまして実態を調査してきました";
+    const plan = {
+      schemaVersion: 1 as const,
+      materialDepth: "standard" as const,
+      productTitle: "お嬢さん調査",
+      title: { job: "editorial_headline" as const, facts: ["お嬢さん調査"] },
+      lead: { job: "opening_facts" as const, facts: [] },
+      body: [{ job: "body_facts" as const, facts: [omittedFact, coveredFact] }],
+    };
+    const body = "いわゆるお嬢さんが溢れる都内のある街に行きまして実態を調査してきました。";
+    const correction = buildGroundedCorrectionPlan(
+      plan,
+      { title: "お嬢さん調査", body },
+      false,
+    );
+    const missing = correction.requiredFacts.find((f) => f.fact === omittedFact);
+    const kept = correction.requiredFacts.find((f) => f.fact === coveredFact);
+    expect(missing?.coveredBySentence ?? null).toBeNull();
+    expect(missing?.mustKeep).toBe(false);
+    expect(kept?.mustKeep).toBe(true);
+    expect(kept?.coveredBySentence ?? "").toContain("お嬢さん");
+    expect(correction.keep.some((k) => k.sentence.includes("お嬢さん"))).toBe(true);
+  });
+
+  it("uses a short title fact instead of a sentence-length product title", () => {
+    const plan = {
+      schemaVersion: 1 as const,
+      materialDepth: "standard" as const,
+      productTitle: "塩対応ベスト。イキった塩娘をチ○ポでひたすらわからせる240分",
+      title: { job: "editorial_headline" as const, facts: ["塩対応ベスト"] },
+      lead: { job: "opening_facts" as const, facts: [] },
+      body: [{ job: "body_facts" as const, facts: ["しろうとまんまん"] }],
+    };
+    const correction = buildGroundedCorrectionPlan(plan, { title: "塩対応ベストの世界", body: "" }, true);
+    expect(correction.title.strongest).toBe("塩対応ベスト");
+    expect(correction.title.action).toBe("REPAIR");
   });
 });

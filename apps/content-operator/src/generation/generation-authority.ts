@@ -60,6 +60,33 @@ export type PlanRegenViolation = {
   titleAuthority?: string[];
 };
 
+/** Rewrite is a grounded correction, not a new article. */
+export type GroundedCorrectionPlan = {
+  mode: "GROUNDED_CORRECTION";
+  keep: Array<{ sentence: string; facts: string[] }>;
+  repair: Array<{
+    sentence: string;
+    violationType: string;
+    unsupportedMeaning: string;
+    replaceWithFacts: string[];
+  }>;
+  remove: Array<{ sentence: string; violationType: string; unsupportedMeaning: string }>;
+  title: {
+    action: "KEEP" | "REPAIR";
+    current: string;
+    titleAuthority: string[];
+    strongest: string;
+  };
+  requiredFacts: Array<{
+    factId: string;
+    fact: string;
+    articleRole: string;
+    authority: string;
+    coveredBySentence: string | null;
+    mustKeep: boolean;
+  }>;
+};
+
 export type PlanViolationFeedback = {
   attempt: number;
   violatedSegments: string[];
@@ -72,6 +99,7 @@ export type PlanViolationFeedback = {
   failureClass?: string;
   failureSignature?: string;
   note: string;
+  correctionPlan?: GroundedCorrectionPlan;
   /** r141 — corrective regen payload derived from Compliance findings + ArticlePlan facts */
   violations?: PlanRegenViolation[];
   instruction?: string;
