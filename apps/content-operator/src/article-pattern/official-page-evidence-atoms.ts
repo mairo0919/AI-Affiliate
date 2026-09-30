@@ -72,6 +72,17 @@ function isOfficialSpecClause(clause: string): boolean {
 }
 
 /**
+ * A topic-は sentence that names a person relation.
+ * Kept only when が/を is absent and the sentence is still a complete relation,
+ * not a title, genre, or fragment.
+ */
+function hasClearTopicRelation(clause: string): boolean {
+  if (!/[^、。]{2,24}は[^、。]{4,40}$/u.test(clause)) return false;
+  if (/^(?:この作品|本作|タイトル|ジャンル|シリーズ|メーカー)は/u.test(clause)) return false;
+  return /(?:先生|生徒|教師|転校|妻|女王|ターゲット|お隣|隣人|母|父|娘|息子|彼氏|彼女|夫婦|家族)/u.test(clause);
+}
+
+/**
  * Official description clauses that say what the work is.
  * Genre tokens stay genre atoms. Spec counts stay spec atoms.
  * Adult wording that is in the source is kept verbatim.
@@ -92,7 +103,7 @@ export function selectOfficialWorkClauses(
     if (clause.length < 12 || clause.length > 80) continue;
     if (/^[#＃]/.test(clause)) continue;
     if (/[「」『』]/.test(clause)) continue;
-    if (!/[がを]/u.test(clause)) continue;
+    if (!/[がを]/u.test(clause) && !hasClearTopicRelation(clause)) continue;
     if (
       OFFICIAL_CLAUSE_REJECT_RE.test(clause) ||
       OFFICIAL_CLAUSE_PUFFERY_RE.test(clause) ||

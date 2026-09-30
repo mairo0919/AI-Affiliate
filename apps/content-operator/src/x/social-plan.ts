@@ -394,9 +394,21 @@ function isSpecOnlyFocus(value: string): boolean {
   );
 }
 
+/** Relation / change in an official clause outranks a remake or campaign label. */
+function officialPremiseRank(value: string): number {
+  const specific =
+    /(?:先生|生徒|教師|転校|妻|女王|ターゲット|使役|お隣|隣人|母|父|娘|息子|していく|してしまう|進むと|人間化)/u.test(
+      value,
+    );
+  const catalog = /(?:リメイク|周年|祭り|人気作品|リクエスト)/u.test(value);
+  if (specific) return 3;
+  if (catalog) return 1;
+  return 2;
+}
+
 /**
  * One evidence atom the post may turn on.
- * Official premise, then a performer relation, then a work-specific expression.
+ * Official situation first. A title fragment is only the fallback.
  * A campaign name, a full title, or a runtime is not a focus.
  */
 function selectXPostFocus(input: {
@@ -413,15 +425,20 @@ function selectXPostFocus(input: {
     !/という状況から紹介|の状況設定|作品を紹介|特徴を説明|作品概要|言い換えて説明/u.test(value) &&
     !detectXAdultExpressions(value).hit;
   const official = new Set(input.officialClauses);
-  const premise = input.facts.find(
-    (fact) => fact.role === "premise" && fact.salience === "primary" && official.has(fact.value) && usable(fact.value),
-  );
-  if (premise) return premise.value;
-  const described = input.relations.find((relation) => relation.type === "described_as" && usable(relation.to));
-  if (described) return described.to;
+  const premises = input.facts
+    .filter(
+      (fact) =>
+        fact.role === "premise" && fact.salience === "primary" && official.has(fact.value) && usable(fact.value),
+    )
+    .sort((a, b) => officialPremiseRank(b.value) - officialPremiseRank(a.value));
+  if (premises[0]) return premises[0].value;
   const feature = input.relations.find((relation) => relation.type === "has_feature" && usable(relation.to));
   if (feature) return feature.to;
-  const premiseRelation = input.relations.find((relation) => relation.type === "has_premise" && usable(relation.to));
+  const described = input.relations.find((relation) => relation.type === "described_as" && usable(relation.to));
+  if (described) return described.to;
+  const premiseRelation = input.relations.find(
+    (relation) => relation.type === "has_premise" && usable(relation.to) && !official.has(relation.to),
+  );
   if (premiseRelation) return premiseRelation.to;
   const expression = input.facts.find(
     (fact) =>
@@ -641,6 +658,14 @@ export function planXSocial(input: XPlannerInput): XPlanResult {
     }
   }
 
+  const officialPremiseFacts = extractSemanticFacts({
+    sources: [productTitle, input.seriesName ?? ""].map((source) => source.trim()).filter(Boolean),
+    performers,
+    seriesName: input.seriesName,
+    officialClauses,
+  }).filter((fact) => fact.role === "premise" && officialClauses.includes(fact.value));
+  if (!corePremise && officialPremiseFacts[0]) corePremise = officialPremiseFacts[0].value;
+
   if (!corePremise && !primaryAppeal) {
     return {
       ok: false,
@@ -697,7 +722,7 @@ export function planXSocial(input: XPlannerInput): XPlanResult {
     if (subject && contentType && contentType !== "作品紹介" && isXSafeAtom(contentType)) {
       salvage.push(contentType);
     }
-    if (salvage.length === 0) {
+    if (salvage.length === 0 && officialPremiseFacts.length === 0) {
       return {
         ok: false,
         skip: { reason: "SOCIAL_CONTENT_TOO_THIN", detail: "no_expression_safe_facts" },
@@ -738,17 +763,12 @@ export function planXSocial(input: XPlannerInput): XPlanResult {
   const semanticSources = [officialTitle, input.seriesName ?? ""]
     .map((source) => source.trim())
     .filter((source, index, all) => source.length > 0 && all.indexOf(source) === index);
-  const titleFacts = extractSemanticFacts({
-    sources: semanticSources,
-    performers,
-    seriesName: input.seriesName,
-  });
   const semanticFacts = selectSemanticFacts(
     extractSemanticFacts({
       sources: semanticSources,
       performers,
       seriesName: input.seriesName,
-      officialClauses: titleFacts.some((fact) => fact.salience === "primary") ? [] : officialClauses,
+      officialClauses,
     }).filter((fact) =>
       fact.role === "who"
         ? true

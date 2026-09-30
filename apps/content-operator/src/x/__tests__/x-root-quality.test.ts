@@ -350,6 +350,50 @@ describe("planner viability uses a primary fact, not a spec readout", () => {
     expect(reviewXSocialCopy(body, planned.plan).ok).toBe(true);
   });
 
+  it("keeps a long official premise when the title path is thin", () => {
+    const premise = "隣に座った生徒の話を聞きながら、転校してきた先生の予定を最後まで確認していく場面がある";
+    const planned = planXSocial({
+      canonicalTitle: "vol.2",
+      productTitle: "vol.2",
+      performerNames: ["糸井瑠花"],
+      officialDescription: `${premise}。`,
+    });
+    expect(premise.length).toBeGreaterThan(42);
+    expect(planned.ok).toBe(true);
+    if (!planned.ok) return;
+    expect(planned.plan.semanticFacts?.some((fact) => fact.value === premise)).toBe(true);
+    expect(planned.plan.angle).toBe(premise);
+  });
+
+  it("keeps an official premise when the title already has a primary fact", () => {
+    const title = "ROCKET18周年記念ユーザーリクエスト祭り 無個性ゼンタイ人間化";
+    const premise = "ZENTAI星の女王がモブ男ゼンタイを使役して女子○生と巨乳妻をゼンタイ人間化していく";
+    const planned = planXSocial({
+      canonicalTitle: title,
+      productTitle: title,
+      performerNames: ["一色さら", "広瀬美結", "加藤ツバキ（夏樹カオル）"],
+      officialDescription:
+        "ゼンタイフェチがAVで見たかった初の洗脳ドラマ！" +
+        premise +
+        "！髪まで覆い顔面だけ露出するタイプから洗脳が進むと顔面も隠れ無個性化してしまう！淫語モジモジ人文字もあるぞ！",
+    });
+    expect(planned.ok).toBe(true);
+    if (!planned.ok) return;
+    expect(planned.plan.viability).toBe("X_POSTABLE");
+    expect(planned.plan.semanticFacts?.some((fact) => fact.role === "premise" && fact.value === premise)).toBe(true);
+    expect(planned.plan.semanticFacts?.some((fact) => fact.value === "無個性ゼンタイ人間化")).toBe(true);
+    expect(planned.plan.angle).toBe(premise);
+    expect(planned.plan.angle).not.toBe("無個性ゼンタイ人間化");
+    const grounded = composeGroundedIntro(planned.plan) ?? "";
+    expect(grounded).toContain(premise);
+    expect(grounded).not.toMatch(/に出演している/);
+    const review = reviewXSocialCopy(grounded, planned.plan);
+    expect(review.ok).toBe(true);
+    expect(review.findings.map((finding) => finding.code)).not.toEqual(
+      expect.arrayContaining(["UNSUPPORTED_FACT", "FOCUS_NOT_SPECIFIC"]),
+    );
+  });
+
   it("keeps 1rctd00762 on one focus and rejects the explainer frame", () => {
     const title = "ROCKET18周年記念ユーザーリクエスト祭り 無個性ゼンタイ人間化";
     const planned = planXSocial({

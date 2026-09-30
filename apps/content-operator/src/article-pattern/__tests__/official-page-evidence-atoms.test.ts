@@ -108,6 +108,15 @@ describe("official page evidence atoms (LLM=0)", () => {
     expect(concrete).toHaveLength(0);
   });
 
+  it("keeps a topic-は person relation and still drops fragments", () => {
+    const clauses = selectOfficialWorkClauses(
+      "13年ぶり人気作品をリメイク！いじめのターゲットは転校生と先生の2人。タイトルは無個性な断片だよ。見てみると印象的だった。",
+    );
+    expect(clauses).toContain("いじめのターゲットは転校生と先生の2人");
+    expect(clauses).toContain("13年ぶり人気作品をリメイク");
+    expect(clauses.join("\n")).not.toMatch(/タイトルは|見てみると|印象的だった/);
+  });
+
   it("keeps an official situation clause verbatim and drops viewing fantasy", () => {
     const description =
       "10作品。昼間の顔をそっと脱ぎ捨て本当の自分を解き放つ。精液を狙う展開が公式コメントにある。見てみると印象的だったおすすめの体験。";
