@@ -11,6 +11,7 @@ import {
   hasSemanticRoleMismatch,
   isLoneWorkCopula,
   isSpecReadout,
+  classifyXProseQuality,
   isTemplateExplainer,
   isTitleFragmentRun,
   ungroundedContentWord,
@@ -28,7 +29,8 @@ export type SocialReviewDimension =
   | "PRODUCT_SPECIFICITY"
   | "VOICE"
   | "MEDIA_FIT"
-  | "COMPLIANCE";
+  | "COMPLIANCE"
+  | "PROSE_QUALITY";
 
 export type SocialReviewFinding = {
   code: string;
@@ -187,6 +189,7 @@ export function reviewXSocialCopy(
     VOICE: "PASS",
     MEDIA_FIT: "PASS",
     COMPLIANCE: "PASS",
+    PROSE_QUALITY: "PASS",
   };
 
   const fail = (
@@ -311,6 +314,10 @@ export function reviewXSocialCopy(
   const primaryValues = (plan.semanticFacts ?? [])
     .filter((fact) => fact.salience === "primary")
     .map((fact) => fact.value);
+  for (const code of classifyXProseQuality(text, { focus: plan.angle, productTitle: plan.productTitle })) {
+    fail("PROSE_QUALITY", code, `x prose quality: ${code}`);
+  }
+
   if (
     isTemplateExplainer(text) ||
     isLoneWorkCopula(text) ||
@@ -488,6 +495,11 @@ export function reviewXSocialCopy(
     "BROKEN_PHRASE",
     "TITLE_FRAGMENT_GLUE",
     "TEMPLATE_EXPLAINER",
+    "ARTICLE_SUMMARY_STYLE",
+    "CATALOG_DESCRIPTION_STYLE",
+    "TITLE_PARAPHRASE_STYLE",
+    "GENERIC_WORK_INTRO",
+    "FOCUS_NOT_SPECIFIC",
     "UNSUPPORTED_SWEEP",
     "TOO_THIN",
     "STOCK_CTA",
@@ -665,8 +677,19 @@ function findingsToHints(findings: SocialReviewFinding[]): string[] {
   if (codes.has("UNSUPPORTED_SWEEP")) {
     hints.push("Remove unsupported grand summaries; stay inside grounded work facts.");
   }
+  if (
+    codes.has("ARTICLE_SUMMARY_STYLE") ||
+    codes.has("CATALOG_DESCRIPTION_STYLE") ||
+    codes.has("TITLE_PARAPHRASE_STYLE") ||
+    codes.has("GENERIC_WORK_INTRO") ||
+    codes.has("FOCUS_NOT_SPECIFIC")
+  ) {
+    hints.push(
+      "Fact overlap is not enough. Write one natural X post about FOCUS only. Do not use 本作は, として制作, が特徴, or a title paraphrase as an overview.",
+    );
+  }
   if (codes.has("THIN_WORK_INTRO") || codes.has("LOW_INFORMATION") || codes.has("TOO_THIN")) {
-    hints.push("Write 2–4 sentences with concrete work-specific information.");
+    hints.push("Write one or two sentences about FOCUS. Do not expand into a work overview.");
   }
   if (codes.has("UNGROUNDED") || codes.has("COHERENCE")) {
     hints.push(
@@ -706,7 +729,12 @@ export async function rewriteXSocialCopyOnce(
     const anchorOnPrevious =
       !codes.has("TEMPLATE_EXPLAINER") &&
       !codes.has("TITLE_FRAGMENT_GLUE") &&
-      !codes.has("GENERIC_PUFFERY");
+      !codes.has("GENERIC_PUFFERY") &&
+      !codes.has("ARTICLE_SUMMARY_STYLE") &&
+      !codes.has("CATALOG_DESCRIPTION_STYLE") &&
+      !codes.has("TITLE_PARAPHRASE_STYLE") &&
+      !codes.has("GENERIC_WORK_INTRO") &&
+      !codes.has("FOCUS_NOT_SPECIFIC");
     const rewritten = await writeXSocialCopy(plan, {
       llm: opts.llm,
       model: opts.model,

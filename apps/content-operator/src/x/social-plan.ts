@@ -1,5 +1,6 @@
 /**
- * X Planner — decides HOW to introduce the work on X.
+ * X Planner — picks one concrete focus for a single X post.
+ * The focus is an evidence atom, not an instruction to explain the work.
  *
  * Separates:
  * - work understanding (canonical meaning; adult spans stripped, may be longer)
@@ -371,66 +372,82 @@ function dedupe(atoms: string[]): string[] {
   return out;
 }
 
-function buildEditorialAngle(input: {
-  subject: string | null;
-  contentType: string | null;
-  corePremise: string | null;
-  primaryAppeal: string | null;
-  seriesName: string | null;
-}): { angle: string; readerHook: string; whyThisWork: string } {
-  const { subject, contentType, corePremise, primaryAppeal, seriesName } = input;
-  if (contentType?.includes("ベスト") || contentType?.includes("総集")) {
-    const hook = primaryAppeal || corePremise || "収録の幅";
-    return {
-      angle: hook,
-      readerHook: hook,
-      whyThisWork: hook,
-    };
-  }
-  if (corePremise && subject) {
-    return {
-      angle: corePremise,
-      readerHook: corePremise,
-      whyThisWork: corePremise,
-    };
-  }
-  if (corePremise) {
-    return {
-      angle: corePremise,
-      readerHook: corePremise,
-      whyThisWork: primaryAppeal || corePremise,
-    };
-  }
-  if (seriesName && subject) {
-    return {
-      angle: `${subject}の${seriesName}`,
-      readerHook: `${seriesName}の流れの一作`,
-      whyThisWork: primaryAppeal || `${subject}のシリーズ出演`,
-    };
-  }
-  if (subject && primaryAppeal) {
-    return {
-      angle: primaryAppeal,
-      readerHook: primaryAppeal,
-      whyThisWork: primaryAppeal,
-    };
-  }
-  if (subject) {
-    return {
-      angle: `${subject}の作品`,
-      readerHook: `${subject}の作品`,
-      whyThisWork: `${subject}の作品`,
-    };
-  }
-  return {
-    angle: primaryAppeal || "作品の焦点",
-    readerHook: primaryAppeal || "作品の具体点",
-    whyThisWork: primaryAppeal || "公開カタログ上の具体点がある",
-  };
+function compactSurface(value: string): string {
+  return value.replace(/[\s【】]/gu, "");
+}
+
+function isWholeTitleSurface(value: string, title: string): boolean {
+  const fact = compactSurface(value);
+  const whole = compactSurface(title);
+  if (!fact || !whole) return false;
+  if (fact === whole) return true;
+  return whole.includes(fact) && fact.length >= Math.floor(whole.length * 0.85);
+}
+
+function isSpecOnlyFocus(value: string): boolean {
+  return (
+    /^(?:約)?\d+(?:\.\d+)?(?:時間|分)$/u.test(value) ||
+    /^\d+(?:枚組|作品収録|作品|タイトル)$/u.test(value) ||
+    /^(?:配信限定|VR|8K)$/u.test(value) ||
+    /^vol\.?\s*\d+$/iu.test(value) ||
+    value === "ベストをまとめた作品"
+  );
 }
 
 /**
- * Plan an X introduction from canonical Claims / title / identity.
+ * One evidence atom the post may turn on.
+ * Official premise, then a performer relation, then a work-specific expression.
+ * A campaign name, a full title, or a runtime is not a focus.
+ */
+function selectXPostFocus(input: {
+  facts: SemanticFact[];
+  relations: SemanticRelation[];
+  title: string;
+  officialClauses: string[];
+  groundedFacts: string[];
+}): string | null {
+  const usable = (value: string) =>
+    value.trim().length >= 2 &&
+    !isWholeTitleSurface(value, input.title) &&
+    !isSpecOnlyFocus(value) &&
+    !/という状況から紹介|の状況設定|作品を紹介|特徴を説明|作品概要|言い換えて説明/u.test(value) &&
+    !detectXAdultExpressions(value).hit;
+  const official = new Set(input.officialClauses);
+  const premise = input.facts.find(
+    (fact) => fact.role === "premise" && fact.salience === "primary" && official.has(fact.value) && usable(fact.value),
+  );
+  if (premise) return premise.value;
+  const described = input.relations.find((relation) => relation.type === "described_as" && usable(relation.to));
+  if (described) return described.to;
+  const feature = input.relations.find((relation) => relation.type === "has_feature" && usable(relation.to));
+  if (feature) return feature.to;
+  const premiseRelation = input.relations.find((relation) => relation.type === "has_premise" && usable(relation.to));
+  if (premiseRelation) return premiseRelation.to;
+  const expression = input.facts.find(
+    (fact) =>
+      fact.role === "what" &&
+      fact.salience === "primary" &&
+      usable(fact.value) &&
+      !/周年|祭り/u.test(fact.value),
+  );
+  if (expression) return expression.value;
+  const who = input.facts.find((fact) => fact.role === "who")?.value ?? "";
+  const wholeTitle = input.facts.find(
+    (fact) => fact.role === "what" && fact.salience === "primary" && isWholeTitleSurface(fact.value, input.title),
+  );
+  if (wholeTitle && who && wholeTitle.value.startsWith(who)) {
+    const rest = wholeTitle.value.slice(who.length).replace(/^[の\s]+/u, "").trim();
+    if (usable(rest) && rest.length >= 4) return rest;
+  }
+  const grounded = input.groundedFacts.find(
+    (value) => usable(value) && value.length >= 6 && value.length <= 40 && !/周年|祭り/u.test(value),
+  );
+  return grounded ?? null;
+}
+
+/**
+ * Plan one X post from canonical Claims / title / identity.
+ * angle is the focus atom. A missing focus is X_INSUFFICIENT_MATERIAL.
  */
 export function planXSocial(input: XPlannerInput): XPlanResult {
   const title = (input.canonicalTitle || input.productTitle || "").trim();
@@ -745,7 +762,14 @@ export function planXSocial(input: XPlannerInput): XPlanResult {
     seriesName: input.seriesName,
     workTitle: officialTitle,
   });
-  const viability = assessXViability(semanticFacts);
+  const focus = selectXPostFocus({
+    facts: semanticFacts,
+    relations: semanticRelations,
+    title: officialTitle,
+    officialClauses,
+    groundedFacts: [...(input.groundedPlanFacts ?? []), ...(input.claimStatements ?? []).map((claim) => claim.statement)],
+  });
+  const viability = focus ? assessXViability(semanticFacts) : "X_INSUFFICIENT_MATERIAL";
   const semanticValues = semanticFacts.map((fact) => fact.value);
   if (semanticValues.length > 0) {
     const rest = allowedClaims.filter(
@@ -764,13 +788,11 @@ export function planXSocial(input: XPlannerInput): XPlanResult {
   concreteDetails.length = 0;
   concreteDetails.push(...faithfulDetails);
 
-  const editorial = buildEditorialAngle({
-    subject,
-    contentType,
-    corePremise,
-    primaryAppeal,
-    seriesName: seriesSafe,
-  });
+  const editorial = {
+    angle: focus ?? "",
+    readerHook: focus ?? "",
+    whyThisWork: focus ?? "",
+  };
 
   const workUnderstanding = dedupe([
     editorial.whyThisWork,
@@ -827,11 +849,10 @@ export function planXSocial(input: XPlannerInput): XPlanResult {
   }
 
   const supportingClaims = allowedClaims.slice(0, 4);
-  const whatIsInteresting =
-    editorial.readerHook ||
-    primaryAppeal ||
-    corePremise ||
-    (subject ? `${subject}の作品焦点` : "作品の具体点");
+  const whatIsInteresting = focus || editorial.readerHook || "";
+  if (focus) {
+    corePremise = focus;
+  }
 
   // Publication intent: not a fixed template. Prefer article reply when there is
   // enough understanding to justify a WP deep-dive; related when identity/series exists.

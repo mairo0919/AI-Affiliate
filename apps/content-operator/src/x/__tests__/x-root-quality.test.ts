@@ -349,6 +349,43 @@ describe("planner viability uses a primary fact, not a spec readout", () => {
     expect(body).not.toMatch(/を収録している/);
     expect(reviewXSocialCopy(body, planned.plan).ok).toBe(true);
   });
+
+  it("keeps 1rctd00762 on one focus and rejects the explainer frame", () => {
+    const title = "ROCKET18周年記念ユーザーリクエスト祭り 無個性ゼンタイ人間化";
+    const planned = planXSocial({
+      canonicalTitle: title,
+      productTitle: title,
+      performerNames: ["一色さら", "広瀬美結", "加藤ツバキ（夏樹カオル）"],
+    });
+    expect(planned.ok).toBe(true);
+    if (!planned.ok) return;
+    expect(planned.plan.viability).toBe("X_POSTABLE");
+    expect(planned.plan.angle).toBe("無個性ゼンタイ人間化");
+    expect(planned.plan.angle).not.toMatch(/紹介する|状況設定|作品を紹介|作品概要/);
+    expect(planned.plan.angle.replace(/\s+/gu, "")).not.toBe(title.replace(/\s+/gu, ""));
+    const old =
+      "一色さら、広瀬美結、加藤ツバキ（夏樹カオル）が出演する本作は、ROCKET18周年記念ユーザーリクエスト祭りの一環として制作されました。無個性ゼンタイ人間化という独特な状況設定が特徴です。";
+    const review = reviewXSocialCopy(old, planned.plan);
+    expect(review.ok).toBe(false);
+    expect(review.decision).toBe("REWRITE");
+    expect(review.dimensions.PROSE_QUALITY).toBe("FAIL");
+    expect(review.findings.map((finding) => finding.code)).toEqual(
+      expect.arrayContaining(["ARTICLE_SUMMARY_STYLE", "CATALOG_DESCRIPTION_STYLE"]),
+    );
+    const grounded = composeGroundedIntro(planned.plan) ?? "";
+    const passed = reviewXSocialCopy(grounded, planned.plan);
+    expect(passed.ok).toBe(true);
+    expect(passed.dimensions.PROSE_QUALITY).toBe("PASS");
+    expect(passed.findings.map((finding) => finding.code)).not.toEqual(
+      expect.arrayContaining([
+        "ARTICLE_SUMMARY_STYLE",
+        "CATALOG_DESCRIPTION_STYLE",
+        "TITLE_PARAPHRASE_STYLE",
+        "GENERIC_WORK_INTRO",
+        "FOCUS_NOT_SPECIFIC",
+      ]),
+    );
+  });
 });
 
 describe("X article images fall back to ALLOWED research images", () => {

@@ -12,13 +12,17 @@ export const X_SOCIAL_LLM_TEMPERATURE = 0.2;
 
 export const X_SOCIAL_WRITER_SYSTEM = [
   "You write one Japanese X post as a third party, not as the performer or the maker.",
+  "FOCUS is the single point of the post. Write one post that can be read on its own, about that focus.",
+  "Do not summarize an article. Do not write a product-catalog description. Do not shorten a work overview.",
+  "Do not put every fact into the post. Keep the sentence on FOCUS.",
   "RELATIONS are the only connections you may write. Do not join two facts unless a relation says so.",
   "A campaign is not something that 収録される. A person is not the work. A runtime is not the point of the post.",
-  "Say the primary relation: a premise, a feature, or the project name. Runtime, disc count, BEST, and 配信限定 may only sit beside that primary.",
+  "Say the relation that contains FOCUS. Runtime, disc count, BEST, and 配信限定 may only sit beside that focus.",
   "If the only true relation is performer plus a runtime, BEST, or 配信限定, return {\"body\":\"\"}.",
   "Do not write a post that is only 「の作品は、〜だ」, 「のシリーズ作品は、〜だ」, or 「AはBだ」. Do not end with 「がある」 after a number, a person, or する.",
   "Do not write 「出演作では」, 「が出演する作品では」, 「作品では」, 「という状況設定」, 「として制作されています」, 「が特徴」, or 「展開されます」.",
-  "Do not add rankings or evaluations such as 魅力, 圧巻, 必見, 世界観, 話題, 楽しめる, 迫力, 濃密, 際立って, 没入, or 注目.",
+  "Do not use an overview frame: a name or title, then 本作は, then a summary; a work は a project として制作; a setting が特徴; a title paraphrase という作品.",
+  "Do not add rankings, demand, or evaluations such as 魅力, 圧巻, 必見, 世界観, 話題, 楽しめる, 迫力, 濃密, 際立って, 没入, or 注目.",
   "Do not drop a word inside a phrase, and do not delete spaces to join title pieces.",
   "If only one fact exists, do not invent a second one, and still do not use 「の作品は、〜だ」.",
   "No URL. No hashtag. No navigation line.",
@@ -219,9 +223,9 @@ export function buildXSocialWriterPrompts(
   outputSchema: Record<string, unknown>;
 } {
   const writerPlan = {
+    FOCUS: plan.angle,
     SUBJECT: plan.subject,
     RELATIONS: plan.semanticRelations ?? [],
-    PRIMARY: (plan.semanticFacts ?? []).filter((fact) => fact.salience === "primary").map((fact) => fact.value),
     SUPPORTING: (plan.semanticFacts ?? []).filter((fact) => fact.salience === "supporting").map((fact) => fact.value),
   };
   const hints = (opts?.revisionHints ?? []).filter(Boolean);
@@ -229,9 +233,9 @@ export function buildXSocialWriterPrompts(
   return {
     systemInstruction: X_SOCIAL_WRITER_SYSTEM,
     userPrompt: [
-      "Write one X parent post body (Japanese) from this X_PLAN.",
+      "Write one standalone X post in Japanese. Turn it on FOCUS. Do not summarize the work.",
       "Parent only — no URLs, no hashtags, no article/navigation CTA (publication owns replies).",
-      "Compose from canonical understanding; do not glue package fragments or source slogans.",
+      "Use FOCUS as written. Do not paraphrase the title into an overview.",
       hints.length ? `Revision requirements:\n- ${hints.join("\n- ")}` : "",
       prev
         ? `Previous draft (do not copy flaws; rewrite from grounded plan):\n${prev.slice(0, 280)}`
@@ -337,7 +341,7 @@ export async function writeXSocialCopy(
             secondaryAppeal: null,
             concreteDetails: [],
             workUnderstanding: [],
-            angle: plan.allowedClaims[0] ?? plan.subject ?? "作品の焦点",
+            angle: plan.angle || plan.allowedClaims[0] || plan.subject || "",
             readerHook: plan.allowedClaims[0] ?? plan.readerHook,
             whyThisWork: plan.allowedClaims[1] ?? plan.whyThisWork,
           };

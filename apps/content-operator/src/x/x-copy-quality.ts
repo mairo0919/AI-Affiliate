@@ -92,6 +92,77 @@ export function isSpecReadout(text: string, primaryValues: string[]): boolean {
   return /収録|出演して|ベスト|配信限定|枚組|時間|タイトル/u.test(body);
 }
 
+export type XProseViolationCode =
+  | "ARTICLE_SUMMARY_STYLE"
+  | "CATALOG_DESCRIPTION_STYLE"
+  | "TITLE_PARAPHRASE_STYLE"
+  | "GENERIC_WORK_INTRO"
+  | "FOCUS_NOT_SPECIFIC";
+
+function compactProse(text: string): string {
+  return text.replace(/\s+/gu, "");
+}
+
+function isGenericFocusLabel(focus: string): boolean {
+  const value = focus.trim();
+  if (value.length < 2) return true;
+  return /^(?:作品の焦点|作品の具体点|焦点)$/u.test(value) || /の作品$/u.test(value);
+}
+
+/**
+ * Structural explainer frames. A single grounded clause such as
+ * 「一色さらは、無個性ゼンタイ人間化に出演している。」 does not match.
+ * Bare words (特徴, 作品, 設定) do not match unless they form the frame.
+ */
+export function classifyXProseQuality(
+  text: string,
+  input: { focus?: string | null; productTitle?: string | null },
+): XProseViolationCode[] {
+  const body = text.trim();
+  if (!body) return [];
+  const codes: XProseViolationCode[] = [];
+  if (
+    /(?:本作|この作品)は/u.test(body) ||
+    /として制作/u.test(body) ||
+    /一環として/u.test(body) ||
+    /(?:設定|企画|状況)が特徴/u.test(body)
+  ) {
+    codes.push("ARTICLE_SUMMARY_STYLE");
+  }
+  if (/が出演する本作/u.test(body) || /企画作品です/u.test(body) || /をテーマにした/u.test(body)) {
+    codes.push("CATALOG_DESCRIPTION_STYLE");
+  }
+  if (/という作品/u.test(body) || /タイトル通り/u.test(body) || /タイトルを言い換え/u.test(body)) {
+    codes.push("TITLE_PARAPHRASE_STYLE");
+  } else {
+    const title = compactProse(input.productTitle ?? "");
+    const flat = compactProse(body);
+    if (
+      title.length >= 16 &&
+      flat.includes(title) &&
+      /(?:です|だ)。?$/u.test(body) &&
+      !/出演している/u.test(body)
+    ) {
+      codes.push("TITLE_PARAPHRASE_STYLE");
+    }
+  }
+  if (
+    /という状況から紹介/u.test(body) ||
+    /の状況設定/u.test(body) ||
+    /作品を紹介/u.test(body) ||
+    /作品概要/u.test(body) ||
+    /の作品は[、，]/u.test(body) ||
+    /シリーズ作品は[、，]/u.test(body)
+  ) {
+    codes.push("GENERIC_WORK_INTRO");
+  }
+  const focus = (input.focus ?? "").trim();
+  if (!isGenericFocusLabel(focus) && !compactProse(body).includes(compactProse(focus))) {
+    codes.push("FOCUS_NOT_SPECIFIC");
+  }
+  return codes;
+}
+
 /** Mass-produced explainer frames. A normal clause with a subject and predicate does not match. */
 export function isTemplateExplainer(text: string): boolean {
   if (
