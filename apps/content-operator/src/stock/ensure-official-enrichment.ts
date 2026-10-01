@@ -207,7 +207,7 @@ export async function ensureOfficialEnrichmentForStockItem(input: {
       });
       sourceDocumentId = ingested.sourceDocumentId ?? sourceDocumentId;
       input.logger.info(
-        `official page capture cid=${input.canonicalId} class=${ingested.fetch.captureClass ?? "-"} final=${summarizeProductUrl(ingested.fetch.finalUrl)} bodyChars=${ingested.fetch.bodyTextLength ?? 0} extract=${ingested.evidence?.extractMode ?? "none"}`,
+        `official page capture cid=${input.canonicalId} class=${ingested.fetch.captureClass ?? "-"} final=${summarizeProductUrl(ingested.fetch.finalUrl)} bodyChars=${ingested.fetch.bodyTextLength ?? 0} extract=${ingested.evidence?.extractMode ?? "none"} detail=${ingested.fetch.captureDetail ?? "-"}`,
       );
       if (ingested.evidence) {
         const pageActors = [...(ingested.evidence.actors ?? [])].filter(Boolean);

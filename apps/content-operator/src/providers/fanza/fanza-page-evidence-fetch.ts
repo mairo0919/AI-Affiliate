@@ -74,6 +74,7 @@ export type PageEvidenceFetchResult = {
   /** Confirmed zero video binary downloads from this path. */
   movieBinaryRequests: 0;
   bodyTextLength?: number;
+  captureDetail?: string;
 };
 
 export type FetchFanzaPageEvidenceOptions = {
@@ -253,6 +254,7 @@ export async function fetchFanzaPageEvidence(
         fetchMode: "browser_fallback",
         browserFallbackUsed: true,
         captureClass,
+        captureDetail: browserHtml.captureDetail,
         bodyTextLength: browserHtml.bodyTextLength,
         externalRequestCount,
         movieBinaryRequests: 0,
@@ -267,6 +269,7 @@ export async function fetchFanzaPageEvidence(
       fetchMode: "browser_fallback",
       browserFallbackUsed: true,
       captureClass: browserHtml.captureClass ?? "BROWSER_LAUNCH_FAILED",
+      captureDetail: browserHtml.captureDetail,
       externalRequestCount,
       movieBinaryRequests: 0,
     };
@@ -285,23 +288,37 @@ export async function fetchFanzaPageEvidence(
   };
 }
 
-async function launchEvidenceBrowser() {
+function sanitizeBrowserError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/https?:\/\/\S+/g, "[url]").replace(/\s+/g, " ").trim().slice(0, 140);
+}
+
+async function launchEvidenceBrowser(): Promise<{
+  browser: Awaited<ReturnType<Awaited<typeof import("playwright")>["chromium"]["launch"]>>;
+  launchDetail: string;
+}> {
   const { chromium } = await import("playwright");
-  // Container /dev/shm is tiny. Without this, Chromium dies after the first
-  // successful renders and later products never reach extraction.
-  const args = ["--disable-dev-shm-usage", "--disable-gpu", "--no-sandbox"];
-  if (process.env.PLAYWRIGHT_BROWSERS_PATH) {
-    return chromium.launch({ headless: true, args });
-  }
-  try {
-    return await chromium.launch({
+  // /dev/shm in the container is tiny and kills Chromium after the first renders.
+  const shm = ["--disable-dev-shm-usage"];
+  const attempts: Array<Parameters<typeof chromium.launch>[0]> = [
+    { headless: true, args: shm },
+    {
       channel: process.env.PLAYWRIGHT_CHANNEL || "chrome",
       headless: true,
-      args,
-    });
-  } catch {
-    return chromium.launch({ headless: true, args });
+      args: shm,
+    },
+    { headless: true },
+  ];
+  const failures: string[] = [];
+  for (const options of attempts) {
+    try {
+      const browser = await chromium.launch(options);
+      return { browser, launchDetail: failures.length ? `fallback_after=${failures.join("|")}` : "default" };
+    } catch (error) {
+      failures.push(sanitizeBrowserError(error));
+    }
   }
+  throw new Error(failures.join("|") || "browser_launch_failed");
 }
 
 async function fetchRenderedHtmlLowCost(input: {
@@ -316,13 +333,15 @@ async function fetchRenderedHtmlLowCost(input: {
   bodyTextLength?: number;
   requestEstimate: number;
   captureClass: OfficialPageCaptureClass;
+  captureDetail?: string;
 }> {
   // Dynamic import keeps unit tests free of Playwright unless fallback runs.
   const { chromium } = await import("playwright");
   let browser = null as Awaited<ReturnType<typeof chromium.launch>> | null;
   let requestEstimate = 1;
   try {
-    browser = await launchEvidenceBrowser();
+    const launched = await launchEvidenceBrowser();
+    browser = launched.browser;
     const context = await browser.newContext({
       userAgent: UA,
       javaScriptEnabled: true,
@@ -425,15 +444,17 @@ async function fetchRenderedHtmlLowCost(input: {
         hasProductJsonLd: Boolean(flags.hasProductJsonLd),
         hasGallery: Boolean(flags.hasGallery),
       }),
+      captureDetail: launched.launchDetail,
     };
   } catch (error) {
     await browser?.close().catch(() => undefined);
-    const message = error instanceof Error ? error.message : "";
-    const navigationFailed = /timeout|net::|Navigation|Target closed/i.test(message);
+    const detail = sanitizeBrowserError(error);
+    const navigationFailed = /timeout|net::|Navigation|Target closed/i.test(detail);
     return {
       html: null,
       requestEstimate,
       captureClass: navigationFailed ? "NAVIGATION_FAILED" : "BROWSER_LAUNCH_FAILED",
+      captureDetail: detail,
     };
   }
 }
