@@ -589,6 +589,27 @@ export function buildEvidencePack(input: {
     catalogBySurface.set(item.id, item);
   }
 
+  // Official runtime is a measured page fact. Claim selection caps often drop the
+  // short "N分" claim, and description atoms may have no scene. Keep it concrete
+  // so the body slot can be assigned without inventing a fact. Genres stay catalog.
+  const durationMinutes = input.pageEvidenceMeta?.catalog?.durationMinutes;
+  if (durationMinutes && Number.isFinite(durationMinutes.value) && durationMinutes.value > 0) {
+    const fact = `${durationMinutes.value}分`;
+    const sem = classifySemanticEvidence(fact, { sourceType: "product_description" });
+    pushUnique("concrete", {
+      id: "page_atom::durationMinutes",
+      type: "quantity_or_runtime",
+      fact,
+      provenance: {
+        sourceType: "product_description",
+        sourceRef: durationMinutes.originField || "catalog.durationMinutes",
+      },
+      confidence: "high",
+      generationEligible: true,
+      semanticFamilyId: sem.familyId,
+    });
+  }
+
   for (const e of research) {
     if (e.sourceType === "product_title") continue; // already handled
     if (e.sourceType === "package_or_page_image") continue;

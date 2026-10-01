@@ -495,6 +495,19 @@ export type XHorizonAssignment = XSlotAssignment & {
  * - Sole PASS reserves the earliest open future slot
  * - Leftover PASS rolls to later days' earliest upcoming slots
  */
+/**
+ * Today's quota can already be filled by reservations made on an earlier day.
+ * The rolling horizon still has to plan open slots inside the window.
+ */
+export function shouldPlanXHorizon(input: {
+  xNeeded: number;
+  openFutureSlots: number;
+  forceSmoke?: boolean;
+}): boolean {
+  if (input.forceSmoke) return true;
+  return input.xNeeded > 0 || input.openFutureSlots > 0;
+}
+
 export function planXPostScheduleHorizon(input: {
   now: Date;
   candidates: XScheduleCandidate[];

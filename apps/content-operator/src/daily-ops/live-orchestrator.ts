@@ -66,6 +66,7 @@ import {
   probeXScheduleCandidates,
   type XSlotLiveOutcome,
 } from "./x-slot-live.js";
+import { listUpcomingXPostSlots, shouldPlanXHorizon } from "./x-post-schedule.js";
 
 export interface DailyLiveResult {
   dayKey: string;
@@ -190,7 +191,29 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
   const xRoom = Math.max(0, daily.xHardCapPerDay - xCounts.total);
   const xNeeded = Math.min(regularNeeded + extraNeeded, xRoom);
 
-  if (!deps.forceSmoke && blogNeeded <= 0 && xNeeded <= 0) {
+  let openFutureSlots = 0;
+  if (!deps.forceSmoke && xNeeded <= 0) {
+    const filledSlotKeys = await loadFilledXSlotKeys(deps.database.prisma, {
+      fromDayKey: dayKey,
+      dayCount: 3,
+      timeZone: daily.timezone,
+    });
+    openFutureSlots = listUpcomingXPostSlots({
+      now,
+      dayCount: 3,
+      hours: daily.xPostSlotHoursJst,
+      mainHour: daily.xMainPostSlotHourJst,
+      filledSlotKeys,
+      extraDayKey: daily.xPostExtraSlotsDayJst,
+      extraTimes: daily.xPostExtraSlotTimesJst,
+    }).length;
+  }
+
+  if (
+    !deps.forceSmoke &&
+    blogNeeded <= 0 &&
+    !shouldPlanXHorizon({ xNeeded, openFutureSlots })
+  ) {
     return {
       dayKey,
       skipped: true,
@@ -577,7 +600,7 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
   }
 
   // ——— X (fixed JST slots: 12:00 / 18:00 SECONDARY + 23:00 MAIN; WP_TRAFFIC only) ———
-  if (xNeeded > 0 || deps.forceSmoke) {
+  if (shouldPlanXHorizon({ xNeeded, openFutureSlots, forceSmoke: deps.forceSmoke })) {
     x.attempted = true;
     x.route = "BLOG_TRAFFIC";
     const filledSlotKeys = await loadFilledXSlotKeys(deps.database.prisma, {

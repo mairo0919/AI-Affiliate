@@ -320,4 +320,35 @@ describe("r17 regressions (LLM=0)", () => {
       expect(src).not.toMatch(/LearningRule|updateLearningRule|mutateLearning/);
     }
   });
+
+  it("P. official duration stays concrete when claim selection is empty", () => {
+    const pack = buildEvidencePack({
+      productTitle: "出演者名の作品",
+      claims: [],
+      pageEvidenceMeta: {
+        productName: "出演者名の作品",
+        actors: ["出演者名"],
+        description: { text: "公式の短い紹介です。" },
+        catalog: {
+          durationMinutes: { value: 120, provenance: "page", originField: "catalog.duration" },
+          genres: [{ value: "ドラマ", provenance: "page", originField: "genre" }],
+        },
+      },
+    });
+    expect(
+      pack.concreteEvidence.some(
+        (e) => e.generationEligible && e.type === "quantity_or_runtime" && e.fact === "120分",
+      ),
+    ).toBe(true);
+    expect(
+      pack.catalogMetadata.find((e) => e.id.startsWith("catalog::genre"))?.generationEligible,
+    ).toBe(false);
+    const profile = buildProductMaterialProfileFromPack(pack);
+    const feasibility = ensureFeasibleWritingSkeleton({
+      skeleton: skeletonFromMaterialProfile(profile),
+      pack,
+      profile,
+    });
+    expect(feasibility.deferReason).not.toBe("no_meaningful_body_after_shrink");
+  });
 });

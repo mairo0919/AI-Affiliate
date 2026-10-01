@@ -278,7 +278,7 @@ describe("fanza page evidence (LLM=0 fixtures)", () => {
           series: null,
           genres: [{ value: "そっくりさん", provenance: "page_dom", originField: "genre" }],
           relatedTags: [],
-          durationMinutes: { value: 118, provenance: "page_dom", originField: "duration" },
+          durationMinutes: null,
           releaseDate: { value: "2019-08-19", provenance: "page_dom", originField: "release" },
           manufacturerSku: { value: "RKI-500", provenance: "page_dom", originField: "sku" },
         },

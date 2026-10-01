@@ -11,6 +11,7 @@ import {
   parseXPostExtraSlotTimesJst,
   parseXPostSlotHoursJst,
   planXPostScheduleHorizon,
+  shouldPlanXHorizon,
   tokyoDayKeyOf,
   type XScheduleCandidate,
 } from "../x-post-schedule.js";
@@ -462,5 +463,37 @@ describe("x-post-schedule boundary cases (JST)", () => {
     expect(assigned.some((a) => a.slotKey.includes("T15:00:00"))).toBe(false);
     expect(assigned.some((a) => a.slotKey.includes("T21:00:00"))).toBe(false);
     expect(assigned.some((a) => a.slotKey.includes("T23:00:00"))).toBe(false);
+  });
+
+  it("plans the new day inside a 3-day horizon after today is already reserved", () => {
+    const now = atJst("2026-10-02", 0, 30);
+    const filled = new Set<string>();
+    for (const day of ["2026-10-02", "2026-10-03"]) {
+      for (const hour of [12, 18, 23]) {
+        filled.add(`${day}T${String(hour).padStart(2, "0")}:00:00+09:00`);
+      }
+    }
+    const upcoming = listUpcomingXPostSlots({ now, dayCount: 3, filledSlotKeys: filled });
+    expect(upcoming.map((s) => s.slotKey)).toEqual([
+      "2026-10-04T12:00:00+09:00",
+      "2026-10-04T18:00:00+09:00",
+      "2026-10-04T23:00:00+09:00",
+    ]);
+    expect(shouldPlanXHorizon({ xNeeded: 0, openFutureSlots: upcoming.length })).toBe(true);
+    expect(shouldPlanXHorizon({ xNeeded: 0, openFutureSlots: 0 })).toBe(false);
+    const plan = planXPostScheduleHorizon({
+      now,
+      candidates: [pass("unused-a"), pass("unused-b"), pass("unused-c")],
+      maxPostsPerDay: 3,
+      hours: [12, 18, 23],
+      mainHour: 23,
+      filledSlotKeys: filled,
+      dayCount: 3,
+    });
+    expect(plan.filter((p) => p.status === "ASSIGNED").map((p) => p.slotKey)).toEqual([
+      "2026-10-04T12:00:00+09:00",
+      "2026-10-04T18:00:00+09:00",
+      "2026-10-04T23:00:00+09:00",
+    ]);
   });
 });
