@@ -602,7 +602,7 @@ export class SchedulerPipeline {
       });
       if (synced.checked > 0) {
         this.logger.info(
-          `wordpress publish status sync checked=${synced.checked} promoted=${synced.promoted}`,
+          `wordpress publish status sync checked=${synced.checked} promoted=${synced.promoted} publish=${synced.counts.WP_PUBLISHED_INTERNAL_SCHEDULED} future=${synced.counts.WP_FUTURE_INTERNAL_SCHEDULED} draft=${synced.counts.WP_DRAFT_INTERNAL_SCHEDULED} missing=${synced.counts.WP_MISSING} other=${synced.counts.OTHER}`,
         );
       }
     } catch (error) {

@@ -11,7 +11,10 @@ import {
   toSourceDocumentPageEvidenceMeta,
   withMergedItemListCatalog,
 } from "./fanza-page-evidence.js";
-import { fetchFanzaPageEvidence } from "./fanza-page-evidence-fetch.js";
+import {
+  classifyOfficialPageCapture,
+  fetchFanzaPageEvidence,
+} from "./fanza-page-evidence-fetch.js";
 import { buildEvidencePack } from "../../article-pattern/evidence-pack.js";
 
 const FIXTURE = readFileSync(
@@ -124,6 +127,40 @@ describe("fanza page evidence (LLM=0 fixtures)", () => {
   it("gallery extractor lists all sample imgs (not first-only)", () => {
     const urls = extractGalleryImageUrls(FIXTURE);
     expect(urls.length).toBeGreaterThanOrEqual(11);
+  });
+
+  it("does not treat an age-check page or empty shell as product evidence", () => {
+    const age = extractFanzaPageEvidenceFromHtml({
+      html: "<html><title>年齢認証</title><body>age_check</body></html>",
+    });
+    expect(age.extractMode).toBe("empty");
+    expect(
+      classifyOfficialPageCapture({
+        finalUrl: "https://www.dmm.co.jp/age_check/",
+        title: "年齢認証",
+        hasProductJsonLd: false,
+        hasGallery: false,
+      }),
+    ).toBe("AGE_CHECK_UNRESOLVED");
+    const shell = extractFanzaPageEvidenceFromHtml({
+      html: "<html><body><div id='__next'></div></body></html>",
+    });
+    expect(shell.extractMode).toBe("empty");
+    expect(
+      classifyOfficialPageCapture({
+        finalUrl: "https://video.dmm.co.jp/av/content/",
+        title: "",
+        hasProductJsonLd: false,
+        hasGallery: false,
+      }),
+    ).toBe("CLIENT_SHELL_NO_PRODUCT");
+    expect(
+      classifyOfficialPageCapture({
+        launchFailed: true,
+        hasProductJsonLd: false,
+        hasGallery: false,
+      }),
+    ).toBe("BROWSER_LAUNCH_FAILED");
   });
 
   it("fixture fetch path uses 0 external requests", async () => {

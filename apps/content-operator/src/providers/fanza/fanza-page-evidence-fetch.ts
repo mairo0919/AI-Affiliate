@@ -26,6 +26,40 @@ import {
 
 export type PageEvidenceFetchMode = "html" | "browser_fallback" | "fixture";
 
+/** Sanitized browser outcome. Never includes HTML, cookies, or query secrets. */
+export type OfficialPageCaptureClass =
+  | "BROWSER_LAUNCH_FAILED"
+  | "NAVIGATION_FAILED"
+  | "AGE_CHECK_UNRESOLVED"
+  | "CLIENT_SHELL_NO_PRODUCT"
+  | "PRODUCT_EVIDENCE_PRESENT";
+
+export function summarizeProductUrl(raw: string | null | undefined): string {
+  if (!raw) return "-";
+  try {
+    const url = new URL(raw);
+    return `${url.host}${url.pathname}`;
+  } catch {
+    return "invalid_url";
+  }
+}
+
+export function classifyOfficialPageCapture(input: {
+  launchFailed?: boolean;
+  navigationFailed?: boolean;
+  finalUrl?: string | null;
+  title?: string | null;
+  hasProductJsonLd: boolean;
+  hasGallery: boolean;
+}): OfficialPageCaptureClass {
+  if (input.hasProductJsonLd || input.hasGallery) return "PRODUCT_EVIDENCE_PRESENT";
+  if (input.launchFailed) return "BROWSER_LAUNCH_FAILED";
+  if (input.navigationFailed) return "NAVIGATION_FAILED";
+  const hay = `${input.finalUrl ?? ""} ${input.title ?? ""}`;
+  if (/age_check|年齢認証/i.test(hay)) return "AGE_CHECK_UNRESOLVED";
+  return "CLIENT_SHELL_NO_PRODUCT";
+}
+
 export type PageEvidenceFetchResult = {
   ok: boolean;
   reason?: string;
@@ -34,10 +68,12 @@ export type PageEvidenceFetchResult = {
   finalUrl: string;
   fetchMode: PageEvidenceFetchMode;
   browserFallbackUsed: boolean;
+  captureClass?: OfficialPageCaptureClass;
   /** Approximate HTTP round-trips we initiated (not asset fan-out when aborted). */
   externalRequestCount: number;
   /** Confirmed zero video binary downloads from this path. */
   movieBinaryRequests: 0;
+  bodyTextLength?: number;
 };
 
 export type FetchFanzaPageEvidenceOptions = {
@@ -195,18 +231,45 @@ export async function fetchFanzaPageEvidence(
         html,
         contentIdHint: options.contentIdHint,
       });
+      const captureClass =
+        browserHtml.captureClass ??
+        classifyOfficialPageCapture({
+          hasProductJsonLd: evidence.extractMode === "jsonld" || evidence.extractMode === "jsonld+gallery",
+          hasGallery: evidence.extractMode === "gallery_dom" || evidence.extractMode === "jsonld+gallery",
+          finalUrl,
+          title: browserHtml.title,
+        });
       return {
-        ok: evidence.extractMode !== "empty",
-        reason: evidence.extractMode === "empty" ? "browser_no_evidence" : undefined,
+        ok: evidence.extractMode !== "empty" && captureClass !== "AGE_CHECK_UNRESOLVED",
+        reason:
+          captureClass === "AGE_CHECK_UNRESOLVED"
+            ? "age_check_unresolved"
+            : evidence.extractMode === "empty"
+              ? "browser_no_evidence"
+              : undefined,
         evidence,
         html,
         finalUrl,
         fetchMode: "browser_fallback",
         browserFallbackUsed: true,
+        captureClass,
+        bodyTextLength: browserHtml.bodyTextLength,
         externalRequestCount,
         movieBinaryRequests: 0,
       };
     }
+    return {
+      ok: false,
+      reason: browserHtml.captureClass ?? "BROWSER_LAUNCH_FAILED",
+      evidence: null,
+      html: null,
+      finalUrl,
+      fetchMode: "browser_fallback",
+      browserFallbackUsed: true,
+      captureClass: browserHtml.captureClass ?? "BROWSER_LAUNCH_FAILED",
+      externalRequestCount,
+      movieBinaryRequests: 0,
+    };
   }
 
   return {
@@ -222,25 +285,44 @@ export async function fetchFanzaPageEvidence(
   };
 }
 
+async function launchEvidenceBrowser() {
+  const { chromium } = await import("playwright");
+  // Container /dev/shm is tiny. Without this, Chromium dies after the first
+  // successful renders and later products never reach extraction.
+  const args = ["--disable-dev-shm-usage", "--disable-gpu", "--no-sandbox"];
+  if (process.env.PLAYWRIGHT_BROWSERS_PATH) {
+    return chromium.launch({ headless: true, args });
+  }
+  try {
+    return await chromium.launch({
+      channel: process.env.PLAYWRIGHT_CHANNEL || "chrome",
+      headless: true,
+      args,
+    });
+  } catch {
+    return chromium.launch({ headless: true, args });
+  }
+}
+
 async function fetchRenderedHtmlLowCost(input: {
   url: string;
   navigationTimeoutMs: number;
   renderTimeoutMs: number;
   sessionCookies?: AgeGateSessionCookie[];
-}): Promise<{ html: string | null; finalUrl?: string; requestEstimate: number }> {
+}): Promise<{
+  html: string | null;
+  finalUrl?: string;
+  title?: string;
+  bodyTextLength?: number;
+  requestEstimate: number;
+  captureClass: OfficialPageCaptureClass;
+}> {
   // Dynamic import keeps unit tests free of Playwright unless fallback runs.
   const { chromium } = await import("playwright");
   let browser = null as Awaited<ReturnType<typeof chromium.launch>> | null;
   let requestEstimate = 1;
   try {
-    try {
-      browser = await chromium.launch({
-        channel: process.env.PLAYWRIGHT_CHANNEL || "chrome",
-        headless: true,
-      });
-    } catch {
-      browser = await chromium.launch({ headless: true });
-    }
+    browser = await launchEvidenceBrowser();
     const context = await browser.newContext({
       userAgent: UA,
       javaScriptEnabled: true,
@@ -307,11 +389,51 @@ async function fetchRenderedHtmlLowCost(input: {
 
     const html = await page.content();
     const renderedUrl = page.url();
+    const renderedTitle = await page.title().catch(() => "");
+    const probe = await page
+      .evaluate(`(() => {
+        const nodes = document.querySelectorAll('script[type="application/ld+json"]');
+        let hasProductJsonLd = false;
+        for (const node of nodes) {
+          const t = node.textContent || "";
+          if (t.includes("@type") && t.includes("Product")) hasProductJsonLd = true;
+        }
+        return {
+          hasProductJsonLd,
+          hasGallery: Boolean(document.querySelector('[data-e2eid="sample-image-gallery"]')),
+          bodyTextLength: (document.body && document.body.innerText ? document.body.innerText.length : 0),
+        };
+      })()`)
+      .catch(() => ({ hasProductJsonLd: false, hasGallery: false, bodyTextLength: 0 }));
+    const flags = probe as {
+      hasProductJsonLd?: boolean;
+      hasGallery?: boolean;
+      bodyTextLength?: number;
+    };
     await context.close().catch(() => undefined);
     await browser.close().catch(() => undefined);
-    return { html, finalUrl: renderedUrl, requestEstimate };
-  } catch {
+    browser = null;
+    return {
+      html,
+      finalUrl: renderedUrl,
+      title: renderedTitle,
+      bodyTextLength: flags.bodyTextLength ?? 0,
+      requestEstimate,
+      captureClass: classifyOfficialPageCapture({
+        finalUrl: renderedUrl,
+        title: renderedTitle,
+        hasProductJsonLd: Boolean(flags.hasProductJsonLd),
+        hasGallery: Boolean(flags.hasGallery),
+      }),
+    };
+  } catch (error) {
     await browser?.close().catch(() => undefined);
-    return { html: null, requestEstimate };
+    const message = error instanceof Error ? error.message : "";
+    const navigationFailed = /timeout|net::|Navigation|Target closed/i.test(message);
+    return {
+      html: null,
+      requestEstimate,
+      captureClass: navigationFailed ? "NAVIGATION_FAILED" : "BROWSER_LAUNCH_FAILED",
+    };
   }
 }

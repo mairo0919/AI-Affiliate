@@ -1,22 +1,35 @@
 /**
- * Observe WordPress after a future slot has passed.
- * Only targets explicitly marked syncPublishStatus are updated.
- * Existing reservations without that flag stay untouched.
+ * Reconcile internal WordPress targets with the live post status.
+ * Only status=publish becomes internal PUBLISHED.
+ * Title, body, slug, and scheduledAt are never written.
  */
 
 import type { AppConfig } from "@ai-affiliate/config";
 import type { DatabaseClient } from "@ai-affiliate/database";
 import type { Logger } from "@ai-affiliate/shared";
 
-export function shouldPromoteScheduledWordPressTarget(input: {
-  syncPublishStatus: boolean;
-  scheduledAt: Date | null;
-  now: Date;
+export type WordPressReconciliationClass =
+  | "WP_PUBLISHED_INTERNAL_SCHEDULED"
+  | "WP_FUTURE_INTERNAL_SCHEDULED"
+  | "WP_DRAFT_INTERNAL_SCHEDULED"
+  | "WP_MISSING"
+  | "OTHER";
+
+export function classifyLiveWordPressStatus(input: {
+  httpStatus: number | null;
   liveStatus: string | null;
-}): boolean {
-  if (!input.syncPublishStatus) return false;
-  if (!input.scheduledAt || input.scheduledAt.getTime() > input.now.getTime()) return false;
-  return (input.liveStatus ?? "").trim().toLowerCase() === "publish";
+}): WordPressReconciliationClass {
+  if (input.httpStatus === 404) return "WP_MISSING";
+  if (input.httpStatus == null || input.httpStatus >= 400) return "OTHER";
+  const status = (input.liveStatus ?? "").trim().toLowerCase();
+  if (status === "publish") return "WP_PUBLISHED_INTERNAL_SCHEDULED";
+  if (status === "future") return "WP_FUTURE_INTERNAL_SCHEDULED";
+  if (status === "draft" || status === "pending") return "WP_DRAFT_INTERNAL_SCHEDULED";
+  return "OTHER";
+}
+
+export function shouldSyncInternalPublished(kind: WordPressReconciliationClass): boolean {
+  return kind === "WP_PUBLISHED_INTERNAL_SCHEDULED";
 }
 
 export function readScheduledInstant(input: {
@@ -43,13 +56,24 @@ export async function promoteDueWordPressSchedules(input: {
   logger: Logger;
   now?: Date;
   fetchImpl?: typeof fetch;
-}): Promise<{ checked: number; promoted: number }> {
+}): Promise<{
+  checked: number;
+  promoted: number;
+  counts: Record<WordPressReconciliationClass, number>;
+}> {
   const now = input.now ?? new Date();
+  const counts: Record<WordPressReconciliationClass, number> = {
+    WP_PUBLISHED_INTERNAL_SCHEDULED: 0,
+    WP_FUTURE_INTERNAL_SCHEDULED: 0,
+    WP_DRAFT_INTERNAL_SCHEDULED: 0,
+    WP_MISSING: 0,
+    OTHER: 0,
+  };
   const base = input.config.wordpressBaseUrl?.replace(/\/$/, "");
   const user = input.config.wordpressUsername;
   const pass = input.config.wordpressApplicationPassword;
   if (!base || !user || !pass || !input.config.wordpressAllowExternalRequests) {
-    return { checked: 0, promoted: 0 };
+    return { checked: 0, promoted: 0, counts };
   }
 
   const rows = await input.prisma.publicationTarget.findMany({
@@ -57,55 +81,57 @@ export async function promoteDueWordPressSchedules(input: {
       platform: "WORDPRESS",
       status: "SCHEDULED",
       publishedExternalId: { not: null },
-      platformMetadata: { path: ["syncPublishStatus"], equals: true },
     },
     select: {
       id: true,
       scheduledAt: true,
+      publishedAt: true,
       publishedExternalId: true,
       platformMetadata: true,
     },
-    take: 30,
+    take: 80,
   });
 
   const auth = Buffer.from(`${user}:${pass}`).toString("base64");
   const fetchImpl = input.fetchImpl ?? fetch;
   let promoted = 0;
   for (const row of rows) {
-    const scheduledAt = readScheduledInstant(row);
-    if (!scheduledAt || scheduledAt.getTime() > now.getTime()) continue;
     const externalId = row.publishedExternalId;
-    if (!externalId || !/^\d+$/.test(externalId)) continue;
+    if (!externalId || !/^\d+$/.test(externalId)) {
+      counts.OTHER += 1;
+      continue;
+    }
+    let httpStatus: number | null = null;
     let liveStatus: string | null = null;
     try {
       const res = await fetchImpl(
         `${base}/wp-json/wp/v2/posts/${externalId}?_fields=id,status`,
         { headers: { Authorization: `Basic ${auth}` } },
       );
-      if (!res.ok) continue;
-      const body = (await res.json()) as { status?: string };
-      liveStatus = typeof body.status === "string" ? body.status : null;
+      httpStatus = res.status;
+      if (res.ok) {
+        const body = (await res.json()) as { status?: string };
+        liveStatus = typeof body.status === "string" ? body.status : null;
+      }
     } catch {
+      counts.OTHER += 1;
       continue;
     }
-    if (
-      !shouldPromoteScheduledWordPressTarget({
-        syncPublishStatus: true,
-        scheduledAt,
-        now,
-        liveStatus,
-      })
-    ) {
-      continue;
-    }
-    await input.prisma.publicationTarget.update({
-      where: { id: row.id },
-      data: { status: "PUBLISHED", publishedAt: now },
+    const kind = classifyLiveWordPressStatus({ httpStatus, liveStatus });
+    counts[kind] += 1;
+    if (!shouldSyncInternalPublished(kind)) continue;
+    const scheduledAt = readScheduledInstant(row);
+    const publishedAt =
+      row.publishedAt ??
+      (scheduledAt && scheduledAt.getTime() <= now.getTime() ? scheduledAt : now);
+    const updated = await input.prisma.publicationTarget.updateMany({
+      where: { id: row.id, status: "SCHEDULED" },
+      data: { status: "PUBLISHED", publishedAt },
     });
-    promoted += 1;
+    promoted += updated.count;
   }
-  if (promoted > 0) {
-    input.logger.info(`wordpress publish status sync promoted=${promoted} checked=${rows.length}`);
-  }
-  return { checked: rows.length, promoted };
+  input.logger.info(
+    `wordpress publish status sync checked=${rows.length} promoted=${promoted} publish=${counts.WP_PUBLISHED_INTERNAL_SCHEDULED} future=${counts.WP_FUTURE_INTERNAL_SCHEDULED} draft=${counts.WP_DRAFT_INTERNAL_SCHEDULED} missing=${counts.WP_MISSING} other=${counts.OTHER}`,
+  );
+  return { checked: rows.length, promoted, counts };
 }

@@ -7,6 +7,7 @@ import type { AppConfig } from "@ai-affiliate/config";
 import type { LifecycleRepository, ResearchRepository } from "@ai-affiliate/database";
 import type { Logger } from "@ai-affiliate/shared";
 import { ingestFanzaPageEvidence } from "../ops/ingest-fanza-page-evidence.js";
+import { summarizeProductUrl } from "../providers/fanza/fanza-page-evidence-fetch.js";
 import { buildFanzaCanonicalProductUrl } from "../adapters/affiliate/fanza-affiliate-provider.js";
 
 export type OfficialEnrichmentStatus =
@@ -205,6 +206,9 @@ export async function ensureOfficialEnrichmentForStockItem(input: {
         },
       });
       sourceDocumentId = ingested.sourceDocumentId ?? sourceDocumentId;
+      input.logger.info(
+        `official page capture cid=${input.canonicalId} class=${ingested.fetch.captureClass ?? "-"} final=${summarizeProductUrl(ingested.fetch.finalUrl)} bodyChars=${ingested.fetch.bodyTextLength ?? 0} extract=${ingested.evidence?.extractMode ?? "none"}`,
+      );
       if (ingested.evidence) {
         const pageActors = [...(ingested.evidence.actors ?? [])].filter(Boolean);
         const pageGenres = (ingested.evidence.catalog?.genres ?? [])

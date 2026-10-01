@@ -1,48 +1,40 @@
 import { describe, expect, it } from "vitest";
 import {
+  classifyLiveWordPressStatus,
   readScheduledInstant,
-  shouldPromoteScheduledWordPressTarget,
+  shouldSyncInternalPublished,
 } from "./wp-publish-status-sync.js";
 
 describe("wordpress publish status sync", () => {
-  const now = new Date("2026-10-05T03:30:00.000Z");
-
-  it("promotes only a due post that WordPress has already published", () => {
-    expect(
-      shouldPromoteScheduledWordPressTarget({
-        syncPublishStatus: true,
-        scheduledAt: new Date("2026-10-05T03:00:00.000Z"),
-        now,
-        liveStatus: "publish",
-      }),
-    ).toBe(true);
+  it("syncs only a live publish status", () => {
+    expect(classifyLiveWordPressStatus({ httpStatus: 200, liveStatus: "publish" })).toBe(
+      "WP_PUBLISHED_INTERNAL_SCHEDULED",
+    );
+    expect(shouldSyncInternalPublished("WP_PUBLISHED_INTERNAL_SCHEDULED")).toBe(true);
   });
 
-  it("leaves future slots and unmarked reservations alone", () => {
-    expect(
-      shouldPromoteScheduledWordPressTarget({
-        syncPublishStatus: false,
-        scheduledAt: new Date("2026-10-01T03:00:00.000Z"),
-        now,
-        liveStatus: "publish",
-      }),
-    ).toBe(false);
-    expect(
-      shouldPromoteScheduledWordPressTarget({
-        syncPublishStatus: true,
-        scheduledAt: new Date("2026-10-05T12:00:00.000Z"),
-        now,
-        liveStatus: "publish",
-      }),
-    ).toBe(false);
-    expect(
-      shouldPromoteScheduledWordPressTarget({
-        syncPublishStatus: true,
-        scheduledAt: new Date("2026-10-05T03:00:00.000Z"),
-        now,
-        liveStatus: "future",
-      }),
-    ).toBe(false);
+  it("keeps future, draft, and missing rows scheduled", () => {
+    expect(classifyLiveWordPressStatus({ httpStatus: 200, liveStatus: "future" })).toBe(
+      "WP_FUTURE_INTERNAL_SCHEDULED",
+    );
+    expect(classifyLiveWordPressStatus({ httpStatus: 200, liveStatus: "draft" })).toBe(
+      "WP_DRAFT_INTERNAL_SCHEDULED",
+    );
+    expect(classifyLiveWordPressStatus({ httpStatus: 200, liveStatus: "pending" })).toBe(
+      "WP_DRAFT_INTERNAL_SCHEDULED",
+    );
+    expect(classifyLiveWordPressStatus({ httpStatus: 404, liveStatus: null })).toBe("WP_MISSING");
+    expect(classifyLiveWordPressStatus({ httpStatus: 500, liveStatus: null })).toBe("OTHER");
+    expect(shouldSyncInternalPublished("WP_FUTURE_INTERNAL_SCHEDULED")).toBe(false);
+    expect(shouldSyncInternalPublished("WP_DRAFT_INTERNAL_SCHEDULED")).toBe(false);
+    expect(shouldSyncInternalPublished("WP_MISSING")).toBe(false);
+    expect(shouldSyncInternalPublished("OTHER")).toBe(false);
+  });
+
+  it("is idempotent: only the publish class is eligible to change", () => {
+    const again = classifyLiveWordPressStatus({ httpStatus: 200, liveStatus: "publish" });
+    expect(shouldSyncInternalPublished(again)).toBe(true);
+    expect(shouldSyncInternalPublished("WP_FUTURE_INTERNAL_SCHEDULED")).toBe(false);
   });
 
   it("reads the slot key when the column is empty", () => {
