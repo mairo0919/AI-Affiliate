@@ -333,6 +333,96 @@ export class AnalysisEngine {
     }
   }
 
+  /**
+   * Score discovered products onto the latest completed run.
+   * Does not open a new run, so the existing candidate pool stays in place.
+   */
+  async appendExternalIdsToLatestRun(externalIds: string[]): Promise<{
+    analyzed: number;
+    candidates: number;
+    skipped: number;
+  }> {
+    const ids = [...new Set(externalIds.map((id) => id.trim()).filter(Boolean))];
+    if (ids.length === 0) return { analyzed: 0, candidates: 0, skipped: 0 };
+    const latest = await this.analysis.findLatestCompletedRun();
+    if (!latest) return { analyzed: 0, candidates: ids.length, skipped: ids.length };
+    const now = new Date();
+    const weights: ScoreWeights = {
+      ...DEFAULT_SCORE_WEIGHTS,
+      ...this.config.analysisScoreWeights,
+    };
+    const items: ResearchItemForAnalysis[] = [];
+    for (const externalId of ids) {
+      const item = await this.research.findItemByExternalId(externalId);
+      if (!item || !this.isAnalysisTarget(item)) continue;
+      items.push(item);
+    }
+    const genrePrices = this.collectGenrePrices(items);
+    const candidateInputs: Array<{
+      analysisRunId: string;
+      researchItemId: string;
+      productAnalysisId: string;
+      candidateType: ContentCandidateType;
+      rank: number;
+      selectionScore: number;
+      selectionReasons: string[];
+    }> = [];
+    let analyzed = 0;
+    for (const item of items) {
+      const metricsByType = buildMetricIndex(item);
+      const tagsByType = buildTagIndex(item);
+      const context = {
+        item,
+        metricsByType,
+        tagsByType,
+        genrePrices: this.genrePricesForItem(item, genrePrices),
+        now,
+        weights,
+      };
+      const eligibility = evaluateEligibility(context);
+      const popularity = scorePopularity(context);
+      const trend = scoreTrend(context);
+      const review = scoreReview(context);
+      const price = scorePrice(context);
+      const freshness = scoreFreshness(context);
+      const dataQuality = scoreDataQuality(context);
+      const { totalScore } = computeTotalScore(
+        { popularity, trend, review, price, freshness, dataQuality },
+        weights,
+      );
+      const saved = await this.analysis.upsertProductAnalysis({
+        analysisRunId: latest.id,
+        researchItemId: item.id,
+        totalScore,
+        popularityScore: popularity.score,
+        trendScore: trend.score,
+        reviewScore: review.score,
+        priceScore: price.score,
+        freshnessScore: freshness.score,
+        dataQualityScore: dataQuality.score ?? 0,
+        eligibilityStatus: eligibility.status,
+        exclusionReasons: eligibility.reasons,
+        scoreBreakdown: { popularity, trend, review, price, freshness, dataQuality },
+        analyzedAt: now,
+      });
+      analyzed += 1;
+      if (eligibility.status === "NOT_ELIGIBLE") continue;
+      const rankMetric = metricsByType.get("rankingPosition")?.points.at(-1)?.value;
+      const rank = Number.isFinite(rankMetric) ? Math.max(1, Math.round(rankMetric!)) : 1;
+      candidateInputs.push({
+        analysisRunId: latest.id,
+        researchItemId: item.id,
+        productAnalysisId: saved.id,
+        candidateType: "RANKING",
+        rank,
+        selectionScore: totalScore,
+        selectionReasons: ["FANZA_API_POPULAR", `rank=${rank}`],
+      });
+    }
+    const candidates = await this.analysis.createContentCandidates(candidateInputs);
+    return { analyzed, candidates, skipped: ids.length - items.length };
+  }
+
   private isAnalysisTarget(item: ResearchItemForAnalysis): boolean {
     if (item.itemType !== "PRODUCT") return false;
     if (!item.externalId?.trim()) return false;

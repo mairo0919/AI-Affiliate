@@ -9,6 +9,7 @@ import type { ChannelCandidate } from "./channel-selection.js";
 import { classifyReleaseAge, type ReleaseAgeThresholds } from "./release-age.js";
 import {
   buildWorkEvidenceSurface,
+  FANZA_API_POPULAR,
   priorityFieldsForWork,
   type DemandObservationDraft,
   type WorkEvidenceSurface,
@@ -264,6 +265,67 @@ async function attachDemandPriority(
   });
 }
 
+async function loadPopularResearchSupplements(
+  prisma: DatabaseClient["prisma"],
+  input: {
+    releaseAge: ReleaseAgeThresholds;
+    now: Date;
+    blogUrlByCid: Map<string, string>;
+    already: ReadonlySet<string>;
+  },
+): Promise<ChannelCandidate[]> {
+  const snapshot = await loadLatestDemandSnapshot(prisma);
+  const popular = snapshot
+    .filter((row) => row.source === FANZA_API_POPULAR && row.contentId)
+    .sort((a, b) => a.rank - b.rank)
+    .slice(0, 30);
+  const missing = popular
+    .map((row) => row.contentId!.trim())
+    .filter((cid) => cid && !input.already.has(cid.toLowerCase()));
+  if (missing.length === 0) return [];
+  const items = await prisma.researchItem.findMany({
+    where: { externalId: { in: missing } },
+    include: {
+      images: true,
+      tags: { include: { researchTag: true } },
+      productAnalyses: { orderBy: { analyzedAt: "desc" }, take: 1 },
+    },
+  });
+  return items.map((item) => {
+    const analysis = item.productAnalyses[0];
+    const sampleImageCount = item.images.length;
+    const publishedAt = item.publishedAt?.toISOString() ?? null;
+    const ageDays =
+      item.publishedAt != null ? (input.now.getTime() - item.publishedAt.getTime()) / 86400000 : null;
+    const breakdown = asRecord(analysis?.scoreBreakdown);
+    const richnessRaw = breakdown.pageEvidenceRichness ?? breakdown.evidenceRichness;
+    const pageEvidenceRichness =
+      typeof richnessRaw === "number" && Number.isFinite(richnessRaw)
+        ? Math.max(0, Math.min(1, richnessRaw))
+        : Math.min(1, sampleImageCount / 8 + (item.description ? 0.2 : 0));
+    return {
+      researchItemId: item.id,
+      canonicalId: item.externalId,
+      totalScore: analysis?.totalScore ?? 40 + Math.min(40, sampleImageCount * 4),
+      popularityScore: analysis?.popularityScore ?? null,
+      trendScore: analysis?.trendScore ?? null,
+      freshnessScore: analysis?.freshnessScore ?? null,
+      dataQualityScore: analysis?.dataQualityScore ?? (sampleImageCount > 0 ? 50 : 20),
+      reviewScore: analysis?.reviewScore ?? null,
+      pageEvidenceRichness,
+      sampleImageCount,
+      actressKey: tagName(item.tags, "actress"),
+      makerKey: tagName(item.tags, "maker"),
+      seriesKey: tagName(item.tags, "series"),
+      affiliateUrl: extractAffiliateUrl(item.rawData, item.url),
+      title: item.title,
+      publishedAt,
+      releaseAgeBucket: classifyReleaseAge(ageDays, input.releaseAge),
+      publishedBlogUrl: input.blogUrlByCid.get(item.externalId.toLowerCase()) ?? null,
+    };
+  });
+}
+
 function mergeCandidatePools(
   primary: ChannelCandidate[],
   extra: ChannelCandidate[],
@@ -369,9 +431,28 @@ export async function loadDailyCandidatePool(
       const item = analysis.researchItem;
       surfaces.set(item.externalId.trim().toLowerCase(), surfaceFromResearchItem(item));
     }
+    const withPublished = mergeCandidatePools(
+      analysisPool,
+      wpPublished,
+      Math.max(limit, wpPublished.length + 20),
+    );
+    const popularSupplements = await loadPopularResearchSupplements(prisma, {
+      releaseAge: input.releaseAge,
+      now,
+      blogUrlByCid,
+      already: new Set(withPublished.map((candidate) => candidate.canonicalId.trim().toLowerCase())),
+    });
+    for (const item of popularSupplements) {
+      if (!surfaces.has(item.canonicalId.trim().toLowerCase())) {
+        surfaces.set(
+          item.canonicalId.trim().toLowerCase(),
+          buildWorkEvidenceSurface({ contentId: item.canonicalId, titles: [item.title] }),
+        );
+      }
+    }
     const pool = await attachDemandPriority(
       prisma,
-      mergeCandidatePools(analysisPool, wpPublished, Math.max(limit, wpPublished.length + 20)),
+      mergeCandidatePools(withPublished, popularSupplements, withPublished.length + popularSupplements.length),
       surfaces,
     );
     return {
@@ -423,9 +504,20 @@ export async function loadDailyCandidatePool(
   for (const item of items) {
     surfaces.set(item.externalId.trim().toLowerCase(), surfaceFromResearchItem(item));
   }
+  const withPublished = mergeCandidatePools(
+    researchPool,
+    wpPublished,
+    Math.max(limit, wpPublished.length + 20),
+  );
+  const popularSupplements = await loadPopularResearchSupplements(prisma, {
+    releaseAge: input.releaseAge,
+    now,
+    blogUrlByCid,
+    already: new Set(withPublished.map((candidate) => candidate.canonicalId.trim().toLowerCase())),
+  });
   const pool = await attachDemandPriority(
     prisma,
-    mergeCandidatePools(researchPool, wpPublished, Math.max(limit, wpPublished.length + 20)),
+    mergeCandidatePools(withPublished, popularSupplements, withPublished.length + popularSupplements.length),
     surfaces,
   );
   return {

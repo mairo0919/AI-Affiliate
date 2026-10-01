@@ -49,6 +49,7 @@ import {
 } from "../stock/local-page-collector.js";
 import { probeEnabledAdultProviders } from "../providers/adult-provider-registry.js";
 import { runScheduledFanzaDemandCollection } from "../daily-ops/demand-collector.js";
+import { runFanzaPopularDemandDiscovery } from "../daily-ops/demand-discovery.js";
 
 export const DEFAULT_DUE_SCHEDULE_LIMIT = 20;
 export const DEFAULT_DUE_RETRY_LIMIT = 20;
@@ -555,6 +556,27 @@ export class SchedulerPipeline {
     } catch (error) {
       this.logger.warn(`stock generation phase failed: ${String(error)}`);
       stockGeneration = { skipped: true, skipReason: `stock generation error: ${String(error)}` };
+    }
+
+    try {
+      const discovery = await runFanzaPopularDemandDiscovery({
+        prisma: this.database.prisma,
+        config: this.config,
+        logger: this.logger,
+        now: this.now(),
+        onCreated: (contentIds) => this.analysisEngine.appendExternalIdsToLatestRun(contentIds),
+      });
+      this.logger.info(
+        `popular demand discovery created=${discovery.created} analyzed=${discovery.analyzed} candidates=${discovery.candidates} errors=${discovery.errors.length}`,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `popular demand discovery failed: ${message
+          .replace(/api_id=[^&\s]+/gi, "api_id=[redacted]")
+          .replace(/affiliate_id=[^&\s]+/gi, "affiliate_id=[redacted]")
+          .slice(0, 300)}`,
+      );
     }
 
     try {

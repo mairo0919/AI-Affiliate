@@ -449,51 +449,40 @@ export function demandTier(fields: DemandPriorityFields): 1 | 2 | 3 | 4 | 5 {
   return 5;
 }
 
-function compareNullableRank(left: number | null, right: number | null): number {
-  if (left == null && right == null) return 0;
-  if (left == null) return 1;
-  if (right == null) return -1;
-  return left - right;
+/**
+ * Add every present demand signal onto the existing totalScore.
+ * Signals stay independent: a work can carry recommended, popular, search, and segment together.
+ * NEW and REVIEW are not signals here.
+ */
+export function demandSignalBoost(fields: DemandPriorityFields): number {
+  let boost = 0;
+  const recommended = validRecommendedRank(fields.recommendedRank);
+  if (recommended != null) boost += (11 - recommended) * 12;
+  const popular = validPopularRank(fields.popularRank);
+  if (popular != null) boost += (101 - popular) * 0.8;
+  const search = validMatchedSearchRank(fields.bestInternalSearchRank, fields.matchedDemandKeywords);
+  if (search != null) boost += Math.max(0, 21 - search) * 2;
+  const segment = validSegmentRank(fields.bestSegmentRank);
+  if (segment != null) boost += Math.max(0, 21 - segment);
+  return boost;
 }
 
-function compareSearchTie(a: DemandPriorityFields, b: DemandPriorityFields): number {
-  const left = validMatchedSearchRank(a.bestInternalSearchRank, a.matchedDemandKeywords);
-  const right = validMatchedSearchRank(b.bestInternalSearchRank, b.matchedDemandKeywords);
-  return compareNullableRank(left, right);
-}
-
-function compareSegmentTie(a: DemandPriorityFields, b: DemandPriorityFields): number {
-  return compareNullableRank(validSegmentRank(a.bestSegmentRank), validSegmentRank(b.bestSegmentRank));
+export function demandAdjustedScore(fields: DemandPriorityFields & { totalScore?: number }): number {
+  return (fields.totalScore ?? 0) + demandSignalBoost(fields);
 }
 
 /**
- * Authority: recommended, API popular, evidence-matched internal search, segment popularity.
- * 0 means use the existing score sort. NEW and REVIEW lists do not reorder candidates.
+ * Higher adjusted score first. Equal scores fall through to the existing candidate sort.
+ * NEW and REVIEW lists do not reorder candidates.
  */
-export function compareDemandPriority(a: DemandPriorityFields, b: DemandPriorityFields): number {
-  const leftTier = demandTier(a);
-  const rightTier = demandTier(b);
-  if (leftTier !== rightTier) return leftTier - rightTier;
-  if (leftTier === 1) {
-    const byRecommended = compareNullableRank(
-      validRecommendedRank(a.recommendedRank),
-      validRecommendedRank(b.recommendedRank),
-    );
-    if (byRecommended !== 0) return byRecommended;
-  }
-  if (leftTier <= 2) {
-    const byPopular = compareNullableRank(validPopularRank(a.popularRank), validPopularRank(b.popularRank));
-    if (byPopular !== 0) return byPopular;
-  }
-  if (leftTier <= 3) {
-    const bySearch = compareSearchTie(a, b);
-    if (bySearch !== 0) return bySearch;
-  }
-  if (leftTier <= 4) {
-    const bySegment = compareSegmentTie(a, b);
-    if (bySegment !== 0) return bySegment;
-  }
-  return 0;
+export function compareDemandPriority(
+  a: DemandPriorityFields & { totalScore?: number },
+  b: DemandPriorityFields & { totalScore?: number },
+): number {
+  const left = demandAdjustedScore(a);
+  const right = demandAdjustedScore(b);
+  if (left === right) return 0;
+  return left > right ? -1 : 1;
 }
 
 function formatSegmentSignals(signals: SegmentDemandSignal[] | null | undefined): string {

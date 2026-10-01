@@ -67,9 +67,8 @@ export interface DailySelectionConfig {
    */
   sortMode?: "default" | "popularity" | "performer";
   /**
-   * Blog path only. When the pool has demand observations, recommended rank,
-   * API popular rank, evidence-matched search rank, then segment rank
-   * order the full eligible pool.
+   * Blog path only. Present demand signals are added to totalScore.
+   * Recommended, API popular, matched search, and segment stay separate in the reason.
    * Evidence thresholds still apply. X leaves this unset.
    */
   applyDemandPriority?: boolean;

@@ -16,6 +16,7 @@ import {
   FANZA_RECOMMENDED_PRODUCT,
   buildWorkEvidenceSurface,
   keywordMatchesEvidence,
+  demandAdjustedScore,
   parseDemandIngest,
   priorityFieldsForWork,
   selectLatestDemandSnapshot,
@@ -156,6 +157,7 @@ describe("FANZA demand candidate priority", () => {
       work({ canonicalId: "srch-20", totalScore: 97, matchedDemandKeywords: ["人妻"], bestInternalSearchRank: 20 }),
       work({ canonicalId: "unrel-01", totalScore: 96 }),
       work({ canonicalId: "normal-01", totalScore: 100 }),
+      work({ canonicalId: "popular-top", totalScore: 40, popularRank: 1 }),
       ...Array.from({ length: 15 }, (_, index) =>
         work({
           canonicalId: `normal-${String(index + 2).padStart(2, "0")}`,
@@ -167,39 +169,16 @@ describe("FANZA demand candidate priority", () => {
 
     const explained = explainArticleCandidateOrder(pool, demandConfig);
     const eligible = explained.rows.filter((row) => row.generationOrder != null);
-    expect(eligible.map((row) => row.candidate.canonicalId)).toEqual([
-      "rec-01",
-      "rec-02",
-      "rec-03",
-      "rec-04",
-      "rec-06",
-      "rec-07a",
-      "rec-07b",
-      "rec-08",
-      "rec-09",
-      "rec-10",
-      "srch-01",
-      "srch-nq",
-      "srch-03",
-      "srch-20",
-      "normal-01",
-      "unrel-01",
-      "normal-02",
-      "normal-03",
-      "normal-04",
-      "normal-05",
-      "normal-06",
-      "normal-07",
-      "normal-08",
-      "normal-09",
-      "normal-10",
-      "normal-11",
-      "normal-12",
-      "normal-13",
-      "normal-14",
-      "normal-15",
-      "normal-16",
-    ]);
+    const byAdjusted = [...eligible].sort(
+      (a, b) => demandAdjustedScore(b.candidate) - demandAdjustedScore(a.candidate),
+    );
+    expect(eligible.map((row) => row.candidate.canonicalId)).toEqual(
+      byAdjusted.map((row) => row.candidate.canonicalId),
+    );
+    const popularIndex = eligible.findIndex((row) => row.candidate.canonicalId === "popular-top");
+    const normalIndex = eligible.findIndex((row) => row.candidate.canonicalId === "normal-01");
+    expect(popularIndex).toBeGreaterThanOrEqual(0);
+    expect(normalIndex).toBeGreaterThan(popularIndex);
     expect(eligible.length).toBeGreaterThan(3);
     const thin = explained.rows.find((row) => row.candidate.canonicalId === "rec-05");
     expect(thin?.evidenceEligible).toBe(false);
@@ -214,7 +193,10 @@ describe("FANZA demand candidate priority", () => {
     const withoutDemand = selectDailyProductCandidate(pool, { ...demandConfig, applyDemandPriority: false });
     expect(withoutDemand.selected?.canonicalId).toBe("normal-01");
     const withDemand = selectDailyProductCandidate(pool, demandConfig);
-    expect(withDemand.selected?.canonicalId).toBe("rec-01");
+    const best = [...pool]
+      .filter((candidate) => candidate.sampleImageCount >= 3 && candidate.pageEvidenceRichness >= 0.25 && candidate.totalScore >= 20)
+      .sort((a, b) => demandAdjustedScore(b) - demandAdjustedScore(a))[0];
+    expect(withDemand.selected?.canonicalId).toBe(best?.canonicalId);
   });
 
   it("uses demand for blog order only and keeps already articled products out", () => {
@@ -345,15 +327,12 @@ describe("FANZA demand candidate priority", () => {
       work({ canonicalId: "new-only", totalScore: 100 }),
     ];
     const order = explainArticleCandidateOrder(pool, demandConfig);
-    expect(order.rows.map((row) => row.candidate.canonicalId)).toEqual([
-      "pop-1",
-      "search-only",
-      "seg-1",
-      "new-only",
-    ]);
-    expect(order.rows[0]?.priorityReason).toContain("FANZA_API_POPULAR rank=4");
-    expect(order.rows[0]?.priorityReason).toContain("FANZA_INTERNAL_SEARCH_MATCH rank=6");
-    expect(order.rows[3]?.priorityReason).toBe("NORMAL");
+    const pop = order.rows.find((row) => row.candidate.canonicalId === "pop-1");
+    const fresh = order.rows.find((row) => row.candidate.canonicalId === "new-only");
+    expect(pop?.priorityReason).toContain("FANZA_API_POPULAR rank=4");
+    expect(pop?.priorityReason).toContain("FANZA_INTERNAL_SEARCH_MATCH rank=6");
+    expect(fresh?.priorityReason).toBe("NORMAL");
+    expect(demandAdjustedScore(pop!.candidate)).toBeGreaterThan(demandAdjustedScore(fresh!.candidate));
   });
 
   it("drops a popular rank that is absent from the newest snapshot", () => {
