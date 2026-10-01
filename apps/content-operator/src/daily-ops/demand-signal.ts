@@ -459,7 +459,7 @@ export function demandSignalBoost(fields: DemandPriorityFields): number {
   const recommended = validRecommendedRank(fields.recommendedRank);
   if (recommended != null) boost += (11 - recommended) * 12;
   const popular = validPopularRank(fields.popularRank);
-  if (popular != null) boost += (101 - popular) * 0.8;
+  if (popular != null) boost += (101 - popular) * 1.2;
   const search = validMatchedSearchRank(fields.bestInternalSearchRank, fields.matchedDemandKeywords);
   if (search != null) boost += Math.max(0, 21 - search) * 2;
   const segment = validSegmentRank(fields.bestSegmentRank);

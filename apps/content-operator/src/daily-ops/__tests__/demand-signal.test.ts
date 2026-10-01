@@ -177,8 +177,10 @@ describe("FANZA demand candidate priority", () => {
     );
     const popularIndex = eligible.findIndex((row) => row.candidate.canonicalId === "popular-top");
     const normalIndex = eligible.findIndex((row) => row.candidate.canonicalId === "normal-01");
+    const searchIndex = eligible.findIndex((row) => row.candidate.canonicalId === "srch-03");
     expect(popularIndex).toBeGreaterThanOrEqual(0);
     expect(normalIndex).toBeGreaterThan(popularIndex);
+    expect(searchIndex).toBeGreaterThan(popularIndex);
     expect(eligible.length).toBeGreaterThan(3);
     const thin = explained.rows.find((row) => row.candidate.canonicalId === "rec-05");
     expect(thin?.evidenceEligible).toBe(false);
