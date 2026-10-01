@@ -379,6 +379,7 @@ export async function runPublishSlotScheduler(deps: {
           platformMetadata: {
             publishSlotKey: key,
             scheduledAt: key,
+            syncPublishStatus: true,
             protectedWpPosts: runtime.protectedWpPostIds,
             productKey: candidate.productKey,
             inventoryPromote: Boolean(

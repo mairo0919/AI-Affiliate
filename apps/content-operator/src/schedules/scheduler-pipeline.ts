@@ -50,6 +50,7 @@ import {
 import { probeEnabledAdultProviders } from "../providers/adult-provider-registry.js";
 import { runScheduledFanzaDemandCollection } from "../daily-ops/demand-collector.js";
 import { runFanzaPopularDemandDiscovery } from "../daily-ops/demand-discovery.js";
+import { promoteDueWordPressSchedules } from "../stock/wp-publish-status-sync.js";
 
 export const DEFAULT_DUE_SCHEDULE_LIMIT = 20;
 export const DEFAULT_DUE_RETRY_LIMIT = 20;
@@ -552,13 +553,6 @@ export class SchedulerPipeline {
     }
 
     try {
-      stockGeneration = await this.runStockGenerationPhase();
-    } catch (error) {
-      this.logger.warn(`stock generation phase failed: ${String(error)}`);
-      stockGeneration = { skipped: true, skipReason: `stock generation error: ${String(error)}` };
-    }
-
-    try {
       const discovery = await runFanzaPopularDemandDiscovery({
         prisma: this.database.prisma,
         config: this.config,
@@ -580,10 +574,39 @@ export class SchedulerPipeline {
     }
 
     try {
+      stockGeneration = await this.runStockGenerationPhase();
+    } catch (error) {
+      this.logger.warn(`stock generation phase failed: ${String(error)}`);
+      stockGeneration = { skipped: true, skipReason: `stock generation error: ${String(error)}` };
+    }
+
+    try {
       publishSlots = await this.runPublishSlotsPhase();
+      if ("otherSkipped" in publishSlots && publishSlots.otherSkipped.length > 0 && publishSlots.reserved.length === 0) {
+        const reason = publishSlots.otherSkipped[0]?.reason ?? "UNKNOWN";
+        this.logger.warn(
+          `publish slots reserved=0 skipped=${publishSlots.otherSkipped.length} first=${reason.slice(0, 160)}`,
+        );
+      }
     } catch (error) {
       this.logger.warn(`publish slots phase failed: ${String(error)}`);
       publishSlots = { skipped: true, skipReason: `publish slots error: ${String(error)}` };
+    }
+
+    try {
+      const synced = await promoteDueWordPressSchedules({
+        prisma: this.database.prisma,
+        config: this.config,
+        logger: this.logger,
+        now: this.now(),
+      });
+      if (synced.checked > 0) {
+        this.logger.info(
+          `wordpress publish status sync checked=${synced.checked} promoted=${synced.promoted}`,
+        );
+      }
+    } catch (error) {
+      this.logger.warn(`wordpress publish status sync failed: ${String(error)}`);
     }
 
     try {

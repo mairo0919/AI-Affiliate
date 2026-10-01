@@ -33,7 +33,13 @@ RUN pnpm build
 
 FROM base AS runner
 ENV NODE_ENV=production
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 COPY --from=build /app /app
+# Official product pages render in the browser. The existing evidence fallback
+# needs Chromium; bookworm-slim does not include one.
+RUN cd /app \
+  && pnpm --filter @ai-affiliate/content-operator exec playwright install --with-deps chromium \
+  && rm -rf /var/lib/apt/lists/*
 # Role selected via APP_ROLE: content-operator | admin-api | admin-web
 ENV APP_ROLE=content-operator
 # Migrate before long-running roles; failures are fatal so bad schema cannot silently run.
