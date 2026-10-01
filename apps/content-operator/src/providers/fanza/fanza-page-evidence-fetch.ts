@@ -288,6 +288,24 @@ export async function fetchFanzaPageEvidence(
   };
 }
 
+async function readStablePageHtml(page: {
+  content: () => Promise<string>;
+  waitForLoadState: (state: "domcontentloaded", options: { timeout: number }) => Promise<unknown>;
+}): Promise<string> {
+  let last: unknown;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await page.content();
+    } catch (error) {
+      last = error;
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/navigating and changing the content/i.test(message)) throw error;
+      await page.waitForLoadState("domcontentloaded", { timeout: 10_000 }).catch(() => undefined);
+    }
+  }
+  throw last instanceof Error ? last : new Error("page_content_unavailable");
+}
+
 function sanitizeBrowserError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   return message.replace(/https?:\/\/\S+/g, "[url]").replace(/\s+/g, " ").trim().slice(0, 140);
@@ -406,7 +424,7 @@ async function fetchRenderedHtmlLowCost(input: {
       )
       .catch(() => undefined);
 
-    const html = await page.content();
+    const html = await readStablePageHtml(page);
     const renderedUrl = page.url();
     const renderedTitle = await page.title().catch(() => "");
     const probe = await page
@@ -449,7 +467,7 @@ async function fetchRenderedHtmlLowCost(input: {
   } catch (error) {
     await browser?.close().catch(() => undefined);
     const detail = sanitizeBrowserError(error);
-    const navigationFailed = /timeout|net::|Navigation|Target closed/i.test(detail);
+    const navigationFailed = /timeout|net::|Navigation|navigating and changing|Target closed/i.test(detail);
     return {
       html: null,
       requestEstimate,
