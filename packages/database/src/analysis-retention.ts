@@ -319,12 +319,19 @@ function textArray(ids: string[]): Prisma.Sql {
   return Prisma.sql`ARRAY[${Prisma.join(ids)}]::text[]`;
 }
 
+async function pruneWorkRemaining(prisma: PrismaClient): Promise<number> {
+  const rows = await prisma.$queryRaw<Array<{ n: number }>>`
+    SELECT count(*)::int AS n FROM "_analysis_retention_prune"
+  `;
+  return Number(rows[0]?.n ?? 0);
+}
+
 async function deleteBatch(
   prisma: PrismaClient,
   sql: Prisma.Sql,
 ): Promise<number | "busy"> {
   return prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SET LOCAL statement_timeout = '20s'`;
+    await tx.$executeRaw`SET LOCAL statement_timeout = '60s'`;
     const lock = await tx.$queryRaw<Array<{ locked: boolean }>>`
       SELECT pg_try_advisory_xact_lock(${ADVISORY_LOCK_KEY}) AS locked
     `;
@@ -425,33 +432,36 @@ export async function applyAnalysisRetention(
     `);
     for (let i = 0; i < maxBatches; i += 1) {
       const deleted = await runOnce(Prisma.sql`
-        WITH doomed AS (
-          SELECT w.id
-          FROM "_analysis_retention_prune" w
+        WITH picked AS (
+          SELECT id FROM "_analysis_retention_prune" LIMIT ${batchSize}
+        ),
+        doomed AS (
+          SELECT picked.id
+          FROM picked
           WHERE NOT EXISTS (
-            SELECT 1 FROM "GeneratedContent" g WHERE g."contentCandidateId" = w.id
+            SELECT 1 FROM "GeneratedContent" g WHERE g."contentCandidateId" = picked.id
           )
           AND NOT EXISTS (
-            SELECT 1 FROM "XPublication" x WHERE x."contentCandidateId" = w.id
+            SELECT 1 FROM "XPublication" x WHERE x."contentCandidateId" = picked.id
           )
-          LIMIT ${batchSize}
         ),
-        removed AS (
-          DELETE FROM "ContentCandidate" c
-          USING doomed
-          WHERE c.id = doomed.id
-          RETURNING c.id
+        cleared AS (
+          DELETE FROM "_analysis_retention_prune" w
+          USING picked
+          WHERE w.id = picked.id
+          RETURNING w.id
         )
-        DELETE FROM "_analysis_retention_prune" w
-        USING removed
-        WHERE w.id = removed.id
+        DELETE FROM "ContentCandidate" c
+        USING doomed
+        WHERE c.id = doomed.id
+          AND EXISTS (SELECT 1 FROM cleared)
       `);
       deletedCandidates += deleted;
       batches += 1;
       if (batches % 1000 === 0) {
         console.log(`retention_progress phase=candidates deleted=${deletedCandidates}`);
       }
-      if (deleted === 0) break;
+      if (deleted === 0 && (await pruneWorkRemaining(prisma)) === 0) break;
     }
 
     await fill(Prisma.sql`
@@ -475,30 +485,33 @@ export async function applyAnalysisRetention(
     `);
     for (let i = 0; i < maxBatches; i += 1) {
       const deleted = await runOnce(Prisma.sql`
-        WITH doomed AS (
-          SELECT w.id
-          FROM "_analysis_retention_prune" w
-          WHERE NOT EXISTS (
-            SELECT 1 FROM "ContentCandidate" c WHERE c."productAnalysisId" = w.id
-          )
-          LIMIT ${batchSize}
+        WITH picked AS (
+          SELECT id FROM "_analysis_retention_prune" LIMIT ${batchSize}
         ),
-        removed AS (
-          DELETE FROM "ProductAnalysis" p
-          USING doomed
-          WHERE p.id = doomed.id
-          RETURNING p.id
+        doomed AS (
+          SELECT picked.id
+          FROM picked
+          WHERE NOT EXISTS (
+            SELECT 1 FROM "ContentCandidate" c WHERE c."productAnalysisId" = picked.id
+          )
+        ),
+        cleared AS (
+          DELETE FROM "_analysis_retention_prune" w
+          USING picked
+          WHERE w.id = picked.id
+          RETURNING w.id
         )
-        DELETE FROM "_analysis_retention_prune" w
-        USING removed
-        WHERE w.id = removed.id
+        DELETE FROM "ProductAnalysis" p
+        USING doomed
+        WHERE p.id = doomed.id
+          AND EXISTS (SELECT 1 FROM cleared)
       `);
       deletedAnalyses += deleted;
       batches += 1;
       if (batches % 1000 === 0) {
         console.log(`retention_progress phase=analyses deleted=${deletedAnalyses}`);
       }
-      if (deleted === 0) break;
+      if (deleted === 0 && (await pruneWorkRemaining(prisma)) === 0) break;
     }
 
     await fill(Prisma.sql`
@@ -515,33 +528,36 @@ export async function applyAnalysisRetention(
     `);
     for (let i = 0; i < maxBatches; i += 1) {
       const deleted = await runOnce(Prisma.sql`
-        WITH doomed AS (
-          SELECT w.id
-          FROM "_analysis_retention_prune" w
+        WITH picked AS (
+          SELECT id FROM "_analysis_retention_prune" LIMIT ${batchSize}
+        ),
+        doomed AS (
+          SELECT picked.id
+          FROM picked
           WHERE NOT EXISTS (
-            SELECT 1 FROM "ProductAnalysis" p WHERE p."analysisRunId" = w.id
+            SELECT 1 FROM "ProductAnalysis" p WHERE p."analysisRunId" = picked.id
           )
           AND NOT EXISTS (
-            SELECT 1 FROM "ContentCandidate" c WHERE c."analysisRunId" = w.id
+            SELECT 1 FROM "ContentCandidate" c WHERE c."analysisRunId" = picked.id
           )
-          LIMIT ${batchSize}
         ),
-        removed AS (
-          DELETE FROM "AnalysisRun" r
-          USING doomed
-          WHERE r.id = doomed.id
-          RETURNING r.id
+        cleared AS (
+          DELETE FROM "_analysis_retention_prune" w
+          USING picked
+          WHERE w.id = picked.id
+          RETURNING w.id
         )
-        DELETE FROM "_analysis_retention_prune" w
-        USING removed
-        WHERE w.id = removed.id
+        DELETE FROM "AnalysisRun" r
+        USING doomed
+        WHERE r.id = doomed.id
+          AND EXISTS (SELECT 1 FROM cleared)
       `);
       deletedRuns += deleted;
       batches += 1;
       if (batches % 1000 === 0) {
         console.log(`retention_progress phase=runs deleted=${deletedRuns}`);
       }
-      if (deleted === 0) break;
+      if (deleted === 0 && (await pruneWorkRemaining(prisma)) === 0) break;
     }
   } finally {
     await prisma.$executeRawUnsafe(`DROP TABLE IF EXISTS "_analysis_retention_prune"`);
