@@ -53,6 +53,21 @@ export type {
   SaveProductAnalysisInput,
   CreateContentCandidateInput,
 } from "./analysis-repository.js";
+export {
+  ANALYSIS_RETENTION_AUTO_MAX_BATCHES,
+  DEFAULT_ANALYSIS_RETENTION_BATCH_SIZE,
+  DEFAULT_ANALYSIS_RETENTION_KEEP_RUNS,
+  applyAnalysisRetention,
+  formatAnalysisRetentionReport,
+  loadAnalysisRetentionReport,
+  resolveRetentionCommand,
+  shouldAutoPruneAfterAnalysis,
+} from "./analysis-retention.js";
+export type {
+  AnalysisRetentionApplyResult,
+  AnalysisRetentionReport,
+  RetentionCommand,
+} from "./analysis-retention.js";
 export { ContentRepository, ContentStateError } from "./content-repository.js";
 export type {
   CreateGenerationRunInput,

@@ -53,6 +53,7 @@
     "research:notification:dispatch": "pnpm --filter @ai-affiliate/content-operator research:notification:dispatch",
     "research:notification:retry": "pnpm --filter @ai-affiliate/content-operator research:notification:retry",
     "analysis:run": "pnpm --filter @ai-affiliate/content-operator analysis:run",
+    "db:analysis-retention": "pnpm --filter @ai-affiliate/content-operator db:analysis-retention",
     "analysis:list": "pnpm --filter @ai-affiliate/content-operator analysis:list",
     "analysis:show": "pnpm --filter @ai-affiliate/content-operator analysis:show",
     "analysis:candidates": "pnpm --filter @ai-affiliate/content-operator analysis:candidates",

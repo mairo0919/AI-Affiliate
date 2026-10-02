@@ -7,7 +7,11 @@ import {
   NotificationRepository,
   ResearchRepository,
   ScheduleRepository,
+  applyAnalysisRetention,
   createDatabaseClient,
+  formatAnalysisRetentionReport,
+  loadAnalysisRetentionReport,
+  resolveRetentionCommand,
 } from "@ai-affiliate/database";
 import { createLogger } from "@ai-affiliate/shared";
 import {
@@ -254,6 +258,10 @@ interface CliFlags {
   limit?: number;
   includeRequiresConfirmation: boolean;
   dryRun: boolean;
+  apply: boolean;
+  confirmPrune?: number;
+  keepRuns?: number;
+  batchSize?: number;
   force: boolean;
   continueOnItemError?: boolean;
   candidateId?: string;
@@ -289,11 +297,20 @@ function parseBooleanFlag(value: string | undefined): boolean | undefined {
 }
 
 function parseFlags(argv: string[]): CliFlags {
-  const flags: CliFlags = { dryRun: false, includeRequiresConfirmation: false, force: false };
+  const flags: CliFlags = {
+    dryRun: false,
+    apply: false,
+    includeRequiresConfirmation: false,
+    force: false,
+  };
 
   for (const arg of argv) {
     if (arg === "--dry-run") {
       flags.dryRun = true;
+      continue;
+    }
+    if (arg === "--apply") {
+      flags.apply = true;
       continue;
     }
     if (arg === "--force") {
@@ -400,6 +417,15 @@ function parseFlags(argv: string[]): CliFlags {
         break;
       case "limit":
         flags.limit = parseNumberFlag(value);
+        break;
+      case "confirm-prune":
+        flags.confirmPrune = parseNumberFlag(value);
+        break;
+      case "keep-runs":
+        flags.keepRuns = parseNumberFlag(value);
+        break;
+      case "batch-size":
+        flags.batchSize = parseNumberFlag(value);
         break;
       case "continue-on-item-error":
         flags.continueOnItemError = parseBooleanFlag(value) ?? true;
@@ -1580,6 +1606,47 @@ async function runAnalysisCandidates(argv: string[]): Promise<void> {
   }
 }
 
+async function runAnalysisRetention(argv: string[]): Promise<void> {
+  const flags = parseFlags(argv);
+  const command = resolveRetentionCommand({
+    dryRun: flags.dryRun,
+    apply: flags.apply,
+    confirmPrune: flags.confirmPrune,
+  });
+  loadConfig();
+  const database = createDatabaseClient();
+  await database.connect();
+  try {
+    const report = await loadAnalysisRetentionReport(database.prisma, flags.keepRuns);
+    console.log(formatAnalysisRetentionReport(report));
+    if (command.mode === "dry-run") {
+      console.log("mode: DRY_RUN");
+      console.log("writes: none");
+      return;
+    }
+    if (command.mode === "refuse") {
+      console.error(command.reason);
+      process.exitCode = 2;
+      return;
+    }
+    const result = await applyAnalysisRetention(database.prisma, {
+      apply: true,
+      keepRuns: flags.keepRuns,
+      batchSize: flags.batchSize,
+      confirmPrune: flags.confirmPrune,
+      requireConfirm: true,
+    });
+    console.log("mode: APPLY");
+    console.log(`deleted_content_candidates: ${result.deletedCandidates}`);
+    console.log(`deleted_product_analyses: ${result.deletedAnalyses}`);
+    console.log(`deleted_analysis_runs: ${result.deletedRuns}`);
+    console.log(`batches: ${result.batches}`);
+    console.log("disk: logical rows were deleted. pg_database_size and Railway volume used are not the same as bytes freed to the OS.");
+  } finally {
+    await database.disconnect();
+  }
+}
+
 async function runAnalysisItem(argv: string[]): Promise<void> {
   const flags = parseFlags(argv);
   if (!flags.externalId) {
@@ -2033,6 +2100,9 @@ async function main(): Promise<void> {
       break;
     case "analysis-candidates":
       await runAnalysisCandidates(rest);
+      break;
+    case "analysis-retention":
+      await runAnalysisRetention(rest);
       break;
     case "analysis-item":
       await runAnalysisItem(rest);

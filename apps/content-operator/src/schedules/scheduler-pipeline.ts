@@ -1,6 +1,7 @@
 import type { AppConfig } from "@ai-affiliate/config";
 import type { DatabaseClient } from "@ai-affiliate/database";
 import {
+  ANALYSIS_RETENTION_AUTO_MAX_BATCHES,
   AnalysisRepository,
   ContentRepository,
   JobRepository,
@@ -10,6 +11,8 @@ import {
   XOptimizationRepository,
   XOpsRepository,
   XPublicationRepository,
+  applyAnalysisRetention,
+  shouldAutoPruneAfterAnalysis,
 } from "@ai-affiliate/database";
 import type { GeneratedContentType } from "@ai-affiliate/database";
 import type { Logger } from "@ai-affiliate/shared";
@@ -506,6 +509,29 @@ export class SchedulerPipeline {
     } catch (error) {
       this.logger.warn(`analysis phase failed: ${String(error)}`);
       analysis = { skipped: true, skipReason: `analysis error: ${String(error)}` };
+    }
+
+    try {
+      const skipped = "skipped" in analysis && analysis.skipped === true;
+      if (
+        shouldAutoPruneAfterAnalysis({
+          autoPrune: this.config.analysisRetentionAutoPrune,
+          skipped,
+        })
+      ) {
+        const pruned = await applyAnalysisRetention(this.database.prisma, {
+          apply: true,
+          keepRuns: this.config.analysisRetentionKeepRuns,
+          batchSize: this.config.analysisRetentionBatchSize,
+          maxBatches: ANALYSIS_RETENTION_AUTO_MAX_BATCHES,
+          requireConfirm: false,
+        });
+        this.logger.info(
+          `analysis retention auto-prune deletedCandidates=${pruned.deletedCandidates} deletedAnalyses=${pruned.deletedAnalyses} deletedRuns=${pruned.deletedRuns}`,
+        );
+      }
+    } catch (error) {
+      this.logger.warn(`analysis retention prune failed: ${String(error)}`);
     }
 
     try {

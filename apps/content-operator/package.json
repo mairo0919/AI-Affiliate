@@ -45,6 +45,7 @@
     "research:notification:dispatch": "node dist/cli.js notification-dispatch",
     "research:notification:retry": "node dist/cli.js notification-retry",
     "analysis:run": "node dist/cli.js analysis-run",
+    "db:analysis-retention": "node dist/cli.js analysis-retention",
     "analysis:list": "node dist/cli.js analysis-list",
     "analysis:show": "node dist/cli.js analysis-show",
     "analysis:candidates": "node dist/cli.js analysis-candidates",

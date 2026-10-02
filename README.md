@@ -457,6 +457,29 @@ pnpm analysis:item -- --external-id=<CONTENT_ID>
 scheduler pipeline 順: 収集 → リトライ → **分析（既定オフ）** → **コンテンツ生成（既定オフ）** → 通知。  
 `ANALYSIS_AUTO_RUN_ENABLED=false`（最短間隔 `ANALYSIS_AUTO_RUN_MIN_INTERVAL_MINUTES`）。
 
+### Analysis retention
+
+各 `AnalysisEngine.run` は新しい `AnalysisRun` を作り、対象作品ごとに `ProductAnalysis` を INSERT します。過去 run は上書きしません。候補選択が読むのは最新の `COMPLETED` run だけなので、無制限の履歴が selection を変えずに volume を埋めます。
+
+保持するのは次です。
+
+- 新しい順に `ANALYSIS_RETENTION_KEEP_RUNS` 件（既定 48）の `COMPLETED` / `PARTIALLY_COMPLETED`
+- 最新の `COMPLETED` run（日次候補プール）
+- `PENDING` / `RUNNING`
+- `GeneratedContent` または `XPublication` が指す `ContentCandidate` とその `ProductAnalysis`
+- 各 `ResearchItem` の最新 `ProductAnalysis` 1 行
+
+それ以外の `ContentCandidate` → `ProductAnalysis` → 空になった `AnalysisRun` の順で、200 行ずつの batch DELETE だけを使います。`TRUNCATE` / `DROP` / `VACUUM FULL` は使いません。DELETE は relation file をすぐに OS へ返さないので、Railway volume の使用量はすぐには減りません。通常 VACUUM は dead tuple を再利用可能にします。
+
+```bash
+pnpm db:analysis-retention -- --dry-run
+pnpm db:analysis-retention -- --apply --confirm-prune=<dry-run の ProductAnalysis prune 件数>
+```
+
+`--apply` だけでは削除しません。`--confirm-prune` が現在の prune 件数と一致したときだけ削除します。`ANALYSIS_RETENTION_AUTO_PRUNE` の既定は `false` です。承認後に true にすると、scheduler は新しい分析 run のあと最大 25 batch だけ古い行を削ります。
+
+Railway の volume アラートは UI で手動設定します。割当 20GB なら使用量 12GB（約 60%）で通知してください。
+
 ## Content Engine
 
 `ContentCandidate` からブログ / X投稿 / ショート動画台本 / 商品紹介文の下書きを生成します（**実投稿は未実装**）。既定は Mock AI Provider。

@@ -74,6 +74,11 @@ export interface AppConfig {
   analysisAutoRunSource: string;
   analysisAutoRunLimit: number;
   analysisAutoRunMinIntervalMinutes: number;
+  /** Newest completed/partial runs kept. Caps history even if auto-run interval is 1 minute. */
+  analysisRetentionKeepRuns: number;
+  analysisRetentionBatchSize: number;
+  /** When true, scheduler prunes a bounded batch after a new analysis run. Default off. */
+  analysisRetentionAutoPrune: boolean;
   analysisScoreWeights: {
     popularity: number;
     trend: number;
@@ -677,6 +682,9 @@ export function loadConfig(options?: { requireDatabaseUrl?: boolean }): AppConfi
       process.env.ANALYSIS_AUTO_RUN_MIN_INTERVAL_MINUTES,
       60,
     ),
+    analysisRetentionKeepRuns: parsePositiveInt(process.env.ANALYSIS_RETENTION_KEEP_RUNS, 48),
+    analysisRetentionBatchSize: parsePositiveInt(process.env.ANALYSIS_RETENTION_BATCH_SIZE, 200),
+    analysisRetentionAutoPrune: parseBooleanEnv(process.env.ANALYSIS_RETENTION_AUTO_PRUNE, false),
     analysisScoreWeights: {
       popularity: parsePositiveInt(process.env.ANALYSIS_WEIGHT_POPULARITY, 25),
       trend: parsePositiveInt(process.env.ANALYSIS_WEIGHT_TREND, 25),
