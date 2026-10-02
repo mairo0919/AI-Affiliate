@@ -19,26 +19,37 @@ function hasFlag(argv: string[], name: string): boolean {
   return argv.includes(`--${name}`);
 }
 
-async function tweetExists(
+async function loadTimelineIds(
   stack: ReturnType<typeof createLiveStack>,
   accountId: string,
   token: string,
-  postId: string,
-): Promise<"PRESENT" | "MISSING"> {
-  const response = await stack.http.request({
-    method: "GET",
-    path: `/2/tweets/${postId}`,
-    endpointKey: "tweets.get",
-    requestType: "TWEETS_GET",
-    accessToken: token,
-    accountId,
-    xPostId: postId,
-    acceptErrorResponse: true,
-    disableRetry: true,
-  });
-  if (response.statusCode === 404) return "MISSING";
-  if (response.ok) return "PRESENT";
-  throw new Error(`tweet lookup failed status=${response.statusCode}`);
+): Promise<Set<string>> {
+  const ids = new Set<string>();
+  let pagination: string | null = null;
+  for (let page = 0; page < 10; page += 1) {
+    const tweetPath: string = pagination
+      ? `/2/users/${accountId}/tweets?max_results=100&pagination_token=${encodeURIComponent(pagination)}`
+      : `/2/users/${accountId}/tweets?max_results=100`;
+    const pageResult = await stack.http.request<{
+      data?: Array<{ id: string }>;
+      meta?: { next_token?: string };
+    }>({
+      method: "GET",
+      path: tweetPath,
+      endpointKey: "tweets.get",
+      requestType: "TWEETS_GET",
+      accessToken: token,
+      accountId,
+      acceptErrorResponse: true,
+      disableRetry: true,
+    });
+    if (pageResult.statusCode === 402) throw new Error("X API payment required (status=402)");
+    if (!pageResult.ok) throw new Error(`timeline lookup failed status=${pageResult.statusCode}`);
+    for (const tweet of pageResult.data?.data ?? []) ids.add(tweet.id);
+    pagination = pageResult.data?.meta?.next_token ?? null;
+    if (!pagination) break;
+  }
+  return ids;
 }
 
 async function deleteOne(
@@ -47,18 +58,21 @@ async function deleteOne(
   postId: string,
 ): Promise<"DELETED" | "ALREADY_MISSING"> {
   const token = await stack.tokens.getValidAccessToken(accountId);
-  const before = await tweetExists(stack, accountId, token, postId);
-  if (before === "MISSING") return "ALREADY_MISSING";
+  const before = await loadTimelineIds(stack, accountId, token);
+  if (!before.has(postId)) return "ALREADY_MISSING";
   try {
     await stack.provider.deletePost(postId);
   } catch (error) {
     if (error instanceof XPublishError && error.httpStatus === 404) return "ALREADY_MISSING";
     throw error;
   }
-  const afterToken = await stack.tokens.getValidAccessToken(accountId);
-  const after = await tweetExists(stack, accountId, afterToken, postId);
-  if (after !== "MISSING") throw new Error(`delete not confirmed post=${postId}`);
-  return "DELETED";
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    const afterToken = await stack.tokens.getValidAccessToken(accountId);
+    const after = await loadTimelineIds(stack, accountId, afterToken);
+    if (!after.has(postId)) return "DELETED";
+  }
+  throw new Error(`delete not confirmed post=${postId}`);
 }
 
 export async function runFanzaDirectMigration(argv: string[]): Promise<void> {
