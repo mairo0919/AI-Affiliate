@@ -1,17 +1,17 @@
 /**
- * Daily-ops X slot execution: WP_TRAFFIC only, SKIP thin/non-public,
- * schedule to fixed JST slots (never force-post).
+ * Daily-ops X slot execution: FANZA direct URL only.
+ * WordPress URLs are not scheduled. Missing X affiliate ID skips the slot.
  */
 
 import { createHash } from "node:crypto";
 import type { AppConfig } from "@ai-affiliate/config";
 import { ContentRepository, type DatabaseClient } from "@ai-affiliate/database";
 import type { Logger } from "@ai-affiliate/shared";
+import { buildXFanzaDirectAffiliateUrl, textContainsWordPressUrl } from "../adapters/affiliate/fanza-affiliate-provider.js";
 import {
   adaptLoadedCanonicalToX,
   loadCanonicalXSource,
 } from "../x/canonical-x-source.js";
-import { isWordPressPublicForXTraffic } from "../x/x-eligibility.js";
 import { XPublicationService } from "../x/publication-service.js";
 import type { ChannelCandidate } from "./channel-selection.js";
 import { allocateXPostSlots, isFutureXSlotInstant, planXPostScheduleHorizon } from "./x-post-schedule.js";
@@ -128,29 +128,32 @@ export async function probeXScheduleCandidates(input: {
       });
       continue;
     }
-    const adapted = await adaptLoadedCanonicalToX(canonicalSource, {
-      preferredRoute: "BLOG_TRAFFIC",
-      disclosure: input.config.xAffiliateDisclosure,
-      preferWpTraffic: true,
-      allowDirectAffiliate: input.config.xAllowDirectAffiliateRoute === true,
-      allowCombined: input.config.xAllowCombinedRoute === true,
-      affiliateThreadMode: input.config.xAffiliateThreadMode === true,
-      llm: input.llm,
-      llmModel: input.config.llmModelWriter,
+    const direct = buildXFanzaDirectAffiliateUrl({
+      contentId: cid,
+      xAffiliateId: input.config.dmmXAffiliateId,
+      wordpressAffiliateId: input.config.dmmAffiliateId,
     });
-    if (
-      adapted.skip?.reason === "WP_NOT_PUBLIC" ||
-      !isWordPressPublicForXTraffic(canonicalSource.wpStatus)
-    ) {
+    if (!direct.ok) {
       out.push({
         canonicalId: cid,
         contentVersionId: cvId,
         pass: false,
-        skipReason: "WP_NOT_PUBLIC",
+        skipReason: direct.reason,
         rank: rank++,
       });
       continue;
     }
+    const adapted = await adaptLoadedCanonicalToX(canonicalSource, {
+      preferredRoute: "DIRECT_AFFILIATE",
+      disclosure: "PR",
+      preferWpTraffic: false,
+      allowDirectAffiliate: true,
+      allowCombined: false,
+      affiliateThreadMode: false,
+      fanzaDirectUrl: direct.url,
+      llm: input.llm,
+      llmModel: input.config.llmModelWriter,
+    });
     if (adapted.skip || adapted.posts.length === 0) {
       out.push({
         canonicalId: cid,
@@ -161,12 +164,16 @@ export async function probeXScheduleCandidates(input: {
       });
       continue;
     }
-    if (adapted.linkMode !== "WP_TRAFFIC" || !adapted.wpUrl) {
+    if (
+      adapted.publicationStrategy !== "FANZA_DIRECT" ||
+      adapted.posts.some((post) => textContainsWordPressUrl(post.body)) ||
+      !adapted.fanzaUrl
+    ) {
       out.push({
         canonicalId: cid,
         contentVersionId: cvId,
         pass: false,
-        skipReason: "X_REQUIRES_WP_TRAFFIC",
+        skipReason: "X_FANZA_DIRECT_REQUIRED",
         rank: rank++,
       });
       continue;
@@ -310,28 +317,19 @@ export async function executeAssignedXSlots(input: {
         continue;
       }
 
-      const adapted = await adaptLoadedCanonicalToX(canonicalSource, {
-        preferredRoute: "BLOG_TRAFFIC",
-        disclosure: input.config.xAffiliateDisclosure,
-        preferWpTraffic: true,
-        allowDirectAffiliate: input.config.xAllowDirectAffiliateRoute === true,
-        allowCombined: input.config.xAllowCombinedRoute === true,
-        affiliateThreadMode: input.config.xAffiliateThreadMode === true,
-        llm: input.llm,
-        llmModel: input.config.llmModelWriter,
+      const direct = buildXFanzaDirectAffiliateUrl({
+        contentId: selected.canonicalId,
+        xAffiliateId: input.config.dmmXAffiliateId,
+        wordpressAffiliateId: input.config.dmmAffiliateId,
       });
-
-      if (
-        adapted.skip?.reason === "WP_NOT_PUBLIC" ||
-        !isWordPressPublicForXTraffic(canonicalSource.wpStatus)
-      ) {
+      if (!direct.ok) {
         outcomes.push({
           hour: assignment.hour,
           role: assignment.role,
           status: "EMPTY",
           canonicalId: selected.canonicalId,
           contentVersionId: canonicalSource.contentVersionId,
-          reason: "WP_NOT_PUBLIC",
+          reason: direct.reason,
           publicationId: null,
           scheduledAt: assignment.scheduledAt.toISOString(),
           published: false,
@@ -339,6 +337,18 @@ export async function executeAssignedXSlots(input: {
         });
         continue;
       }
+      const adapted = await adaptLoadedCanonicalToX(canonicalSource, {
+        preferredRoute: "DIRECT_AFFILIATE",
+        disclosure: "PR",
+        preferWpTraffic: false,
+        allowDirectAffiliate: true,
+        allowCombined: false,
+        affiliateThreadMode: false,
+        fanzaDirectUrl: direct.url,
+        llm: input.llm,
+        llmModel: input.config.llmModelWriter,
+      });
+
       if (adapted.skip || adapted.posts.length === 0) {
         outcomes.push({
           hour: assignment.hour,
@@ -354,14 +364,18 @@ export async function executeAssignedXSlots(input: {
         });
         continue;
       }
-      if (adapted.linkMode !== "WP_TRAFFIC" || !adapted.wpUrl) {
+      if (
+        adapted.publicationStrategy !== "FANZA_DIRECT" ||
+        adapted.posts.some((post) => textContainsWordPressUrl(post.body)) ||
+        !adapted.fanzaUrl
+      ) {
         outcomes.push({
           hour: assignment.hour,
           role: assignment.role,
           status: "EMPTY",
           canonicalId: selected.canonicalId,
           contentVersionId: canonicalSource.contentVersionId,
-          reason: "X_REQUIRES_WP_TRAFFIC",
+          reason: "X_FANZA_DIRECT_REQUIRED",
           publicationId: null,
           scheduledAt: assignment.scheduledAt.toISOString(),
           published: false,
@@ -382,7 +396,7 @@ export async function executeAssignedXSlots(input: {
         candidateId = cand?.id ?? null;
       }
       // WP-published / Factory-backfill inventory often has candidates on older
-      // analysis runs only — fall back so X WP_TRAFFIC can still schedule.
+      // analysis runs only — fall back so a FANZA direct slot can still schedule.
       if (!candidateId) {
         const anyCand = await input.prisma.contentCandidate.findFirst({
           where: { researchItemId: selected.researchItemId },
@@ -412,7 +426,7 @@ export async function executeAssignedXSlots(input: {
         continue;
       }
 
-      const primaryUrl = adapted.wpUrl;
+      const primaryUrl = adapted.fanzaUrl ?? "";
       const rootBody = adapted.posts[0]?.body ?? "";
       const created = await contents.createGeneratedContent({
         contentCandidateId: candidateId,
@@ -466,7 +480,7 @@ export async function executeAssignedXSlots(input: {
         generatedAt: input.now,
       });
 
-      const idempotencyKey = `x-daily:${assignment.slotKey}:${selected.canonicalId}:WP_TRAFFIC`;
+      const idempotencyKey = `x-daily:${assignment.slotKey}:${selected.canonicalId}:FANZA_DIRECT`;
       const existing = await input.prisma.xPublication.findUnique({
         where: { idempotencyKey },
       });
@@ -523,7 +537,7 @@ export async function executeAssignedXSlots(input: {
         .update({
           where: { id: pub.id },
           data: {
-            strategyVersion: `${input.xMixSlot}|AUTO|slotKey=${assignment.slotKey}|slotHour=${assignment.hour}|slotKind=${assignment.kind ?? "STANDARD"}|WP_TRAFFIC`,
+            strategyVersion: `${input.xMixSlot}|AUTO|slotKey=${assignment.slotKey}|slotHour=${assignment.hour}|slotKind=${assignment.kind ?? "STANDARD"}|FANZA_DIRECT`,
             idempotencyKey,
             scheduledAt: assignment.scheduledAt,
           },

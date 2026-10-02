@@ -194,6 +194,19 @@ function matchNavigationCta(
   return null;
 }
 
+export const FANZA_DIRECT_MIGRATION_MARKER = "fanza-direct-migration";
+
+/** Only publications deleted for the FANZA direct migration may be reposted. */
+export function isFanzaDirectMigrationDeleted(input: {
+  status: string;
+  strategyVersion?: string | null;
+}): boolean {
+  return (
+    input.status === "DELETED" &&
+    (input.strategyVersion ?? "").includes(FANZA_DIRECT_MIGRATION_MARKER)
+  );
+}
+
 export function findPublicationBodyDuplicate(input: {
   publicationId: string;
   scheduledAt: Date | null;

@@ -170,7 +170,8 @@ describe("pre-publish guard duplicate wiring", () => {
       actorType: "SCHEDULER",
     });
     expect(result.issues.map((issue) => issue.code)).not.toContain("DUPLICATE_BODY");
-    expect(result.ok).toBe(true);
+    expect(result.issues.map((issue) => issue.code)).toContain("LEGACY_WP_CTA");
+    expect(result.ok).toBe(false);
   });
 
   it("does not block the earlier due CTA when only a later reservation shares the destination", async () => {
@@ -181,7 +182,8 @@ describe("pre-publish guard duplicate wiring", () => {
       actorType: "SCHEDULER",
     });
     expect(result.issues.map((issue) => issue.code)).not.toContain("DUPLICATE_BODY");
-    expect(result.ok).toBe(true);
+    expect(result.issues.map((issue) => issue.code)).toContain("LEGACY_WP_CTA");
+    expect(result.ok).toBe(false);
   });
 
   it("CASE E: blocks a later reservation that repeats the same destination CTA", async () => {

@@ -4,10 +4,60 @@ import {
   type BodyDuplicateCandidate,
   type BodyDuplicateSubjectPost,
   findPublicationBodyDuplicate,
+  isFanzaDirectMigrationDeleted,
 } from "./x-body-duplicate.js";
 
 const NOW = new Date("2026-09-28T12:00:00.000Z");
 const LOOKBACK = new Date("2026-08-29T12:00:00.000Z");
+
+describe("FANZA direct migration repost scope", () => {
+  it("allows repost only when the old publication was deleted for this migration", () => {
+    expect(
+      isFanzaDirectMigrationDeleted({
+        status: "DELETED",
+        strategyVersion: "x-strategy-v1|fanza-direct-migration",
+      }),
+    ).toBe(true);
+    expect(
+      isFanzaDirectMigrationDeleted({
+        status: "DELETED",
+        strategyVersion: "x-strategy-v1",
+      }),
+    ).toBe(false);
+    expect(
+      isFanzaDirectMigrationDeleted({
+        status: "PUBLISHED",
+        strategyVersion: "x-strategy-v1|fanza-direct-migration",
+      }),
+    ).toBe(false);
+    expect(
+      isFanzaDirectMigrationDeleted({ status: "CANCELLED", strategyVersion: null }),
+    ).toBe(false);
+  });
+
+  it("still flags a live publication with the same root body", () => {
+    const body = "同じ本文です。";
+    const match = findPublicationBodyDuplicate({
+      publicationId: "new",
+      scheduledAt: NOW,
+      createdAt: NOW,
+      now: NOW,
+      lookbackSince: LOOKBACK,
+      posts: [rootPost("new-root", body)],
+      candidates: [
+        candidate({
+          postId: "old-root",
+          publicationId: "old",
+          role: "ROOT",
+          body,
+          publicationStatus: "PUBLISHED",
+        }),
+      ],
+    });
+    expect(match?.publicationId).toBe("old");
+  });
+});
+
 const URL_A = "https://otonaselect.net/works/aaa111/";
 const URL_B = "https://otonaselect.net/works/bbb222/";
 

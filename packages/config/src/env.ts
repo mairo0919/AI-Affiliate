@@ -28,6 +28,8 @@ export interface AppConfig {
   postgresPort: string;
   dmmApiId: string | undefined;
   dmmAffiliateId: string | undefined;
+  /** X site affiliate ID. Never fall back to the WordPress/API affiliate ID. */
+  dmmXAffiliateId: string | undefined;
   dmmApiBaseUrl: string;
   fanzaDefaultService: string;
   fanzaDefaultFloor: string;
@@ -612,6 +614,7 @@ export function loadConfig(options?: { requireDatabaseUrl?: boolean }): AppConfi
     postgresPort: process.env.POSTGRES_PORT ?? "5432",
     dmmApiId: process.env.DMM_API_ID || undefined,
     dmmAffiliateId: process.env.DMM_AFFILIATE_ID || undefined,
+    dmmXAffiliateId: process.env.DMM_X_AFFILIATE_ID || undefined,
     dmmApiBaseUrl: process.env.DMM_API_BASE_URL ?? "https://api.dmm.com/affiliate/v3",
     fanzaDefaultService: process.env.FANZA_DEFAULT_SERVICE ?? "digital",
     fanzaDefaultFloor: process.env.FANZA_DEFAULT_FLOOR ?? "videoa",

@@ -39,6 +39,79 @@ export function buildFanzaCanonicalProductUrl(contentId: string): string {
   return `https://video.dmm.co.jp/av/content/?id=${encodeURIComponent(cid)}`;
 }
 
+export type XFanzaDirectUrlResult =
+  | { ok: true; url: string; contentId: string }
+  | {
+      ok: false;
+      reason:
+        | "X_AFFILIATE_ID_UNSET"
+        | "X_AFFILIATE_ID_NOT_DISTINCT"
+        | "X_AFFILIATE_ID_INVALID"
+        | "CONTENT_ID_MISSING";
+    };
+
+/**
+ * X publication URL. Uses only the X-site affiliate ID.
+ * The WordPress/API affiliate ID is never substituted.
+ */
+export function buildXFanzaDirectAffiliateUrl(input: {
+  contentId: string | null | undefined;
+  xAffiliateId: string | null | undefined;
+  wordpressAffiliateId?: string | null;
+}): XFanzaDirectUrlResult {
+  const contentId = input.contentId?.trim().toLowerCase() ?? "";
+  if (!/^[a-z0-9_-]{4,64}$/.test(contentId)) {
+    return { ok: false, reason: "CONTENT_ID_MISSING" };
+  }
+  const xAffiliateId = input.xAffiliateId?.trim() ?? "";
+  if (!xAffiliateId) return { ok: false, reason: "X_AFFILIATE_ID_UNSET" };
+  if (/\s/.test(xAffiliateId) || xAffiliateId.length < 4 || xAffiliateId.length > 64) {
+    return { ok: false, reason: "X_AFFILIATE_ID_INVALID" };
+  }
+  const wordpressAffiliateId = input.wordpressAffiliateId?.trim() ?? "";
+  if (wordpressAffiliateId && xAffiliateId === wordpressAffiliateId) {
+    return { ok: false, reason: "X_AFFILIATE_ID_NOT_DISTINCT" };
+  }
+  const canonical = buildFanzaCanonicalProductUrl(contentId);
+  const url = new URL("https://al.fanza.co.jp/");
+  url.searchParams.set("lurl", canonical);
+  url.searchParams.set("af_id", xAffiliateId);
+  return { ok: true, url: url.toString(), contentId };
+}
+
+const WORDPRESS_HOSTS = ["otonaselect.net", "otonaselect.mixh.jp"];
+
+export function textContainsWordPressUrl(text: string, extraHosts: string[] = []): boolean {
+  const hosts = new Set(
+    [...WORDPRESS_HOSTS, ...extraHosts]
+      .map((host) => host.trim().toLowerCase().replace(/^https?:\/\//, "").split("/")[0] ?? "")
+      .filter(Boolean),
+  );
+  if (hosts.size === 0) return false;
+  return [...text.matchAll(/https?:\/\/[^\s)]+/giu)].some((match) => {
+    try {
+      return hosts.has(new URL(match[0]).hostname.toLowerCase());
+    } catch {
+      return false;
+    }
+  });
+}
+
+export function xBodyBlocksFanzaDirect(body: string, extraHosts: string[] = []): boolean {
+  return textContainsWordPressUrl(body, extraHosts) || /記事はこちら/u.test(body);
+}
+
+export function officialFanzaMediaHost(url: string | null | undefined): boolean {
+  const raw = url?.trim() ?? "";
+  if (!raw) return false;
+  try {
+    const host = new URL(raw).hostname.toLowerCase();
+    return host === "dmm.co.jp" || host.endsWith(".dmm.co.jp") || host.endsWith(".fanza.co.jp");
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Extract FANZA content_id from canonical, detail, or affiliate wrapper URLs.
  * Affiliate links encode the product URL inside `lurl` — plain `id=` regex misses those.

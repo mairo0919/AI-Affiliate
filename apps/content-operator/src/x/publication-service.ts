@@ -15,7 +15,8 @@ import {
 import type { Logger } from "@ai-affiliate/shared";
 import { computeNextRetryAt } from "../schedules/backoff.js";
 import { XCharacterCounter } from "./character-counter.js";
-import { XPublicationBuilder } from "./publication-builder.js";
+import { XPublicationBuilder, XPublicationValidationError } from "./publication-builder.js";
+import { buildXFanzaDirectAffiliateUrl } from "../adapters/affiliate/fanza-affiliate-provider.js";
 import { XRelatedPostSelector } from "./related-selector.js";
 import { XStrategySelector } from "./strategy-selector.js";
 import type { XPublishingProvider } from "./providers/index.js";
@@ -375,20 +376,20 @@ export class XPublicationService {
         relatedPostUseful: hasRelated,
         preferredReplyOrder: null,
       };
-      const strategy =
-        adapted.publicationStrategy === "AFFILIATE_THREAD"
-          ? "AFFILIATE_THREAD"
-          : "WP_TRAFFIC_EMBED";
-      const wpUrl =
-        adapted.wpUrl?.trim() ||
-        (typeof content.callToAction === "string" ? content.callToAction : null) ||
-        null;
+      const direct = buildXFanzaDirectAffiliateUrl({
+        contentId: externalId,
+        xAffiliateId: this.config.dmmXAffiliateId,
+        wordpressAffiliateId: this.config.dmmAffiliateId,
+      });
+      if (!direct.ok) {
+        throw new XPublicationValidationError(`X_FANZA_DIRECT_BLOCKED:${direct.reason}`);
+      }
       const composed = composeXThreadPublication({
-        strategy,
+        strategy: "FANZA_DIRECT",
         parentBody,
-        wpUrl,
-        fanzaUrl: strategy === "AFFILIATE_THREAD" ? content.affiliateUrl : null,
-        disclosure: this.config.xAffiliateDisclosure,
+        wpUrl: null,
+        fanzaUrl: direct.url,
+        disclosure: "PR",
         intent: {
           needsArticleReply: intent.needsArticleReply !== false,
           relatedPostUseful: intent.relatedPostUseful === true && hasRelated,

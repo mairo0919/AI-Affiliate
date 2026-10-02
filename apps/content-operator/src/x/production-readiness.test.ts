@@ -496,7 +496,7 @@ describe("release mode + kill switch", () => {
     });
     await database.prisma.xPublicationPost.update({
       where: { id: seeded.posts[0]!.id },
-      data: { status: "PUBLISHED", publishedAt: new Date() },
+      data: { status: "PUBLISHED", publishedAt: new Date("2026-07-29T10:00:00.000Z") },
     });
 
     await clearProductLocks();

@@ -17,13 +17,14 @@
  * Publication never rewrites work introduction copy.
  */
 
+import { textContainsWordPressUrl } from "../adapters/affiliate/fanza-affiliate-provider.js";
 import {
   hasClearAdDisclosure,
   normalizeDisclosureLabel,
   stripLegacyHashPr,
 } from "./ops/pre-publish-guard.js";
 
-export type XPublicationStrategy = "WP_TRAFFIC_EMBED" | "AFFILIATE_THREAD";
+export type XPublicationStrategy = "WP_TRAFFIC_EMBED" | "AFFILIATE_THREAD" | "FANZA_DIRECT";
 
 export type XThreadPostRole =
   | "PARENT"
@@ -275,6 +276,28 @@ export function composeXThreadPublication(input: {
     isStrongRelatedRelation(input.related.reasons)
       ? input.related
       : null;
+
+  if (input.strategy === "FANZA_DIRECT") {
+    if (!input.fanzaUrl?.trim()) return [];
+    if (textContainsWordPressUrl(input.fanzaUrl) || textContainsWordPressUrl(parent)) return [];
+    return [
+      {
+        sequence: 1,
+        role: "ROOT",
+        threadRole: "PARENT",
+        body: parent,
+        linkKind: "none",
+      },
+      {
+        sequence: 2,
+        role: "CTA",
+        threadRole: "AFFILIATE_REPLY",
+        body: `PR\n${input.fanzaUrl.trim()}`,
+        linkKind: "fanza",
+        replyToSequence: 1,
+      },
+    ];
+  }
 
   if (input.strategy === "AFFILIATE_THREAD") {
     const posts: XThreadComposedPost[] = [

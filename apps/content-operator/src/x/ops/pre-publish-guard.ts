@@ -1,4 +1,5 @@
 import type { AppConfig } from "@ai-affiliate/config";
+import { xBodyBlocksFanzaDirect } from "../../adapters/affiliate/fanza-affiliate-provider.js";
 import type {
   ContentRepository,
   PublicationWithPosts,
@@ -110,6 +111,18 @@ export function publicationUnitDisclosureMissing(input: {
   return true;
 }
 
+function affiliateIdFromText(text: string): string | null {
+  for (const match of text.matchAll(/https?:\/\/[^\s)]+/giu)) {
+    try {
+      const id = new URL(match[0]).searchParams.get("af_id")?.trim();
+      if (id) return id;
+    } catch {
+      /* ignore */
+    }
+  }
+  return null;
+}
+
 export class XPrePublishGuard {
   private readonly now: () => Date;
   private readonly counter: XCharacterCounter;
@@ -126,6 +139,35 @@ export class XPrePublishGuard {
     const dbKill = await this.deps.ops.isControlActive("GLOBAL_KILL_SWITCH", this.now());
     const dbPaused = await this.deps.ops.isControlActive("PUBLISHING_PAUSED", this.now());
     const killSwitch = envKill || dbKill || dbPaused;
+    const wpHosts = this.deps.config.wordpressBaseUrl
+      ? [this.deps.config.wordpressBaseUrl]
+      : [];
+    for (const post of ctx.publication.posts) {
+      if (xBodyBlocksFanzaDirect(post.body, wpHosts)) {
+        issues.push({
+          code: "LEGACY_WP_CTA",
+          message: `seq=${post.sequence} wordpress destination is not allowed on X`,
+          blocking: true,
+        });
+      }
+      const affiliateId = affiliateIdFromText(post.body);
+      const wpAffiliateId = this.deps.config.dmmAffiliateId?.trim();
+      const xAffiliateId = this.deps.config.dmmXAffiliateId?.trim();
+      if (affiliateId && wpAffiliateId && affiliateId === wpAffiliateId) {
+        issues.push({
+          code: "WP_AFFILIATE_ID_ON_X",
+          message: `seq=${post.sequence} wordpress affiliate id is not allowed on X`,
+          blocking: true,
+        });
+      }
+      if (affiliateId && xAffiliateId && affiliateId !== xAffiliateId) {
+        issues.push({
+          code: "X_AFFILIATE_ID_MISMATCH",
+          message: `seq=${post.sequence} affiliate id is not the X site id`,
+          blocking: true,
+        });
+      }
+    }
 
     const content = await this.deps.contents.findGeneratedContentById(
       ctx.publication.generatedContentId,

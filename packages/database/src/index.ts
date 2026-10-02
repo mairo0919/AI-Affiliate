@@ -95,8 +95,10 @@ export {
   normalizePostBody,
 } from "./x-ops-repository.js";
 export {
+  FANZA_DIRECT_MIGRATION_MARKER,
   canonicalNavigationDestination,
   findPublicationBodyDuplicate,
+  isFanzaDirectMigrationDeleted,
   postBodyFingerprint,
 } from "./x-body-duplicate.js";
 export type {

@@ -10,7 +10,10 @@ import type {
   XProductReservationStatus,
   XRuntimeControl,
 } from "@prisma/client";
-import type { BodyDuplicateCandidate } from "./x-body-duplicate.js";
+import {
+  FANZA_DIRECT_MIGRATION_MARKER,
+  type BodyDuplicateCandidate,
+} from "./x-body-duplicate.js";
 import {
   DEFAULT_X_PRODUCT_RESERVATION_PUBLISH_GRACE_MINUTES,
   assertReservationExpiresAtInvariant,
@@ -442,6 +445,12 @@ export class XOpsRepository {
         ...(options.excludePublicationId
           ? { publicationId: { not: options.excludePublicationId } }
           : {}),
+        NOT: {
+          publication: {
+            status: "DELETED",
+            strategyVersion: { contains: FANZA_DIRECT_MIGRATION_MARKER },
+          },
+        },
         OR: [
           { status: "PUBLISHED", publishedAt: { gte: options.since } },
           { xPostId: { not: null }, createdAt: { gte: options.since } },
@@ -466,7 +475,17 @@ export class XOpsRepository {
         ...(options.excludePublicationId
           ? { publicationId: { not: options.excludePublicationId } }
           : {}),
-        publication: { status: { notIn: ["CANCELLED", "DELETED"] } },
+        publication: {
+          NOT: {
+            OR: [
+              { status: "CANCELLED" },
+              {
+                status: "DELETED",
+                strategyVersion: { contains: FANZA_DIRECT_MIGRATION_MARKER },
+              },
+            ],
+          },
+        },
         OR: [
           { createdAt: { gte: options.since } },
           { publishedAt: { gte: options.since } },
