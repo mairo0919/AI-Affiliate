@@ -330,7 +330,7 @@ async function deleteBatch(
     `;
     if (!lock[0]?.locked) return "busy";
     return tx.$executeRaw(sql);
-  });
+  }, { maxWait: 20_000, timeout: 200_000 });
 }
 
 /**
@@ -407,7 +407,7 @@ export async function applyAnalysisRetention(
         if (!lock[0]?.locked) throw new Error("ANALYSIS_RETENTION_BUSY");
         await tx.$executeRaw`TRUNCATE "_analysis_retention_prune"`;
         await tx.$executeRaw(sql);
-      });
+      }, { maxWait: 20_000, timeout: 200_000 });
     };
 
     await fill(Prisma.sql`
