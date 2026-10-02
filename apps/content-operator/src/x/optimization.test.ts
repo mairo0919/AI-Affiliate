@@ -140,6 +140,7 @@ async function seedReadyContent(externalId = `${PREFIX}a`): Promise<string> {
     source: "mock",
     limit: 20,
     candidateLimit: 5,
+    force: true,
   });
 
   const candidates = await analysis.listContentCandidates({ limit: 5 });

@@ -79,6 +79,7 @@ export type StockGenerationResult = {
   minStock: number;
   batchLimit: number;
   analysisOk: boolean;
+  analysisExecuted: boolean;
   analysisCandidates: number;
   generated: number;
   reviewPassed: number;
@@ -108,6 +109,7 @@ export async function runStockGenerationBatch(deps: {
       minStock: runtime.minApprovedStock,
       batchLimit: runtime.generationBatch,
       analysisOk: false,
+      analysisExecuted: false,
       analysisCandidates: 0,
       generated: 0,
       reviewPassed: 0,
@@ -130,6 +132,7 @@ export async function runStockGenerationBatch(deps: {
       minStock: runtime.minApprovedStock,
       batchLimit: runtime.generationBatch,
       analysisOk: false,
+      analysisExecuted: false,
       analysisCandidates: 0,
       generated: 0,
       reviewPassed: 0,
@@ -157,6 +160,7 @@ export async function runStockGenerationBatch(deps: {
       minStock: runtime.minApprovedStock,
       batchLimit: runtime.generationBatch,
       analysisOk: false,
+      analysisExecuted: false,
       analysisCandidates: 0,
       generated: 0,
       reviewPassed: 0,
@@ -175,13 +179,16 @@ export async function runStockGenerationBatch(deps: {
     config: deps.config,
   });
   let analysisOk = false;
+  let analysisExecuted = false;
   let analysisCandidates = 0;
   try {
-    const ar = await analysis.run({ limit: 80 });
+    const ar = await analysis.run({ limit: 80, now });
     analysisOk = true;
+    analysisExecuted = ar.skipped !== true && Boolean(ar.analysisRunId);
     analysisCandidates = ar.selectedItemCount ?? 0;
   } catch {
     analysisOk = false;
+    analysisExecuted = false;
   }
 
   const { pool, analysisRunId } = await loadDailyCandidatePool(deps.database.prisma, {
@@ -429,6 +436,7 @@ export async function runStockGenerationBatch(deps: {
     minStock: runtime.minApprovedStock,
     batchLimit: runtime.generationBatch,
     analysisOk,
+    analysisExecuted,
     analysisCandidates,
     generated,
     reviewPassed,

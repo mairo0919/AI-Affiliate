@@ -177,6 +177,7 @@ async function seedCandidates(options?: {
     limit: 50,
     candidateLimit: 10,
     includeRequiresConfirmation: options?.includeRequiresConfirmation === true,
+    force: true,
   });
 
   const candidates = await analysis.listContentCandidates({

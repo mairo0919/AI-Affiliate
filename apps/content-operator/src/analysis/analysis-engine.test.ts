@@ -384,9 +384,9 @@ describe("Analysis Engine", () => {
   });
 
   it("persists ProductAnalysis without overwriting past runs and prevents duplicates", async () => {
-    const first = await engine().run({ source: "mock", limit: 50 });
+    const first = await engine().run({ source: "mock", limit: 50, force: true });
     expect(first.analysisRunId).toBeTruthy();
-    const second = await engine().run({ source: "mock", limit: 50 });
+    const second = await engine().run({ source: "mock", limit: 50, force: true });
     expect(second.analysisRunId).not.toBe(first.analysisRunId);
 
     const analyses = await analysis.listProductAnalyses(first.analysisRunId!);
@@ -419,6 +419,7 @@ describe("Analysis Engine", () => {
       limit: 50,
       candidateLimit: 10,
       includeRequiresConfirmation: false,
+      force: true,
     });
     expect(result.status).toBe("COMPLETED");
     expect(result.candidateCounts.RANKING ?? 0).toBeGreaterThan(0);
@@ -498,7 +499,7 @@ describe("Analysis Engine", () => {
   });
 
   it("continues on item failure and can partially complete", async () => {
-    const result = await engine().run({ source: "mock", limit: 50 });
+    const result = await engine().run({ source: "mock", limit: 50, force: true });
     expect(["COMPLETED", "PARTIALLY_COMPLETED"]).toContain(result.status);
     expect(result.analyzedItemCount).toBeGreaterThan(0);
   });
@@ -542,7 +543,7 @@ describe("Analysis Engine", () => {
   });
 
   it("respects analysis min interval when auto-run enabled", async () => {
-    await engine().run({ source: "mock", limit: 10 });
+    await engine().run({ source: "mock", limit: 10, force: true });
     const pipeline = new SchedulerPipeline({
       logger,
       database,
@@ -559,5 +560,69 @@ describe("Analysis Engine", () => {
     if ("skipped" in result.analysis) {
       expect(result.analysis.skipReason).toBe("ANALYSIS_MIN_INTERVAL_NOT_ELAPSED");
     }
+  });
+
+  it("a one-minute tick does not create another analysis run", async () => {
+    const first = await engine().run({ source: "mock", limit: 10, force: true });
+    const second = await engine().run({
+      source: "mock",
+      limit: 10,
+      now: new Date(Date.now() + 60 * 1000),
+    });
+    expect(second.skipped).toBe(true);
+    expect(second.skipReason).toBe("ANALYSIS_MIN_INTERVAL_NOT_ELAPSED");
+    expect(second.analysisRunId).toBeNull();
+    expect(first.analysisRunId).toBeTruthy();
+  });
+
+  it("does not start a second run while one is still running", async () => {
+    await engine().run({ source: "mock", limit: 10, force: true });
+    const later = new Date(Date.now() + 61 * 60 * 1000);
+    await database.prisma.analysisRun.create({
+      data: {
+        analysisType: "CONTENT_CANDIDATE_SELECTION",
+        status: "RUNNING",
+        parameters: {},
+        startedAt: later,
+        createdAt: later,
+      },
+    });
+    const blocked = await engine().run({ source: "mock", limit: 10, now: later });
+    expect(blocked.skipped).toBe(true);
+    expect(blocked.skipReason).toBe("ANALYSIS_ALREADY_RUNNING");
+  });
+
+  it("treats the newest PARTIALLY_COMPLETED run as the interval anchor", async () => {
+    const completedAt = new Date(Date.now() + 3 * 60 * 60 * 1000);
+    await database.prisma.analysisRun.create({
+      data: {
+        analysisType: "CONTENT_CANDIDATE_SELECTION",
+        status: "PARTIALLY_COMPLETED",
+        parameters: { source: "mock" },
+        startedAt: completedAt,
+        completedAt,
+      },
+    });
+    const skipped = await engine().run({
+      source: "mock",
+      limit: 10,
+      now: new Date(completedAt.getTime() + 60 * 1000),
+    });
+    expect(skipped.skipped).toBe(true);
+    expect(skipped.skipReason).toBe("ANALYSIS_MIN_INTERVAL_NOT_ELAPSED");
+    expect(skipped.analysisRunId).toBeNull();
+  });
+
+  it("does not create two runs when invoked concurrently", async () => {
+    const later = new Date(Date.now() + 4 * 60 * 60 * 1000);
+    const [left, right] = await Promise.all([
+      engine().run({ source: "mock", limit: 5, now: later }),
+      engine().run({ source: "mock", limit: 5, now: later }),
+    ]);
+    const created = [left, right].filter((result) => result.analysisRunId != null);
+    expect(created).toHaveLength(1);
+    const skipped = [left, right].filter((result) => result.skipped === true);
+    expect(skipped).toHaveLength(1);
+    expect(skipped[0]?.skipReason).toMatch(/ANALYSIS_(ALREADY_RUNNING|MIN_INTERVAL_NOT_ELAPSED)/);
   });
 });

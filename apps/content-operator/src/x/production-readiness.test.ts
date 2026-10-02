@@ -148,7 +148,7 @@ async function seedReadyContent(externalId: string): Promise<string> {
     research,
     analysis,
     config: safeConfig(),
-  }).run({ source: "mock", limit: 20, candidateLimit: 5 });
+  }).run({ source: "mock", limit: 20, candidateLimit: 5, force: true });
   const candidates = await analysis.listContentCandidates({ limit: 5 });
   const itemRow = await database.prisma.researchItem.findFirst({ where: { externalId } });
   const candidate =

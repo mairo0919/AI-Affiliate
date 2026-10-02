@@ -512,29 +512,6 @@ export class SchedulerPipeline {
     }
 
     try {
-      const skipped = "skipped" in analysis && analysis.skipped === true;
-      if (
-        shouldAutoPruneAfterAnalysis({
-          autoPrune: this.config.analysisRetentionAutoPrune,
-          skipped,
-        })
-      ) {
-        const pruned = await applyAnalysisRetention(this.database.prisma, {
-          apply: true,
-          keepRuns: this.config.analysisRetentionKeepRuns,
-          batchSize: this.config.analysisRetentionBatchSize,
-          maxBatches: ANALYSIS_RETENTION_AUTO_MAX_BATCHES,
-          requireConfirm: false,
-        });
-        this.logger.info(
-          `analysis retention auto-prune deletedCandidates=${pruned.deletedCandidates} deletedAnalyses=${pruned.deletedAnalyses} deletedRuns=${pruned.deletedRuns}`,
-        );
-      }
-    } catch (error) {
-      this.logger.warn(`analysis retention prune failed: ${String(error)}`);
-    }
-
-    try {
       const demand = await runScheduledFanzaDemandCollection({
         prisma: this.database.prisma,
         config: this.config,
@@ -604,6 +581,31 @@ export class SchedulerPipeline {
     } catch (error) {
       this.logger.warn(`stock generation phase failed: ${String(error)}`);
       stockGeneration = { skipped: true, skipReason: `stock generation error: ${String(error)}` };
+    }
+
+    try {
+      const analysisPhaseSkipped = "skipped" in analysis && analysis.skipped === true;
+      const stockAnalysisExecuted =
+        "analysisExecuted" in stockGeneration && stockGeneration.analysisExecuted === true;
+      if (
+        shouldAutoPruneAfterAnalysis({
+          autoPrune: this.config.analysisRetentionAutoPrune,
+          skipped: analysisPhaseSkipped && !stockAnalysisExecuted,
+        })
+      ) {
+        const pruned = await applyAnalysisRetention(this.database.prisma, {
+          apply: true,
+          keepRuns: this.config.analysisRetentionKeepRuns,
+          batchSize: this.config.analysisRetentionBatchSize,
+          maxBatches: ANALYSIS_RETENTION_AUTO_MAX_BATCHES,
+          requireConfirm: false,
+        });
+        this.logger.info(
+          `analysis retention auto-prune deletedCandidates=${pruned.deletedCandidates} deletedAnalyses=${pruned.deletedAnalyses} deletedRuns=${pruned.deletedRuns}`,
+        );
+      }
+    } catch (error) {
+      this.logger.warn(`analysis retention prune failed: ${String(error)}`);
     }
 
     try {

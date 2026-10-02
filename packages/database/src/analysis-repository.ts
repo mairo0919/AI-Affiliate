@@ -50,6 +50,57 @@ export interface CreateContentCandidateInput {
 export class AnalysisRepository {
   constructor(private readonly prisma: PrismaClient) {}
 
+  /**
+   * One analysis run at a time, and not before the configured minimum interval.
+   * The lock is transaction-scoped so a second worker either waits out the
+   * transaction or skips. Scheduler ticks can still run every minute.
+   */
+  async claimScheduledAnalysisRun(input: {
+    now: Date;
+    minIntervalMinutes: number;
+    create: CreateAnalysisRunInput;
+  }): Promise<
+    | { id: string }
+    | { skipReason: "ANALYSIS_MIN_INTERVAL_NOT_ELAPSED" | "ANALYSIS_ALREADY_RUNNING" }
+  > {
+    const minMs = input.minIntervalMinutes * 60 * 1000;
+    return this.prisma.$transaction(async (tx) => {
+      const lock = await tx.$queryRaw<Array<{ locked: boolean }>>`
+        SELECT pg_try_advisory_xact_lock(84201502) AS locked
+      `;
+      if (!lock[0]?.locked) return { skipReason: "ANALYSIS_ALREADY_RUNNING" };
+      const running = await tx.analysisRun.findFirst({
+        where: { status: "RUNNING" },
+        orderBy: { createdAt: "desc" },
+      });
+      if (running && input.now.getTime() - running.createdAt.getTime() < minMs) {
+        return { skipReason: "ANALYSIS_ALREADY_RUNNING" };
+      }
+      const latest = await tx.analysisRun.findFirst({
+        where: { status: { in: ["COMPLETED", "PARTIALLY_COMPLETED"] } },
+        orderBy: { completedAt: { sort: "desc", nulls: "last" } },
+      });
+      if (
+        latest?.completedAt &&
+        input.now.getTime() - latest.completedAt.getTime() < minMs
+      ) {
+        return { skipReason: "ANALYSIS_MIN_INTERVAL_NOT_ELAPSED" };
+      }
+      const created = await tx.analysisRun.create({
+        data: {
+          analysisType: input.create.analysisType,
+          status: "RUNNING",
+          startedAt: input.now,
+          parameters: input.create.parameters as Prisma.InputJsonValue,
+          scoringVersion: input.create.scoringVersion ?? "scoring-v1",
+          eligibilityVersion: input.create.eligibilityVersion ?? "eligibility-v1",
+          selectionVersion: input.create.selectionVersion ?? "selection-v1",
+        },
+      });
+      return { id: created.id };
+    });
+  }
+
   async createAnalysisRun(input: CreateAnalysisRunInput): Promise<AnalysisRun> {
     return this.prisma.analysisRun.create({
       data: {
@@ -266,7 +317,7 @@ export class AnalysisRepository {
     void now;
     return this.prisma.analysisRun.findFirst({
       where: { status: { in: ["COMPLETED", "PARTIALLY_COMPLETED"] as AnalysisRunStatus[] } },
-      orderBy: { completedAt: "desc" },
+      orderBy: { completedAt: { sort: "desc", nulls: "last" } },
     });
   }
 

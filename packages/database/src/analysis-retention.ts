@@ -384,90 +384,167 @@ export async function applyAnalysisRetention(
     throw new Error("ANALYSIS_RETENTION_BUSY");
   };
 
-  for (let i = 0; i < maxBatches; i += 1) {
-    const deleted = await runOnce(Prisma.sql`
-      DELETE FROM "ContentCandidate"
-      WHERE id IN (
-        SELECT c.id
-        FROM "ContentCandidate" c
-        JOIN "AnalysisRun" r ON r.id = c."analysisRunId"
-        WHERE r.status::text IN ('COMPLETED', 'PARTIALLY_COMPLETED', 'FAILED')
-          AND (
-            r."completedAt" < ${cutoff}
-            OR (r.status::text = 'FAILED' AND COALESCE(r."completedAt", r."createdAt") < ${cutoff})
-          )
-          AND r.id <> ALL(${keepIds})
-          AND NOT EXISTS (
-            SELECT 1 FROM "GeneratedContent" g WHERE g."contentCandidateId" = c.id
-          )
-          AND NOT EXISTS (
-            SELECT 1 FROM "XPublication" x WHERE x."contentCandidateId" = c.id
-          )
-        LIMIT ${batchSize}
-      )
-    `);
-    deletedCandidates += deleted;
-    batches += 1;
-    if (deleted === 0) break;
-  }
+  const pruneWhere = Prisma.sql`
+    r.status::text IN ('COMPLETED', 'PARTIALLY_COMPLETED', 'FAILED')
+    AND (
+      r."completedAt" < ${cutoff}
+      OR (r.status::text = 'FAILED' AND COALESCE(r."completedAt", r."createdAt") < ${cutoff})
+    )
+    AND r.id <> ALL(${keepIds})
+  `;
 
-  for (let i = 0; i < maxBatches; i += 1) {
-    const deleted = await runOnce(Prisma.sql`
-      DELETE FROM "ProductAnalysis"
-      WHERE id IN (
-        SELECT p.id
-        FROM "ProductAnalysis" p
-        JOIN "AnalysisRun" r ON r.id = p."analysisRunId"
-        WHERE r.status::text IN ('COMPLETED', 'PARTIALLY_COMPLETED', 'FAILED')
-          AND (
-            r."completedAt" < ${cutoff}
-            OR (r.status::text = 'FAILED' AND COALESCE(r."completedAt", r."createdAt") < ${cutoff})
-          )
-          AND r.id <> ALL(${keepIds})
-          AND NOT EXISTS (
-            SELECT 1 FROM "ContentCandidate" c WHERE c."productAnalysisId" = p.id
-          )
-          AND NOT EXISTS (
-            SELECT 1
-            FROM (
-              SELECT DISTINCT ON ("researchItemId") id
-              FROM "ProductAnalysis"
-              ORDER BY "researchItemId", "analyzedAt" DESC, id DESC
-            ) latest
-            WHERE latest.id = p.id
-          )
-        LIMIT ${batchSize}
-      )
-    `);
-    deletedAnalyses += deleted;
-    batches += 1;
-    if (deleted === 0) break;
-  }
+  await prisma.$executeRawUnsafe(`DROP TABLE IF EXISTS "_analysis_retention_prune"`);
+  await prisma.$executeRawUnsafe(
+    `CREATE UNLOGGED TABLE "_analysis_retention_prune" (id text PRIMARY KEY)`,
+  );
+  try {
+    const fill = async (sql: Prisma.Sql): Promise<void> => {
+      await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SET LOCAL statement_timeout = '180s'`;
+        const lock = await tx.$queryRaw<Array<{ locked: boolean }>>`
+          SELECT pg_try_advisory_xact_lock(${ADVISORY_LOCK_KEY}) AS locked
+        `;
+        if (!lock[0]?.locked) throw new Error("ANALYSIS_RETENTION_BUSY");
+        await tx.$executeRaw`TRUNCATE "_analysis_retention_prune"`;
+        await tx.$executeRaw(sql);
+      });
+    };
 
-  for (let i = 0; i < maxBatches; i += 1) {
-    const deleted = await runOnce(Prisma.sql`
-      DELETE FROM "AnalysisRun"
-      WHERE id IN (
-        SELECT r.id
-        FROM "AnalysisRun" r
-        WHERE r.status::text IN ('COMPLETED', 'PARTIALLY_COMPLETED', 'FAILED')
-          AND (
-            r."completedAt" < ${cutoff}
-            OR (r.status::text = 'FAILED' AND COALESCE(r."completedAt", r."createdAt") < ${cutoff})
-          )
-          AND r.id <> ALL(${keepIds})
-          AND NOT EXISTS (
-            SELECT 1 FROM "ProductAnalysis" p WHERE p."analysisRunId" = r.id
-          )
-          AND NOT EXISTS (
-            SELECT 1 FROM "ContentCandidate" c WHERE c."analysisRunId" = r.id
-          )
-        LIMIT ${batchSize}
-      )
+    await fill(Prisma.sql`
+      INSERT INTO "_analysis_retention_prune" (id)
+      SELECT c.id
+      FROM "ContentCandidate" c
+      JOIN "AnalysisRun" r ON r.id = c."analysisRunId"
+      WHERE ${pruneWhere}
+        AND NOT EXISTS (
+          SELECT 1 FROM "GeneratedContent" g WHERE g."contentCandidateId" = c.id
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM "XPublication" x WHERE x."contentCandidateId" = c.id
+        )
     `);
-    deletedRuns += deleted;
-    batches += 1;
-    if (deleted === 0) break;
+    for (let i = 0; i < maxBatches; i += 1) {
+      const deleted = await runOnce(Prisma.sql`
+        WITH doomed AS (
+          SELECT w.id
+          FROM "_analysis_retention_prune" w
+          WHERE NOT EXISTS (
+            SELECT 1 FROM "GeneratedContent" g WHERE g."contentCandidateId" = w.id
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM "XPublication" x WHERE x."contentCandidateId" = w.id
+          )
+          LIMIT ${batchSize}
+        ),
+        removed AS (
+          DELETE FROM "ContentCandidate" c
+          USING doomed
+          WHERE c.id = doomed.id
+          RETURNING c.id
+        )
+        DELETE FROM "_analysis_retention_prune" w
+        USING removed
+        WHERE w.id = removed.id
+      `);
+      deletedCandidates += deleted;
+      batches += 1;
+      if (batches % 1000 === 0) {
+        console.log(`retention_progress phase=candidates deleted=${deletedCandidates}`);
+      }
+      if (deleted === 0) break;
+    }
+
+    await fill(Prisma.sql`
+      INSERT INTO "_analysis_retention_prune" (id)
+      SELECT p.id
+      FROM "ProductAnalysis" p
+      JOIN "AnalysisRun" r ON r.id = p."analysisRunId"
+      WHERE ${pruneWhere}
+        AND NOT EXISTS (
+          SELECT 1 FROM "ContentCandidate" c WHERE c."productAnalysisId" = p.id
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM (
+            SELECT DISTINCT ON ("researchItemId") id
+            FROM "ProductAnalysis"
+            ORDER BY "researchItemId", "analyzedAt" DESC, id DESC
+          ) latest
+          WHERE latest.id = p.id
+        )
+    `);
+    for (let i = 0; i < maxBatches; i += 1) {
+      const deleted = await runOnce(Prisma.sql`
+        WITH doomed AS (
+          SELECT w.id
+          FROM "_analysis_retention_prune" w
+          WHERE NOT EXISTS (
+            SELECT 1 FROM "ContentCandidate" c WHERE c."productAnalysisId" = w.id
+          )
+          LIMIT ${batchSize}
+        ),
+        removed AS (
+          DELETE FROM "ProductAnalysis" p
+          USING doomed
+          WHERE p.id = doomed.id
+          RETURNING p.id
+        )
+        DELETE FROM "_analysis_retention_prune" w
+        USING removed
+        WHERE w.id = removed.id
+      `);
+      deletedAnalyses += deleted;
+      batches += 1;
+      if (batches % 1000 === 0) {
+        console.log(`retention_progress phase=analyses deleted=${deletedAnalyses}`);
+      }
+      if (deleted === 0) break;
+    }
+
+    await fill(Prisma.sql`
+      INSERT INTO "_analysis_retention_prune" (id)
+      SELECT r.id
+      FROM "AnalysisRun" r
+      WHERE ${pruneWhere}
+        AND NOT EXISTS (
+          SELECT 1 FROM "ProductAnalysis" p WHERE p."analysisRunId" = r.id
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM "ContentCandidate" c WHERE c."analysisRunId" = r.id
+        )
+    `);
+    for (let i = 0; i < maxBatches; i += 1) {
+      const deleted = await runOnce(Prisma.sql`
+        WITH doomed AS (
+          SELECT w.id
+          FROM "_analysis_retention_prune" w
+          WHERE NOT EXISTS (
+            SELECT 1 FROM "ProductAnalysis" p WHERE p."analysisRunId" = w.id
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM "ContentCandidate" c WHERE c."analysisRunId" = w.id
+          )
+          LIMIT ${batchSize}
+        ),
+        removed AS (
+          DELETE FROM "AnalysisRun" r
+          USING doomed
+          WHERE r.id = doomed.id
+          RETURNING r.id
+        )
+        DELETE FROM "_analysis_retention_prune" w
+        USING removed
+        WHERE w.id = removed.id
+      `);
+      deletedRuns += deleted;
+      batches += 1;
+      if (batches % 1000 === 0) {
+        console.log(`retention_progress phase=runs deleted=${deletedRuns}`);
+      }
+      if (deleted === 0) break;
+    }
+  } finally {
+    await prisma.$executeRawUnsafe(`DROP TABLE IF EXISTS "_analysis_retention_prune"`);
   }
 
   return { deletedCandidates, deletedAnalyses, deletedRuns, batches };

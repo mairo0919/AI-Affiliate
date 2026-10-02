@@ -136,7 +136,7 @@ async function seedReadyContent(externalId = `${PREFIX}a`): Promise<string> {
   } as CollectionResult);
 
   const analysisEngine = new AnalysisEngine({ logger, research, analysis, config });
-  await analysisEngine.run({ source: "mock", limit: 20, candidateLimit: 5 });
+  await analysisEngine.run({ source: "mock", limit: 20, candidateLimit: 5, force: true });
 
   const candidates = await analysis.listContentCandidates({ limit: 5 });
   const itemRow = await database.prisma.researchItem.findFirst({
@@ -337,6 +337,7 @@ describe("X Publishing Engine", () => {
     await new AnalysisEngine({ logger, research, analysis, config }).run({
       source: "mock",
       limit: 20,
+      force: true,
     });
     const candidates = await analysis.listContentCandidates({ limit: 20 });
     const other = candidates.find((c) => c.researchItemId !== review?.researchItemId);

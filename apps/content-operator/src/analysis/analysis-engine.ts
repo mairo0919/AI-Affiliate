@@ -41,6 +41,8 @@ export interface AnalysisRunOptions {
   includeRequiresConfirmation?: boolean;
   dryRun?: boolean;
   now?: Date;
+  /** Manual/test escape. Scheduled callers must leave this unset. */
+  force?: boolean;
 }
 
 export interface AnalysisRunResult {
@@ -127,15 +129,42 @@ export class AnalysisEngine {
 
     let runId: string | null = null;
     if (!dryRun) {
-      const created = await this.analysis.createAnalysisRun({
-        analysisType: "CONTENT_CANDIDATE_SELECTION",
+      const create = {
+        analysisType: "CONTENT_CANDIDATE_SELECTION" as const,
         parameters,
         scoringVersion: SCORING_VERSION,
         eligibilityVersion: ELIGIBILITY_VERSION,
         selectionVersion: SELECTION_VERSION,
-      });
-      runId = created.id;
-      await this.analysis.startAnalysisRun(runId);
+      };
+      if (options.force) {
+        const created = await this.analysis.createAnalysisRun(create);
+        runId = created.id;
+        await this.analysis.startAnalysisRun(runId);
+      } else {
+        const claimed = await this.analysis.claimScheduledAnalysisRun({
+          now,
+          minIntervalMinutes: this.config.analysisAutoRunMinIntervalMinutes,
+          create,
+        });
+        if ("skipReason" in claimed) {
+          return {
+            analysisRunId: null,
+            status: "SKIPPED",
+            analyzedItemCount: 0,
+            eligibleCount: 0,
+            requiresConfirmationCount: 0,
+            notEligibleCount: 0,
+            selectedItemCount: 0,
+            candidateCounts: {},
+            averageScore: 0,
+            errorCount: 0,
+            executionTime: Date.now() - started,
+            skipped: true,
+            skipReason: claimed.skipReason,
+          };
+        }
+        runId = claimed.id;
+      }
     }
 
     try {
