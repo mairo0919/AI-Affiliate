@@ -144,7 +144,7 @@ describe("normal FANZA/DMM destination", () => {
       expectedUrl: NORMAL,
       rootText: ROOT,
       ctaText: `作品ページはこちら\nhttps://t.co/abc`,
-      rootExpandedUrls: [],
+      rootExpandedUrls: ["https://x.com/osusume_media/status/1/photo/1"],
       ctaExpandedUrls: [NORMAL],
       rootMediaCount: 1,
       ctaMediaCount: 0,

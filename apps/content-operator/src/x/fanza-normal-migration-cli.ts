@@ -553,8 +553,15 @@ export async function runFanzaNormalMigration(argv: string[]): Promise<void> {
       if (remainingPublished > 0 || oldManagedOnTimeline > 0) {
         blocked.push(`OLD_MANAGED_REMAINING:${remainingPublished}:timeline=${oldManagedOnTimeline}`);
       } else {
-        const canaryRow = pendingCanary
-          ? ready.find((row) => row.researchItemId === pendingCanary.researchItemId) ?? null
+        const publishedCanary = pendingCanary
+          ? null
+          : await prisma.xPublication.findFirst({
+              where: { strategyVersion: { contains: "canary" }, status: "PUBLISHED" },
+              select: { id: true, researchItemId: true },
+            });
+        const canaryAnchorId = pendingCanary?.researchItemId ?? publishedCanary?.researchItemId ?? null;
+        const canaryRow = canaryAnchorId
+          ? ready.find((row) => row.researchItemId === canaryAnchorId) ?? null
           : ready.find((row) => {
           const mediaUrl = mediaUrlFromSnapshot(row.generatedContent.inputSnapshot);
           return Boolean(
@@ -566,7 +573,23 @@ export async function runFanzaNormalMigration(argv: string[]): Promise<void> {
         if (!canaryRow) {
           blocked.push("CANARY_NOT_ELIGIBLE");
         } else {
-          const canary = pendingCanary
+          const canary = publishedCanary
+            ? await (async () => {
+                const publication = await prisma.xPublication.findUniqueOrThrow({
+                  where: { id: publishedCanary.id },
+                  include: { posts: { orderBy: { sequence: "asc" } } },
+                });
+                const identity = officialIdentityFromRaw(canaryRow.researchItem.rawData);
+                const normal = resolveNormalXProductUrl({
+                  canonicalCid: canaryRow.researchItem.externalId,
+                  officialContentId: identity.contentId,
+                  officialProductUrl: identity.productUrl,
+                });
+                const rootBody = publication.posts.find((post) => post.role === "ROOT")?.body ?? "";
+                if (!normal.ok) return { ok: false as const, reason: "NORMAL_URL_NOT_VERIFIED" };
+                return { ok: true as const, publication, rootBody, url: normal.url };
+              })()
+            : pendingCanary
             ? await (async () => {
                 const publication = await service.publishOne(pendingCanary.id, {
                   actorType: "CLI",

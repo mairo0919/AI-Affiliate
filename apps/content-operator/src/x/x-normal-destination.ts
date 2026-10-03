@@ -222,6 +222,15 @@ function compactCopy(text: string): string {
   return reviewPassRootBody(text).replace(/\s+/gu, "");
 }
 
+function isXPlatformUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase().replace(/^www\./u, "");
+    return host === "x.com" || host === "twitter.com" || host === "pic.x.com" || host === "pbs.twimg.com";
+  } catch {
+    return false;
+  }
+}
+
 export function verifyCanaryPosts(input: {
   canonicalCid: string;
   expectedRoot: string;
@@ -235,7 +244,9 @@ export function verifyCanaryPosts(input: {
   sentMediaMatchesCid: boolean;
 }): CanaryPostCheck {
   const rootText = compactCopy(input.rootText) === compactCopy(input.expectedRoot) && compactCopy(input.expectedRoot).length > 0;
-  const expanded = [...input.rootExpandedUrls, ...input.ctaExpandedUrls];
+  const rootDestinations = input.rootExpandedUrls.filter((url) => !isXPlatformUrl(url));
+  const ctaDestinations = input.ctaExpandedUrls.filter((url) => !isXPlatformUrl(url));
+  const expanded = [...rootDestinations, ...ctaDestinations];
   const display = `${input.rootText}\n${input.ctaText}`;
   const wpAbsent =
     !/otonaselect\.net|wordpress/iu.test(display) &&
@@ -247,7 +258,7 @@ export function verifyCanaryPosts(input: {
       return kind !== "FANZA_AFFILIATE" && kind !== "DMM_AFFILIATE";
     });
   const expected = assertNormalXDestination(input.expectedUrl, input.canonicalCid);
-  const ctaOk = input.ctaExpandedUrls.some(
+  const ctaOk = ctaDestinations.some(
     (url) => assertNormalXDestination(url, input.canonicalCid).ok && url === input.expectedUrl,
   );
   const expandedOk = expanded.every((url) => assertNormalXDestination(url, input.canonicalCid).ok);
