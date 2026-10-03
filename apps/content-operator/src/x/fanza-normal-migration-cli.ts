@@ -260,6 +260,7 @@ async function createScheduledNormalPublication(input: {
       actorType: "CLI",
       actorId: "normal-link-migration",
       allowWhilePublishingPaused: input.publishNow,
+      cooldownOverrideReason: NORMAL_LINK_MIGRATION_MARKER,
     });
     const slotKey = input.slot ? slotKeyFromDate(input.slot) : `canary`;
     const hour = input.slot ? Number(slotKey.slice(11, 13)) : null;
@@ -403,6 +404,7 @@ export async function runFanzaNormalMigration(argv: string[]): Promise<void> {
     let apiDeletes = 0;
 
     for (const row of published) {
+      if (row.strategyVersion.includes("FANZA_NORMAL")) continue;
       const ordered = [...row.posts].sort((a, b) => {
         if (a.role === "CTA" && b.role !== "CTA") return -1;
         if (b.role === "CTA" && a.role !== "CTA") return 1;
@@ -532,7 +534,16 @@ export async function runFanzaNormalMigration(argv: string[]): Promise<void> {
             },
           },
         })) as ThreadRow[];
-        ready.sort((a, b) => a.researchItem.externalId.localeCompare(b.researchItem.externalId));
+        const byItem = new Map<string, ThreadRow>();
+        for (const row of ready) {
+          const prev = byItem.get(row.researchItemId);
+          if (!prev || (prev.strategyVersion.includes("canary") && !row.strategyVersion.includes("canary"))) {
+            byItem.set(row.researchItemId, row);
+          }
+        }
+        ready = [...byItem.values()].sort((a, b) =>
+          a.researchItem.externalId.localeCompare(b.researchItem.externalId),
+        );
       }
       const oldManagedIds = new Set(
         ready.flatMap((row) => row.posts.map((post) => post.xPostId).filter((id): id is string => Boolean(id))),
@@ -595,6 +606,7 @@ export async function runFanzaNormalMigration(argv: string[]): Promise<void> {
                   actorType: "CLI",
                   actorId: "normal-link-migration",
                   allowWhilePublishingPaused: true,
+                  cooldownOverrideReason: NORMAL_LINK_MIGRATION_MARKER,
                 });
                 const identity = officialIdentityFromRaw(canaryRow.researchItem.rawData);
                 const normal = resolveNormalXProductUrl({
