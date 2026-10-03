@@ -376,15 +376,22 @@ export async function runFanzaNormalMigration(argv: string[]): Promise<void> {
         where: { publicationId: { in: scheduledIds }, status: "PENDING" },
         data: { status: "CANCELLED" },
       });
-      for (const row of scheduled) {
+      for (const row of legacyScheduled) {
         await prisma.xPublication.update({
           where: { id: row.id },
           data: { strategyVersion: appendNormalLinkMarker(row.strategyVersion) },
         });
       }
     }
+    const keptNormal = await prisma.xPublication.findMany({
+      where: { strategyVersion: { contains: "FANZA_NORMAL" }, status: { in: ["SCHEDULED", "BLOCKED", "PUBLISHED"] } },
+      select: { id: true },
+    });
     const cancelledReservations = await prisma.xProductPublicationReservation.updateMany({
-      where: { status: "ACTIVE" },
+      where: {
+        status: "ACTIVE",
+        ...(keptNormal.length > 0 ? { publicationId: { notIn: keptNormal.map((row) => row.id) } } : {}),
+      },
       data: { status: "CANCELLED", reason: NORMAL_LINK_MIGRATION_MARKER },
     });
 
@@ -479,9 +486,35 @@ export async function runFanzaNormalMigration(argv: string[]): Promise<void> {
       let ready = published
         .filter((row) => deletedIds.includes(row.id))
         .sort((a, b) => a.researchItem.externalId.localeCompare(b.researchItem.externalId));
-      const pendingCanary = scheduled.find(
-        (row) => row.strategyVersion.includes("FANZA_NORMAL") && row.strategyVersion.includes("canary"),
-      );
+      const pendingCanary = await prisma.xPublication.findFirst({
+        where: {
+          strategyVersion: { contains: "canary" },
+          status: { in: ["SCHEDULED", "BLOCKED"] },
+        },
+        select: {
+          id: true,
+          status: true,
+          strategyVersion: true,
+          researchItemId: true,
+          generatedContentId: true,
+          researchItem: { select: { externalId: true, rawData: true } },
+          generatedContent: { select: { title: true, inputSnapshot: true } },
+          posts: {
+            select: { id: true, role: true, sequence: true, xPostId: true, body: true },
+            orderBy: { sequence: "asc" },
+          },
+        },
+      });
+      if (pendingCanary?.status === "BLOCKED") {
+        await prisma.xPublication.update({
+          where: { id: pendingCanary.id },
+          data: { status: "SCHEDULED", lastErrorType: null, lastErrorMessage: null },
+        });
+        await prisma.xProductPublicationReservation.updateMany({
+          where: { publicationId: pendingCanary.id, status: "CANCELLED", reason: NORMAL_LINK_MIGRATION_MARKER },
+          data: { status: "ACTIVE" },
+        });
+      }
       if (ready.length === 0) {
         ready = (await prisma.xPublication.findMany({
           where: { status: "DELETED", strategyVersion: { contains: NORMAL_LINK_MIGRATION_MARKER } },
