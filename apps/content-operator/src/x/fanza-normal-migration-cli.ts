@@ -259,6 +259,7 @@ async function createScheduledNormalPublication(input: {
       scheduledAt: input.publishNow ? null : input.slot,
       actorType: "CLI",
       actorId: "normal-link-migration",
+      allowWhilePublishingPaused: input.publishNow,
     });
     const slotKey = input.slot ? slotKeyFromDate(input.slot) : `canary`;
     const hour = input.slot ? Number(slotKey.slice(11, 13)) : null;
@@ -360,15 +361,16 @@ export async function runFanzaNormalMigration(argv: string[]): Promise<void> {
     );
     if (!apply) return;
 
+    const legacyScheduled = scheduled.filter((row) => !row.strategyVersion.includes("FANZA_NORMAL"));
     const cancelledPublications = await prisma.xPublication.updateMany({
-      where: { status: "SCHEDULED" },
+      where: { id: { in: legacyScheduled.map((row) => row.id) }, status: "SCHEDULED" },
       data: {
         status: "CANCELLED",
         lastErrorType: "NORMAL_LINK_MIGRATION",
         lastErrorMessage: "legacy payload cancelled",
       },
     });
-    const scheduledIds = scheduled.map((row) => row.id);
+    const scheduledIds = legacyScheduled.map((row) => row.id);
     if (scheduledIds.length > 0) {
       await prisma.xPublicationPost.updateMany({
         where: { publicationId: { in: scheduledIds }, status: "PENDING" },
@@ -474,14 +476,53 @@ export async function runFanzaNormalMigration(argv: string[]): Promise<void> {
           });
         },
       });
-      const ready = published
+      let ready = published
         .filter((row) => deletedIds.includes(row.id))
         .sort((a, b) => a.researchItem.externalId.localeCompare(b.researchItem.externalId));
-      const remainingPublished = await prisma.xPublication.count({ where: { status: "PUBLISHED" } });
-      if (remainingPublished > 0) {
-        blocked.push(`OLD_MANAGED_REMAINING:${remainingPublished}`);
+      const pendingCanary = scheduled.find(
+        (row) => row.strategyVersion.includes("FANZA_NORMAL") && row.strategyVersion.includes("canary"),
+      );
+      if (ready.length === 0) {
+        ready = (await prisma.xPublication.findMany({
+          where: { status: "DELETED", strategyVersion: { contains: NORMAL_LINK_MIGRATION_MARKER } },
+          select: {
+            id: true,
+            status: true,
+            strategyVersion: true,
+            researchItemId: true,
+            generatedContentId: true,
+            researchItem: { select: { externalId: true, rawData: true } },
+            generatedContent: { select: { title: true, inputSnapshot: true } },
+            posts: {
+              select: { id: true, role: true, sequence: true, xPostId: true, body: true },
+              orderBy: { sequence: "asc" },
+            },
+          },
+        })) as ThreadRow[];
+        ready.sort((a, b) => a.researchItem.externalId.localeCompare(b.researchItem.externalId));
+      }
+      const oldManagedIds = new Set(
+        ready.flatMap((row) => row.posts.map((post) => post.xPostId).filter((id): id is string => Boolean(id))),
+      );
+      const oldManagedOnTimeline = [...timeline.ids.keys()].filter((id) => oldManagedIds.has(id)).length;
+      let wpOnTimeline = 0;
+      let affiliateOnTimeline = 0;
+      for (const text of timeline.ids.values()) {
+        for (const raw of urlsInText(text)) {
+          const kind = classifyXDestination(raw.replace(/[.,]+$/u, ""));
+          if (kind === "WORDPRESS") wpOnTimeline += 1;
+          if (kind === "FANZA_AFFILIATE" || kind === "DMM_AFFILIATE") affiliateOnTimeline += 1;
+        }
+      }
+      const remainingPublished = await prisma.xPublication.count({
+        where: { status: "PUBLISHED", strategyVersion: { not: { contains: "FANZA_NORMAL" } } },
+      });
+      if (remainingPublished > 0 || oldManagedOnTimeline > 0) {
+        blocked.push(`OLD_MANAGED_REMAINING:${remainingPublished}:timeline=${oldManagedOnTimeline}`);
       } else {
-        const canaryRow = ready.find((row) => {
+        const canaryRow = pendingCanary
+          ? ready.find((row) => row.researchItemId === pendingCanary.researchItemId) ?? null
+          : ready.find((row) => {
           const mediaUrl = mediaUrlFromSnapshot(row.generatedContent.inputSnapshot);
           return Boolean(
             mediaUrl && officialMediaMatchesCanonicalCid(mediaUrl, row.researchItem.externalId),
@@ -492,14 +533,31 @@ export async function runFanzaNormalMigration(argv: string[]): Promise<void> {
         if (!canaryRow) {
           blocked.push("CANARY_NOT_ELIGIBLE");
         } else {
-          const canary = await createScheduledNormalPublication({
-            row: canaryRow,
-            prisma,
-            contents,
-            service,
-            publishNow: true,
-            slot: null,
-          });
+          const canary = pendingCanary
+            ? await (async () => {
+                const publication = await service.publishOne(pendingCanary.id, {
+                  actorType: "CLI",
+                  actorId: "normal-link-migration",
+                  allowWhilePublishingPaused: true,
+                });
+                const identity = officialIdentityFromRaw(canaryRow.researchItem.rawData);
+                const normal = resolveNormalXProductUrl({
+                  canonicalCid: canaryRow.researchItem.externalId,
+                  officialContentId: identity.contentId,
+                  officialProductUrl: identity.productUrl,
+                });
+                const rootBody = publication.posts.find((post) => post.role === "ROOT")?.body ?? "";
+                if (!normal.ok) return { ok: false as const, reason: "NORMAL_URL_NOT_VERIFIED" };
+                return { ok: true as const, publication, rootBody, url: normal.url };
+              })()
+            : await createScheduledNormalPublication({
+                row: canaryRow,
+                prisma,
+                contents,
+                service,
+                publishNow: true,
+                slot: null,
+              });
           if (!canary.ok) {
             blocked.push(`${canaryRow.researchItem.externalId}:${canary.reason}`);
           } else if (canary.publication.status !== "PUBLISHED") {
@@ -559,7 +617,7 @@ export async function runFanzaNormalMigration(argv: string[]): Promise<void> {
             rebuilt.push(row.researchItem.externalId);
           }
           const legacyLeft = await prisma.xPublication.count({ where: { status: "PUBLISHED", strategyVersion: { not: { contains: "FANZA_NORMAL" } } } });
-          if (legacyLeft === 0) {
+          if (legacyLeft === 0 && oldManagedOnTimeline === 0 && wpOnTimeline === 0 && affiliateOnTimeline === 0) {
             await prisma.xRuntimeControl.upsert({
               where: { key: "PUBLISHING_PAUSED" },
               create: {
@@ -577,7 +635,13 @@ export async function runFanzaNormalMigration(argv: string[]): Promise<void> {
             });
           }
         }
-        console.log(JSON.stringify({ canary: canaryCheck, canaryPass }));
+        console.log(JSON.stringify({
+          canary: canaryCheck,
+          canaryPass,
+          oldManagedOnTimeline,
+          wpOnTimeline,
+          affiliateOnTimeline,
+        }));
       }
     }
 

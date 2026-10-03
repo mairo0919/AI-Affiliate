@@ -184,6 +184,7 @@ export class XPublicationService {
     cooldownOverrideReason?: string;
     actorType?: "SYSTEM" | "ADMIN" | "SCHEDULER" | "CLI";
     actorId?: string;
+    allowWhilePublishingPaused?: boolean;
   }): Promise<PublicationWithPosts> {
     const content = await this.contents.findGeneratedContentById(options.contentId);
     if (!content) {
@@ -526,6 +527,7 @@ export class XPublicationService {
         actorType: options.actorType,
         actorId: options.actorId,
         cooldownOverrideReason: options.cooldownOverrideReason,
+        allowWhilePublishingPaused: options.allowWhilePublishingPaused,
       });
     }
     return created;
@@ -538,6 +540,7 @@ export class XPublicationService {
       actorId?: string;
       cooldownOverrideReason?: string;
       phase?: "publish" | "retry";
+      allowWhilePublishingPaused?: boolean;
     },
   ): Promise<PublicationWithPosts> {
     if (!this.config.xApiEnabled && this.provider.providerName !== "mock") {
@@ -661,6 +664,7 @@ export class XPublicationService {
           phase: options?.phase ?? "publish",
           actorType: options?.actorType,
           cooldownOverrideReason: options?.cooldownOverrideReason,
+          allowWhilePublishingPaused: options?.allowWhilePublishingPaused,
         });
 
         const policySkip = guardResult.issues.some((i) =>

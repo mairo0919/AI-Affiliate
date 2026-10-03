@@ -31,6 +31,8 @@ export interface PrePublishContext {
   phase: "create" | "schedule" | "publish" | "retry";
   actorType?: "SYSTEM" | "ADMIN" | "SCHEDULER" | "CLI";
   cooldownOverrideReason?: string | null;
+  /** Migration canary only. Scheduler publish stays blocked while PUBLISHING_PAUSED is set. */
+  allowWhilePublishingPaused?: boolean;
 }
 
 export interface PrePublishResult {
@@ -149,7 +151,7 @@ export class XPrePublishGuard {
     const envKill = this.deps.config.xGlobalKillSwitch;
     const dbKill = await this.deps.ops.isControlActive("GLOBAL_KILL_SWITCH", this.now());
     const dbPaused = await this.deps.ops.isControlActive("PUBLISHING_PAUSED", this.now());
-    const killSwitch = envKill || dbKill || dbPaused;
+    const killSwitch = envKill || dbKill || (dbPaused && !ctx.allowWhilePublishingPaused);
     const wpHosts = this.deps.config.wordpressBaseUrl
       ? [this.deps.config.wordpressBaseUrl]
       : [];
