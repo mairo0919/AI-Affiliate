@@ -1,13 +1,19 @@
 /**
- * Daily-ops X slot execution: FANZA direct URL only.
- * WordPress URLs are not scheduled. Missing X affiliate ID skips the slot.
+ * Daily-ops X slot execution: official FANZA/DMM product URL only.
+ * Affiliate URLs and WordPress URLs are not scheduled.
  */
 
 import { createHash } from "node:crypto";
 import type { AppConfig } from "@ai-affiliate/config";
 import { ContentRepository, type DatabaseClient } from "@ai-affiliate/database";
 import type { Logger } from "@ai-affiliate/shared";
-import { buildXFanzaDirectAffiliateUrl, textContainsWordPressUrl } from "../adapters/affiliate/fanza-affiliate-provider.js";
+import { textContainsWordPressUrl } from "../adapters/affiliate/fanza-affiliate-provider.js";
+import {
+  classifyXDestination,
+  officialIdentityFromRaw,
+  publishingPauseActive,
+  resolveNormalXProductUrl,
+} from "../x/x-normal-destination.js";
 import {
   adaptLoadedCanonicalToX,
   loadCanonicalXSource,
@@ -85,6 +91,32 @@ export type XSlotLiveOutcome = {
   held: boolean;
 };
 
+async function resolveSlotNormalUrl(
+  prisma: DatabaseClient["prisma"],
+  cid: string,
+): Promise<ReturnType<typeof resolveNormalXProductUrl>> {
+  const item = await prisma.researchItem.findFirst({
+    where: { externalId: { equals: cid, mode: "insensitive" } },
+    select: { externalId: true, rawData: true },
+  });
+  const identity = officialIdentityFromRaw(item?.rawData);
+  return resolveNormalXProductUrl({
+    canonicalCid: item?.externalId ?? cid,
+    officialContentId: identity.contentId,
+    officialProductUrl: identity.productUrl,
+  });
+}
+
+function postsUseNormalDestination(posts: Array<{ body: string }>): boolean {
+  return posts.every((post) => {
+    const urls = post.body.match(/https?:\/\/\S+/gu) ?? [];
+    return urls.every((raw) => {
+      const kind = classifyXDestination(raw.replace(/[)\].,]+$/u, ""));
+      return kind === "FANZA_NORMAL" || kind === "DMM_NORMAL";
+    });
+  });
+}
+
 export async function probeXScheduleCandidates(input: {
   prisma: DatabaseClient["prisma"];
   ranked: ChannelCandidate[];
@@ -128,11 +160,7 @@ export async function probeXScheduleCandidates(input: {
       });
       continue;
     }
-    const direct = buildXFanzaDirectAffiliateUrl({
-      contentId: cid,
-      xAffiliateId: input.config.dmmXAffiliateId,
-      wordpressAffiliateId: input.config.dmmAffiliateId,
-    });
+    const direct = await resolveSlotNormalUrl(input.prisma, cid);
     if (!direct.ok) {
       out.push({
         canonicalId: cid,
@@ -145,12 +173,12 @@ export async function probeXScheduleCandidates(input: {
     }
     const adapted = await adaptLoadedCanonicalToX(canonicalSource, {
       preferredRoute: "DIRECT_AFFILIATE",
-      disclosure: "PR",
+      disclosure: null,
       preferWpTraffic: false,
       allowDirectAffiliate: true,
       allowCombined: false,
       affiliateThreadMode: false,
-      fanzaDirectUrl: direct.url,
+      normalProductUrl: direct.url,
       llm: input.llm,
       llmModel: input.config.llmModelWriter,
     });
@@ -165,15 +193,16 @@ export async function probeXScheduleCandidates(input: {
       continue;
     }
     if (
-      adapted.publicationStrategy !== "FANZA_DIRECT" ||
+      adapted.publicationStrategy !== "FANZA_NORMAL" ||
       adapted.posts.some((post) => textContainsWordPressUrl(post.body)) ||
+      !postsUseNormalDestination(adapted.posts) ||
       !adapted.fanzaUrl
     ) {
       out.push({
         canonicalId: cid,
         contentVersionId: cvId,
         pass: false,
-        skipReason: "X_FANZA_DIRECT_REQUIRED",
+        skipReason: "BLOCKED_INVALID_X_DESTINATION",
         rank: rank++,
       });
       continue;
@@ -206,6 +235,13 @@ export async function executeAssignedXSlots(input: {
   xPublishCalls: number;
   primary: XSlotLiveOutcome | null;
 }> {
+  const pause = await input.prisma.xRuntimeControl.findUnique({
+    where: { key: "PUBLISHING_PAUSED" },
+  });
+  if (publishingPauseActive(pause?.value)) {
+    return { outcomes: [], xPublishCalls: 0, primary: null };
+  }
+
   const outcomes: XSlotLiveOutcome[] = [];
   const xPublishCalls = 0;
   const contents = new ContentRepository(input.prisma);
@@ -317,11 +353,7 @@ export async function executeAssignedXSlots(input: {
         continue;
       }
 
-      const direct = buildXFanzaDirectAffiliateUrl({
-        contentId: selected.canonicalId,
-        xAffiliateId: input.config.dmmXAffiliateId,
-        wordpressAffiliateId: input.config.dmmAffiliateId,
-      });
+      const direct = await resolveSlotNormalUrl(input.prisma, selected.canonicalId);
       if (!direct.ok) {
         outcomes.push({
           hour: assignment.hour,
@@ -339,12 +371,12 @@ export async function executeAssignedXSlots(input: {
       }
       const adapted = await adaptLoadedCanonicalToX(canonicalSource, {
         preferredRoute: "DIRECT_AFFILIATE",
-        disclosure: "PR",
+        disclosure: null,
         preferWpTraffic: false,
         allowDirectAffiliate: true,
         allowCombined: false,
         affiliateThreadMode: false,
-        fanzaDirectUrl: direct.url,
+        normalProductUrl: direct.url,
         llm: input.llm,
         llmModel: input.config.llmModelWriter,
       });
@@ -365,7 +397,8 @@ export async function executeAssignedXSlots(input: {
         continue;
       }
       if (
-        adapted.publicationStrategy !== "FANZA_DIRECT" ||
+        adapted.publicationStrategy !== "FANZA_NORMAL" ||
+        !postsUseNormalDestination(adapted.posts) ||
         adapted.posts.some((post) => textContainsWordPressUrl(post.body)) ||
         !adapted.fanzaUrl
       ) {
@@ -375,7 +408,7 @@ export async function executeAssignedXSlots(input: {
           status: "EMPTY",
           canonicalId: selected.canonicalId,
           contentVersionId: canonicalSource.contentVersionId,
-          reason: "X_FANZA_DIRECT_REQUIRED",
+          reason: "BLOCKED_INVALID_X_DESTINATION",
           publicationId: null,
           scheduledAt: assignment.scheduledAt.toISOString(),
           published: false,
@@ -480,7 +513,7 @@ export async function executeAssignedXSlots(input: {
         generatedAt: input.now,
       });
 
-      const idempotencyKey = `x-daily:${assignment.slotKey}:${selected.canonicalId}:FANZA_DIRECT`;
+      const idempotencyKey = `x-daily:${assignment.slotKey}:${selected.canonicalId}:FANZA_NORMAL`;
       const existing = await input.prisma.xPublication.findUnique({
         where: { idempotencyKey },
       });
@@ -537,7 +570,7 @@ export async function executeAssignedXSlots(input: {
         .update({
           where: { id: pub.id },
           data: {
-            strategyVersion: `${input.xMixSlot}|AUTO|slotKey=${assignment.slotKey}|slotHour=${assignment.hour}|slotKind=${assignment.kind ?? "STANDARD"}|FANZA_DIRECT`,
+            strategyVersion: `${input.xMixSlot}|AUTO|slotKey=${assignment.slotKey}|slotHour=${assignment.hour}|slotKind=${assignment.kind ?? "STANDARD"}|FANZA_NORMAL`,
             idempotencyKey,
             scheduledAt: assignment.scheduledAt,
           },

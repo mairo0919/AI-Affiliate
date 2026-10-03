@@ -333,7 +333,15 @@ describe("reservation lifecycle create + expire (A–G)", () => {
       contents,
       now: () => new Date("2026-09-16T06:01:00.000Z"),
     });
+    const normal = `https://video.dmm.co.jp/av/content/?id=${encodeURIComponent(externalId ?? "mida00805")}`;
+    await database.prisma.generatedContent.update({
+      where: { id: contentId },
+      data: { affiliateUrl: normal },
+    });
     const full = await publications.findById(pub.id);
+    for (const post of full!.posts) {
+      post.body = `作品ページはこちら\n${normal}`;
+    }
     const pass = await guard.evaluate({
       publication: full!,
       productKey,

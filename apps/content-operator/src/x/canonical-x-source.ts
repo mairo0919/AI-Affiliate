@@ -339,6 +339,7 @@ export async function adaptLoadedCanonicalToX(
     allowCombined?: boolean;
     affiliateThreadMode?: boolean;
     fanzaDirectUrl?: string | null;
+    normalProductUrl?: string | null;
     llm?: import("../adapters/types.js").LLMProvider | null;
     llmModel?: string;
   },
@@ -369,6 +370,7 @@ export async function adaptLoadedCanonicalToX(
     allowCombined: opts?.allowCombined ?? false,
     affiliateThreadMode: opts?.affiliateThreadMode ?? false,
     fanzaDirectUrl: opts?.fanzaDirectUrl,
+    normalProductUrl: opts?.normalProductUrl,
     llm: opts?.llm,
     llmModel: opts?.llmModel,
   });

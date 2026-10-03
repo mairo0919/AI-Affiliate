@@ -26,6 +26,7 @@ import { XMetricsCollector } from "../x/metrics-collector.js";
 import type { MetricsCollectResult } from "../x/metrics-collector.js";
 import { resolveCanonicalArticleImages } from "../x/canonical-x-source.js";
 import { XPublicationService } from "../x/publication-service.js";
+import { officialIdentityFromRaw } from "../x/x-normal-destination.js";
 import { XStrategyEvaluator } from "../x/strategy-evaluator.js";
 import type { StrategyEvaluationReport } from "../x/strategy-evaluator.js";
 import {
@@ -299,6 +300,13 @@ export class SchedulerPipeline {
             select: { externalId: true },
           });
           return row?.externalId;
+        },
+        loadOfficialProductIdentity: async (researchItemId) => {
+          const row = await deps.database.prisma.researchItem.findUnique({
+            where: { id: researchItemId },
+            select: { rawData: true },
+          });
+          return officialIdentityFromRaw(row?.rawData);
         },
         loadAllowedArticleImages: async (researchItemId) => {
           const row = await deps.database.prisma.researchItem.findUnique({

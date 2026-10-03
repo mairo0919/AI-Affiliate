@@ -5,6 +5,7 @@ import {
   type BodyDuplicateSubjectPost,
   findPublicationBodyDuplicate,
   isFanzaDirectMigrationDeleted,
+  isNormalLinkMigrationDeleted,
 } from "./x-body-duplicate.js";
 
 const NOW = new Date("2026-09-28T12:00:00.000Z");
@@ -32,6 +33,24 @@ describe("FANZA direct migration repost scope", () => {
     ).toBe(false);
     expect(
       isFanzaDirectMigrationDeleted({ status: "CANCELLED", strategyVersion: null }),
+    ).toBe(false);
+    expect(
+      isNormalLinkMigrationDeleted({
+        status: "DELETED",
+        strategyVersion: "x-strategy-v1|normal-link-migration",
+      }),
+    ).toBe(true);
+    expect(
+      isNormalLinkMigrationDeleted({
+        status: "DELETED",
+        strategyVersion: "x-strategy-v1",
+      }),
+    ).toBe(false);
+    expect(
+      isNormalLinkMigrationDeleted({
+        status: "PUBLISHED",
+        strategyVersion: "x-strategy-v1|normal-link-migration",
+      }),
     ).toBe(false);
   });
 

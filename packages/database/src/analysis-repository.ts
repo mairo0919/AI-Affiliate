@@ -91,6 +91,7 @@ export class AnalysisRepository {
           analysisType: input.create.analysisType,
           status: "RUNNING",
           startedAt: input.now,
+          createdAt: input.now,
           parameters: input.create.parameters as Prisma.InputJsonValue,
           scoringVersion: input.create.scoringVersion ?? "scoring-v1",
           eligibilityVersion: input.create.eligibilityVersion ?? "eligibility-v1",

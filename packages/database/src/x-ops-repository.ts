@@ -12,6 +12,7 @@ import type {
 } from "@prisma/client";
 import {
   FANZA_DIRECT_MIGRATION_MARKER,
+  NORMAL_LINK_MIGRATION_MARKER,
   type BodyDuplicateCandidate,
 } from "./x-body-duplicate.js";
 import {
@@ -448,7 +449,10 @@ export class XOpsRepository {
         NOT: {
           publication: {
             status: "DELETED",
-            strategyVersion: { contains: FANZA_DIRECT_MIGRATION_MARKER },
+            OR: [
+              { strategyVersion: { contains: FANZA_DIRECT_MIGRATION_MARKER } },
+              { strategyVersion: { contains: NORMAL_LINK_MIGRATION_MARKER } },
+            ],
           },
         },
         OR: [
@@ -482,6 +486,10 @@ export class XOpsRepository {
               {
                 status: "DELETED",
                 strategyVersion: { contains: FANZA_DIRECT_MIGRATION_MARKER },
+              },
+              {
+                status: "DELETED",
+                strategyVersion: { contains: NORMAL_LINK_MIGRATION_MARKER },
               },
             ],
           },

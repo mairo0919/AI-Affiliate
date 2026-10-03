@@ -96,6 +96,7 @@ import {
   runXRuntimeStatus,
 } from "./x/ops-cli-handlers.js";
 import { runFanzaDirectMigration } from "./x/fanza-direct-migration-cli.js";
+import { runFanzaNormalMigration } from "./x/fanza-normal-migration-cli.js";
 import {
   runXAuthComplete,
   runXAuthRefresh,
@@ -2107,6 +2108,9 @@ async function main(): Promise<void> {
       break;
     case "x:fanza-direct-migrate":
       await runFanzaDirectMigration(rest);
+      break;
+    case "x:fanza-normal-migrate":
+      await runFanzaNormalMigration(rest);
       break;
     case "analysis-item":
       await runAnalysisItem(rest);

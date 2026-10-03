@@ -88,6 +88,7 @@ export type XSocialAdaptationInput = {
   affiliateThreadMode?: boolean;
   /** When set, X posts use this FANZA direct URL and never a WordPress URL. */
   fanzaDirectUrl?: string | null;
+  normalProductUrl?: string | null;
   /** Optional related published X post for navigation reply. */
   relatedXPost?: XRelatedNavCandidate | null;
   /** Override Planner publication intent (tests / publication recompose). */
@@ -102,7 +103,7 @@ export type XSocialAdaptationResult = {
   threadReason: string;
   linkMode: XLinkMode;
   /** CURRENT WP_TRAFFIC_EMBED vs future AFFILIATE_THREAD */
-  publicationStrategy: "WP_TRAFFIC_EMBED" | "AFFILIATE_THREAD" | "FANZA_DIRECT";
+  publicationStrategy: "WP_TRAFFIC_EMBED" | "AFFILIATE_THREAD" | "FANZA_DIRECT" | "FANZA_NORMAL";
   publicationStrategyReason: string;
   posts: XAdaptedPost[];
   /** Writer parent body only (no URLs) — Publication may recompose replies. */
@@ -134,7 +135,7 @@ export type XSocialAdaptationResult = {
     cid: string;
     linkMode: XLinkMode;
     threadShape: XThreadShape;
-    publicationStrategy: "WP_TRAFFIC_EMBED" | "AFFILIATE_THREAD" | "FANZA_DIRECT";
+    publicationStrategy: "WP_TRAFFIC_EMBED" | "AFFILIATE_THREAD" | "FANZA_DIRECT" | "FANZA_NORMAL";
     replyOrder: string | null;
     hookCount: number;
     factSources: string[];
@@ -416,7 +417,12 @@ export async function adaptCanonicalToXSocial(
     warnings.push("affiliate_not_ready");
   }
 
-  if (!input.fanzaDirectUrl?.trim() && link.mode === "WP_TRAFFIC" && !link.wpUrl) {
+  if (
+    !input.fanzaDirectUrl?.trim() &&
+    !input.normalProductUrl?.trim() &&
+    link.mode === "WP_TRAFFIC" &&
+    !link.wpUrl
+  ) {
     warnings.push("wp_not_public_hold_x");
     return emptyResult({
       warnings,
@@ -517,13 +523,20 @@ export async function adaptCanonicalToXSocial(
     score: 10 + i,
   }));
 
-  const fanzaDirectUrl = input.fanzaDirectUrl?.trim() || null;
+  const normalProductUrl = input.normalProductUrl?.trim() || null;
+  const fanzaDirectUrl = normalProductUrl ? null : input.fanzaDirectUrl?.trim() || null;
+  const destinationStrategy = normalProductUrl
+    ? "FANZA_NORMAL"
+    : fanzaDirectUrl
+      ? "FANZA_DIRECT"
+      : null;
   const composed = composeXThreadPublication({
-    strategy: fanzaDirectUrl ? "FANZA_DIRECT" : pubStrategy.strategy,
+    strategy: destinationStrategy ?? pubStrategy.strategy,
     parentBody,
-    wpUrl: fanzaDirectUrl ? null : pubStrategy.wpUrl,
-    fanzaUrl: fanzaDirectUrl ?? pubStrategy.fanzaUrl,
-    disclosure,
+    wpUrl: destinationStrategy ? null : pubStrategy.wpUrl,
+    fanzaUrl: normalProductUrl ?? fanzaDirectUrl ?? pubStrategy.fanzaUrl,
+    canonicalCid: input.cid,
+    disclosure: normalProductUrl ? null : disclosure,
     intent: publicationIntent,
     related: relatedXPost,
     navSeed: input.cid,
@@ -602,9 +615,13 @@ export async function adaptCanonicalToXSocial(
   return {
     threadShape,
     threadReason,
-    linkMode: fanzaDirectUrl ? "DIRECT_AFFILIATE" : link.mode,
-    publicationStrategy: fanzaDirectUrl ? "FANZA_DIRECT" : pubStrategy.strategy,
-    publicationStrategyReason: fanzaDirectUrl ? "fanza_direct" : pubStrategy.reason,
+    linkMode: destinationStrategy ? "DIRECT_AFFILIATE" : link.mode,
+    publicationStrategy: destinationStrategy ?? pubStrategy.strategy,
+    publicationStrategyReason: normalProductUrl
+      ? "fanza_normal"
+      : fanzaDirectUrl
+        ? "fanza_direct"
+        : pubStrategy.reason,
     posts,
     parentBody,
     publicationIntent,
@@ -621,12 +638,14 @@ export async function adaptCanonicalToXSocial(
     reviewFindings: unitReview.findings,
     review: unitReview,
     writerMode: pipeline.writerMode,
-    wpUrl: fanzaDirectUrl ? null : (pubStrategy.wpUrl ?? link.wpUrl),
-    fanzaUrl: fanzaDirectUrl
-      ? fanzaDirectUrl
-      : pubStrategy.strategy === "AFFILIATE_THREAD"
-        ? pubStrategy.fanzaUrl
-        : null,
+    wpUrl: destinationStrategy ? null : (pubStrategy.wpUrl ?? link.wpUrl),
+    fanzaUrl: normalProductUrl
+      ? normalProductUrl
+      : fanzaDirectUrl
+        ? fanzaDirectUrl
+        : pubStrategy.strategy === "AFFILIATE_THREAD"
+          ? pubStrategy.fanzaUrl
+          : null,
     relatedXPost,
     mediaMode: mediaPick.decision,
     mediaUrl: mediaPick.selectedUrl,
@@ -636,9 +655,9 @@ export async function adaptCanonicalToXSocial(
     tracking: {
       format: "x-social-adaptation-v7",
       cid: input.cid,
-      linkMode: link.mode,
+      linkMode: destinationStrategy ? "DIRECT_AFFILIATE" : link.mode,
       threadShape,
-      publicationStrategy: pubStrategy.strategy,
+      publicationStrategy: destinationStrategy ?? pubStrategy.strategy,
       replyOrder,
       hookCount: hooks.length,
       factSources: ["x_social_plan"],

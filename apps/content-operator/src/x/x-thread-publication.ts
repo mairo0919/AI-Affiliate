@@ -23,8 +23,13 @@ import {
   normalizeDisclosureLabel,
   stripLegacyHashPr,
 } from "./ops/pre-publish-guard.js";
+import { assertNormalXDestination, NORMAL_X_CTA_LABEL } from "./x-normal-destination.js";
 
-export type XPublicationStrategy = "WP_TRAFFIC_EMBED" | "AFFILIATE_THREAD" | "FANZA_DIRECT";
+export type XPublicationStrategy =
+  | "WP_TRAFFIC_EMBED"
+  | "AFFILIATE_THREAD"
+  | "FANZA_DIRECT"
+  | "FANZA_NORMAL";
 
 export type XThreadPostRole =
   | "PARENT"
@@ -251,6 +256,7 @@ export function composeXThreadPublication(input: {
   related?: XRelatedNavCandidate | null;
   /** Seed for nav template variation (cid / parent hash). */
   navSeed?: string | null;
+  canonicalCid?: string | null;
   templates?: Partial<typeof X_THREAD_NAV_TEMPLATES>;
 }): XThreadComposedPost[] {
   const disclosure = input.disclosure?.trim() || "";
@@ -293,6 +299,28 @@ export function composeXThreadPublication(input: {
         role: "CTA",
         threadRole: "AFFILIATE_REPLY",
         body: `PR\n${input.fanzaUrl.trim()}`,
+        linkKind: "fanza",
+        replyToSequence: 1,
+      },
+    ];
+  }
+
+  if (input.strategy === "FANZA_NORMAL") {
+    const checked = assertNormalXDestination(input.fanzaUrl, input.canonicalCid);
+    if (!checked.ok || !parent || textContainsWordPressUrl(parent)) return [];
+    return [
+      {
+        sequence: 1,
+        role: "ROOT",
+        threadRole: "PARENT",
+        body: parent,
+        linkKind: "none",
+      },
+      {
+        sequence: 2,
+        role: "CTA",
+        threadRole: "AFFILIATE_REPLY",
+        body: `${NORMAL_X_CTA_LABEL}\n${checked.url}`,
         linkKind: "fanza",
         replyToSequence: 1,
       },

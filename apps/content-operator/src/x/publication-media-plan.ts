@@ -1,5 +1,16 @@
+import { officialFanzaMediaHost } from "../adapters/affiliate/fanza-affiliate-provider.js";
 import { selectXMediaFromArticleImages } from "./x-article-media.js";
 import { XPublishError } from "./types.js";
+
+export function officialMediaMatchesCanonicalCid(url: string, cid: string): boolean {
+  const id = cid.trim().toLowerCase();
+  if (!id || !officialFanzaMediaHost(url)) return false;
+  try {
+    return new URL(url).pathname.toLowerCase().includes(`/${id}/`);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Snapshot media URL wins. When an old TEXT_ONLY snapshot stored no URL,
@@ -9,11 +20,16 @@ import { XPublishError } from "./types.js";
 export function resolveRootMediaUrl(input: {
   snapshotUrl: string | null;
   fallbackImages?: unknown;
+  expectedCid?: string | null;
 }): string | null {
+  const cid = input.expectedCid?.trim().toLowerCase() ?? "";
+  const accept = (url: string) => !cid || officialMediaMatchesCanonicalCid(url, cid);
   const snapshot = input.snapshotUrl?.trim() ?? "";
-  if (snapshot) return snapshot;
+  if (snapshot && accept(snapshot)) return snapshot;
   const pick = selectXMediaFromArticleImages({ articleImages: input.fallbackImages });
-  if (pick.decision === "SAFE_IMAGE" && pick.selectedUrl?.trim()) return pick.selectedUrl.trim();
+  if (pick.decision === "SAFE_IMAGE" && pick.selectedUrl?.trim() && accept(pick.selectedUrl)) {
+    return pick.selectedUrl.trim();
+  }
   return null;
 }
 

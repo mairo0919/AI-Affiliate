@@ -16,7 +16,6 @@ import type { Logger } from "@ai-affiliate/shared";
 import { computeNextRetryAt } from "../schedules/backoff.js";
 import { XCharacterCounter } from "./character-counter.js";
 import { XPublicationBuilder, XPublicationValidationError } from "./publication-builder.js";
-import { buildXFanzaDirectAffiliateUrl } from "../adapters/affiliate/fanza-affiliate-provider.js";
 import { XRelatedPostSelector } from "./related-selector.js";
 import { XStrategySelector } from "./strategy-selector.js";
 import type { XPublishingProvider } from "./providers/index.js";
@@ -25,6 +24,7 @@ import { planPostMediaIds, resolveRootMediaUrl } from "./publication-media-plan.
 import { XPublishError, type GeneratedXPublication } from "./types.js";
 import { STRATEGY_VERSION } from "./types.js";
 import { outgoingXPostText, XPrePublishGuard } from "./ops/pre-publish-guard.js";
+import { isNormalOfficialCtaBody, resolveNormalXProductUrl } from "./x-normal-destination.js";
 import {
   buildProductKey,
   extractProviderProductId,
@@ -76,6 +76,10 @@ export interface XPublicationServiceDeps {
   }>;
   loadCandidateType?: (contentCandidateId: string) => Promise<string | undefined>;
   loadResearchExternalId?: (researchItemId: string) => Promise<string | undefined>;
+  loadOfficialProductIdentity?: (researchItemId: string) => Promise<{
+    contentId: string | null;
+    productUrl: string | null;
+  }>;
   /**
    * ALLOWED images for a frozen TEXT_ONLY snapshot.
    * Used only when the stored adaptation has no media URL.
@@ -114,6 +118,7 @@ export class XPublicationService {
   private readonly loadItemTags: XPublicationServiceDeps["loadItemTags"];
   private readonly loadCandidateType: XPublicationServiceDeps["loadCandidateType"];
   private readonly loadResearchExternalId: XPublicationServiceDeps["loadResearchExternalId"];
+  private readonly loadOfficialProductIdentity: XPublicationServiceDeps["loadOfficialProductIdentity"];
   private readonly loadAllowedArticleImages: XPublicationServiceDeps["loadAllowedArticleImages"];
   private readonly random: () => number;
   private readonly ops?: XOpsRepository;
@@ -136,6 +141,7 @@ export class XPublicationService {
     this.loadItemTags = deps.loadItemTags;
     this.loadCandidateType = deps.loadCandidateType;
     this.loadResearchExternalId = deps.loadResearchExternalId;
+    this.loadOfficialProductIdentity = deps.loadOfficialProductIdentity;
     this.loadAllowedArticleImages = deps.loadAllowedArticleImages;
     this.ops = deps.ops;
     this.optimization = deps.optimization;
@@ -376,20 +382,17 @@ export class XPublicationService {
         relatedPostUseful: hasRelated,
         preferredReplyOrder: null,
       };
-      const direct = buildXFanzaDirectAffiliateUrl({
-        contentId: externalId,
-        xAffiliateId: this.config.dmmXAffiliateId,
-        wordpressAffiliateId: this.config.dmmAffiliateId,
-      });
-      if (!direct.ok) {
-        throw new XPublicationValidationError(`X_FANZA_DIRECT_BLOCKED:${direct.reason}`);
+      const normal = await this.resolveNormalDestination(content.researchItemId, externalId);
+      if (!normal.ok) {
+        throw new XPublicationValidationError(`BLOCKED_INVALID_X_DESTINATION:${normal.reason}`);
       }
       const composed = composeXThreadPublication({
-        strategy: "FANZA_DIRECT",
+        strategy: "FANZA_NORMAL",
         parentBody,
         wpUrl: null,
-        fanzaUrl: direct.url,
-        disclosure: "PR",
+        fanzaUrl: normal.url,
+        canonicalCid: externalId,
+        disclosure: null,
         intent: {
           needsArticleReply: intent.needsArticleReply !== false,
           relatedPostUseful: intent.relatedPostUseful === true && hasRelated,
@@ -411,6 +414,9 @@ export class XPublicationService {
           : null,
         navSeed: content.id,
       });
+      if (composed.length === 0) {
+        throw new XPublicationValidationError("BLOCKED_INVALID_X_DESTINATION:empty");
+      }
       const posts = composed.map((post, index) => ({
         sequence: post.sequence || index + 1,
         role: post.role,
@@ -429,7 +435,7 @@ export class XPublicationService {
       strategyType = posts.length > 1 ? "THREAD" : "SINGLE_POST";
       built = {
         strategyType,
-        strategyVersion: STRATEGY_VERSION,
+        strategyVersion: `${STRATEGY_VERSION}|FANZA_NORMAL`,
         experimentGroup: selection.experimentGroup,
         posts,
       };
@@ -818,12 +824,13 @@ export class XPublicationService {
             ? resolveRootMediaUrl({
                 snapshotUrl: snapshotMediaUrl,
                 fallbackImages,
+                expectedCid: externalId,
               })
             : null;
           const text = outgoingXPostText({
             body: post.body,
             role: post.role,
-            disclosure: this.config.xAffiliateDisclosure,
+            disclosure: isNormalOfficialCtaBody(post.body) ? null : this.config.xAffiliateDisclosure,
           });
           let uploadedMediaId: string | null = null;
           // Product image stays on ROOT. CTA/replies never receive mediaIds.
@@ -1123,6 +1130,21 @@ export class XPublicationService {
       });
     }
     return scheduled;
+  }
+
+  private async resolveNormalDestination(
+    researchItemId: string,
+    externalId: string | undefined,
+  ) {
+    const cid = externalId?.trim() ?? "";
+    const identity = this.loadOfficialProductIdentity
+      ? await this.loadOfficialProductIdentity(researchItemId)
+      : { contentId: cid || null, productUrl: null };
+    return resolveNormalXProductUrl({
+      canonicalCid: cid,
+      officialContentId: identity.contentId,
+      officialProductUrl: identity.productUrl,
+    });
   }
 }
 

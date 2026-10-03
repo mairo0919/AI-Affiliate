@@ -1,5 +1,9 @@
 import type { AppConfig } from "@ai-affiliate/config";
 import { xBodyBlocksFanzaDirect } from "../../adapters/affiliate/fanza-affiliate-provider.js";
+import {
+  blockedDestinationDetail,
+  isNormalOfficialCtaBody,
+} from "../x-normal-destination.js";
 import type {
   ContentRepository,
   PublicationWithPosts,
@@ -78,6 +82,7 @@ export function outgoingXPostText(input: {
   disclosure: string | null | undefined;
 }): string {
   const cleaned = stripLegacyHashPr(input.body);
+  if (isNormalOfficialCtaBody(cleaned)) return cleaned;
   const commercial = input.role === "CTA" || input.role === "HUB";
   if (!commercial) return cleaned;
   const label = normalizeDisclosureLabel(input.disclosure);
@@ -104,6 +109,12 @@ export function publicationUnitDisclosureMissing(input: {
 }): boolean {
   const disclosure = input.disclosure?.trim() ?? "";
   if (!disclosure || input.bodies.length === 0) return false;
+  if (
+    input.bodies.some((body) => isNormalOfficialCtaBody(body)) &&
+    input.bodies.every((body) => blockedDestinationDetail(body) == null)
+  ) {
+    return false;
+  }
   const unitText = input.bodies.join("\n");
   if (hasClearAdDisclosure(unitText)) return false;
   const label = normalizeDisclosureLabel(disclosure);
@@ -147,6 +158,14 @@ export class XPrePublishGuard {
         issues.push({
           code: "LEGACY_WP_CTA",
           message: `seq=${post.sequence} wordpress destination is not allowed on X`,
+          blocking: true,
+        });
+      }
+      const destination = blockedDestinationDetail(post.body);
+      if (destination) {
+        issues.push({
+          code: "BLOCKED_INVALID_X_DESTINATION",
+          message: `seq=${post.sequence} ${destination}`,
           blocking: true,
         });
       }

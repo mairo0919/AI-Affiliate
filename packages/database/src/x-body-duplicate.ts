@@ -195,6 +195,7 @@ function matchNavigationCta(
 }
 
 export const FANZA_DIRECT_MIGRATION_MARKER = "fanza-direct-migration";
+export const NORMAL_LINK_MIGRATION_MARKER = "normal-link-migration";
 
 /** Only publications deleted for the FANZA direct migration may be reposted. */
 export function isFanzaDirectMigrationDeleted(input: {
@@ -204,6 +205,17 @@ export function isFanzaDirectMigrationDeleted(input: {
   return (
     input.status === "DELETED" &&
     (input.strategyVersion ?? "").includes(FANZA_DIRECT_MIGRATION_MARKER)
+  );
+}
+
+/** Only publications deleted for the normal-link migration may be reposted under that exception. */
+export function isNormalLinkMigrationDeleted(input: {
+  status: string;
+  strategyVersion?: string | null;
+}): boolean {
+  return (
+    input.status === "DELETED" &&
+    (input.strategyVersion ?? "").includes(NORMAL_LINK_MIGRATION_MARKER)
   );
 }
 
