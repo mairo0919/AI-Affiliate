@@ -207,6 +207,71 @@ export function composeNormalLinkPosts(input: {
   };
 }
 
+export type CanaryPostCheck = {
+  pass: boolean;
+  rootText: boolean;
+  normalUrl: boolean;
+  officialMedia: boolean;
+  canonicalIdentity: boolean;
+  wpAbsent: boolean;
+  affiliateAbsent: boolean;
+  wrongProduct: boolean;
+};
+
+function compactCopy(text: string): string {
+  return reviewPassRootBody(text).replace(/\s+/gu, "");
+}
+
+export function verifyCanaryPosts(input: {
+  canonicalCid: string;
+  expectedRoot: string;
+  expectedUrl: string;
+  rootText: string;
+  ctaText: string;
+  rootExpandedUrls: string[];
+  ctaExpandedUrls: string[];
+  rootMediaCount: number;
+  ctaMediaCount: number;
+  sentMediaMatchesCid: boolean;
+}): CanaryPostCheck {
+  const rootText = compactCopy(input.rootText) === compactCopy(input.expectedRoot) && compactCopy(input.expectedRoot).length > 0;
+  const expanded = [...input.rootExpandedUrls, ...input.ctaExpandedUrls];
+  const display = `${input.rootText}\n${input.ctaText}`;
+  const wpAbsent =
+    !/otonaselect\.net|wordpress/iu.test(display) &&
+    expanded.every((url) => classifyXDestination(url) !== "WORDPRESS");
+  const affiliateAbsent =
+    !/(?:^|[?&])(?:af_id|affiliate_id)=|al\.fanza\.co\.jp|al\.dmm\.co\.jp|affiliate\./iu.test(display) &&
+    expanded.every((url) => {
+      const kind = classifyXDestination(url);
+      return kind !== "FANZA_AFFILIATE" && kind !== "DMM_AFFILIATE";
+    });
+  const expected = assertNormalXDestination(input.expectedUrl, input.canonicalCid);
+  const ctaOk = input.ctaExpandedUrls.some(
+    (url) => assertNormalXDestination(url, input.canonicalCid).ok && url === input.expectedUrl,
+  );
+  const expandedOk = expanded.every((url) => assertNormalXDestination(url, input.canonicalCid).ok);
+  const normalUrl = expected.ok && ctaOk && expandedOk && affiliateAbsent && wpAbsent;
+  const wrongProduct = expanded.some((url) => {
+    const checked = assertNormalXDestination(url, input.canonicalCid);
+    return !checked.ok && checked.detail === "canonical_cid_mismatch";
+  });
+  const officialMedia =
+    input.sentMediaMatchesCid && input.rootMediaCount > 0 && input.ctaMediaCount === 0;
+  const canonicalIdentity = normalUrl && !wrongProduct;
+  const pass = rootText && normalUrl && officialMedia && canonicalIdentity && wpAbsent && affiliateAbsent && !wrongProduct;
+  return {
+    pass,
+    rootText,
+    normalUrl,
+    officialMedia,
+    canonicalIdentity,
+    wpAbsent,
+    affiliateAbsent,
+    wrongProduct,
+  };
+}
+
 export function nextFutureJstSlots(count: number, now: Date, hours: readonly number[] = [12, 18, 23]): Date[] {
   const slots: Date[] = [];
   if (count <= 0) return slots;

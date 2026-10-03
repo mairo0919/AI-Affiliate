@@ -11,6 +11,7 @@ import {
   nextFutureJstSlots,
   publishingPauseActive,
   resolveNormalXProductUrl,
+  verifyCanaryPosts,
 } from "../x-normal-destination.js";
 
 const CID = "mida00805";
@@ -134,5 +135,54 @@ describe("normal FANZA/DMM destination", () => {
     expect(publishingPauseActive("true")).toBe(true);
     expect(publishingPauseActive("paused")).toBe(true);
     expect(publishingPauseActive("false")).toBe(false);
+  });
+
+  it("accepts a canary only when the live post matches the official page", () => {
+    const pass = verifyCanaryPosts({
+      canonicalCid: CID,
+      expectedRoot: ROOT,
+      expectedUrl: NORMAL,
+      rootText: ROOT,
+      ctaText: `作品ページはこちら\nhttps://t.co/abc`,
+      rootExpandedUrls: [],
+      ctaExpandedUrls: [NORMAL],
+      rootMediaCount: 1,
+      ctaMediaCount: 0,
+      sentMediaMatchesCid: true,
+    });
+    expect(pass.pass).toBe(true);
+    expect(pass.wpAbsent).toBe(true);
+    expect(pass.affiliateAbsent).toBe(true);
+    expect(pass.wrongProduct).toBe(false);
+
+    const wp = verifyCanaryPosts({
+      canonicalCid: CID,
+      expectedRoot: ROOT,
+      expectedUrl: NORMAL,
+      rootText: ROOT,
+      ctaText: "作品ページはこちら\nhttps://otonaselect.net/works/mida00805/",
+      rootExpandedUrls: [],
+      ctaExpandedUrls: ["https://otonaselect.net/works/mida00805/"],
+      rootMediaCount: 1,
+      ctaMediaCount: 0,
+      sentMediaMatchesCid: true,
+    });
+    expect(wp.pass).toBe(false);
+    expect(wp.wpAbsent).toBe(false);
+
+    const other = verifyCanaryPosts({
+      canonicalCid: CID,
+      expectedRoot: ROOT,
+      expectedUrl: NORMAL,
+      rootText: ROOT,
+      ctaText: "作品ページはこちら",
+      rootExpandedUrls: [],
+      ctaExpandedUrls: ["https://video.dmm.co.jp/av/content/?id=other0001"],
+      rootMediaCount: 1,
+      ctaMediaCount: 0,
+      sentMediaMatchesCid: true,
+    });
+    expect(other.pass).toBe(false);
+    expect(other.wrongProduct).toBe(true);
   });
 });

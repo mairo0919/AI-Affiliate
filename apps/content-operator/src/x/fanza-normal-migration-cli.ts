@@ -7,6 +7,8 @@ import {
   XOptimizationRepository,
   XPublicationRepository,
   createDatabaseClient,
+  type DatabaseClient,
+  type PublicationWithPosts,
 } from "@ai-affiliate/database";
 import { createLogger } from "@ai-affiliate/shared";
 import { createLiveStack } from "./live/live-stack.js";
@@ -14,6 +16,7 @@ import { XPublishError } from "./types.js";
 import { XPublicationService } from "./publication-service.js";
 import { officialMediaMatchesCanonicalCid } from "./publication-media-plan.js";
 import { ensureContentCandidateForPublishedWpX } from "../daily-ops/x-slot-live.js";
+import { resolveCanonicalArticleImages } from "./canonical-x-source.js";
 import {
   NORMAL_LINK_MIGRATION_MARKER,
   appendNormalLinkMarker,
@@ -23,6 +26,8 @@ import {
   officialIdentityFromRaw,
   resolveNormalXProductUrl,
   urlsInText,
+  verifyCanaryPosts,
+  type CanaryPostCheck,
 } from "./x-normal-destination.js";
 
 type PostRow = {
@@ -130,6 +135,145 @@ async function deleteOne(
     if (!after.ids.has(postId)) return "DELETED";
   }
   throw new Error(`DELETE_FAILED post=${postId}`);
+}
+
+async function readCanaryTweets(
+  stack: ReturnType<typeof createLiveStack>,
+  accountId: string,
+  ids: string[],
+): Promise<Map<string, { text: string; expandedUrls: string[]; mediaCount: number }>> {
+  const token = await stack.tokens.getValidAccessToken(accountId);
+  const page = await stack.http.request<{
+    data?: Array<{
+      id: string;
+      text?: string;
+      entities?: { urls?: Array<{ expanded_url?: string }> };
+      attachments?: { media_keys?: string[] };
+    }>;
+  }>({
+    method: "GET",
+    path: `/2/tweets?ids=${ids.map(encodeURIComponent).join(",")}&tweet.fields=text,entities,attachments`,
+    endpointKey: "tweets.get",
+    requestType: "TWEETS_GET",
+    accessToken: token,
+    accountId,
+    acceptErrorResponse: true,
+    disableRetry: true,
+  });
+  if (page.statusCode === 402) throw new Error("X API payment required (status=402)");
+  if (!page.ok) throw new Error(`canary lookup failed status=${page.statusCode}`);
+  const out = new Map<string, { text: string; expandedUrls: string[]; mediaCount: number }>();
+  for (const tweet of page.data?.data ?? []) {
+    out.set(tweet.id, {
+      text: tweet.text ?? "",
+      expandedUrls: (tweet.entities?.urls ?? [])
+        .map((url) => url.expanded_url?.trim() ?? "")
+        .filter(Boolean),
+      mediaCount: tweet.attachments?.media_keys?.length ?? 0,
+    });
+  }
+  return out;
+}
+
+async function createScheduledNormalPublication(input: {
+  row: ThreadRow;
+  prisma: DatabaseClient["prisma"];
+  contents: ContentRepository;
+  service: XPublicationService;
+  publishNow: boolean;
+  slot: Date | null;
+}): Promise<
+  | { ok: true; publication: PublicationWithPosts; rootBody: string; url: string }
+  | { ok: false; reason: string }
+> {
+  const row = input.row;
+  const root = row.posts.find((post) => post.role === "ROOT")?.body ?? "";
+  const identity = officialIdentityFromRaw(row.researchItem.rawData);
+  const normal = resolveNormalXProductUrl({
+    canonicalCid: row.researchItem.externalId,
+    officialContentId: identity.contentId,
+    officialProductUrl: identity.productUrl,
+  });
+  if (!normal.ok) return { ok: false, reason: "NORMAL_URL_NOT_VERIFIED" };
+  const composed = composeNormalLinkPosts({
+    rootBody: root,
+    url: normal.url,
+    canonicalCid: row.researchItem.externalId,
+  });
+  if (!composed.ok) return { ok: false, reason: composed.reason };
+  const mediaUrl = mediaUrlFromSnapshot(row.generatedContent.inputSnapshot);
+  const officialMedia =
+    mediaUrl && officialMediaMatchesCanonicalCid(mediaUrl, row.researchItem.externalId)
+      ? mediaUrl
+      : null;
+  let candidateId =
+    (
+      await input.prisma.contentCandidate.findFirst({
+        where: { researchItemId: row.researchItemId },
+        orderBy: [{ rank: "asc" }, { createdAt: "desc" }],
+        select: { id: true },
+      })
+    )?.id ?? null;
+  if (!candidateId) {
+    candidateId = await ensureContentCandidateForPublishedWpX(input.prisma, row.researchItemId);
+  }
+  if (!candidateId) return { ok: false, reason: "NO_CONTENT_CANDIDATE" };
+  try {
+    const created = await input.contents.createGeneratedContent({
+      contentCandidateId: candidateId,
+      researchItemId: row.researchItemId,
+      contentType: "X_POST",
+      targetChannel: "X",
+      status: "READY_TO_PUBLISH",
+      title: (row.generatedContent.title ?? row.researchItem.externalId).slice(0, 120),
+      body: composed.rootBody,
+      summary: "",
+      hashtags: [],
+      callToAction: normal.url,
+      affiliateUrl: normal.url,
+      promptVersion: "normal-link-migration",
+      generationProvider: "stored-review-pass",
+      generationModel: "none",
+      inputSnapshot: {
+        source: "normal_link_migration",
+        destinationUrl: normal.url,
+        xSocialAdaptation: {
+          publicationStrategy: "FANZA_NORMAL",
+          parentBody: composed.rootBody,
+          posts: [
+            { sequence: 1, role: "ROOT", body: composed.rootBody },
+            { sequence: 2, role: "CTA", body: composed.ctaBody },
+          ],
+          mediaUrl: officialMedia,
+          mediaMode: officialMedia ? "SAFE_IMAGE" : "TEXT_ONLY",
+        },
+      },
+      contentHash: createHash("sha256").update(composed.rootBody).digest("hex"),
+      version: 1,
+      generatedAt: new Date(),
+    });
+    const pub = await input.service.createFromContent({
+      contentId: created.id,
+      strategy: "AUTO",
+      publishNow: input.publishNow,
+      scheduledAt: input.publishNow ? null : input.slot,
+      actorType: "CLI",
+      actorId: "normal-link-migration",
+    });
+    const slotKey = input.slot ? slotKeyFromDate(input.slot) : `canary`;
+    const hour = input.slot ? Number(slotKey.slice(11, 13)) : null;
+    await input.prisma.xPublication.update({
+      where: { id: pub.id },
+      data: {
+        idempotencyKey: `x-daily:${slotKey}:${row.researchItem.externalId}:FANZA_NORMAL`,
+        strategyVersion: `${pub.strategyVersion}|${hour == null ? "canary" : `slotHour=${hour}`}|FANZA_NORMAL`,
+      },
+    });
+    return { ok: true, publication: pub, rootBody: composed.rootBody, url: normal.url };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message.slice(0, 160) : "REBUILD_FAILED";
+    return { ok: false, reason };
+  }
 }
 
 export async function runFanzaNormalMigration(argv: string[]): Promise<void> {
@@ -302,6 +446,7 @@ export async function runFanzaNormalMigration(argv: string[]): Promise<void> {
         optimization: new XOptimizationRepository(prisma),
         provider: stack.provider,
         now: () => new Date(),
+        livePublishConfirmed: true,
         loadResearchExternalId: async (id) => {
           const item = await prisma.researchItem.findUnique({
             where: { id },
@@ -316,122 +461,123 @@ export async function runFanzaNormalMigration(argv: string[]): Promise<void> {
           });
           return officialIdentityFromRaw(item?.rawData);
         },
+        loadAllowedArticleImages: async (id) => {
+          const item = await prisma.researchItem.findUnique({
+            where: { id },
+            select: { title: true, images: true },
+          });
+          if (!item) return [];
+          return resolveCanonicalArticleImages({
+            structuredImages: null,
+            researchImages: item.images,
+            altBase: item.title,
+          });
+        },
       });
-      const ready = published.filter((row) => deletedIds.includes(row.id));
-      const slots = nextFutureJstSlots(ready.length, new Date());
-      for (let index = 0; index < ready.length; index += 1) {
-        const row = ready[index]!;
-        const slot = slots[index];
-        if (!slot) {
-          blocked.push(`${row.researchItem.externalId}:NO_FUTURE_SLOT`);
-          continue;
+      const ready = published
+        .filter((row) => deletedIds.includes(row.id))
+        .sort((a, b) => a.researchItem.externalId.localeCompare(b.researchItem.externalId));
+      const remainingPublished = await prisma.xPublication.count({ where: { status: "PUBLISHED" } });
+      if (remainingPublished > 0) {
+        blocked.push(`OLD_MANAGED_REMAINING:${remainingPublished}`);
+      } else {
+        const canaryRow = ready.find((row) => {
+          const mediaUrl = mediaUrlFromSnapshot(row.generatedContent.inputSnapshot);
+          return Boolean(
+            mediaUrl && officialMediaMatchesCanonicalCid(mediaUrl, row.researchItem.externalId),
+          );
+        });
+        let canaryPass = false;
+        let canaryCheck: CanaryPostCheck | null = null;
+        if (!canaryRow) {
+          blocked.push("CANARY_NOT_ELIGIBLE");
+        } else {
+          const canary = await createScheduledNormalPublication({
+            row: canaryRow,
+            prisma,
+            contents,
+            service,
+            publishNow: true,
+            slot: null,
+          });
+          if (!canary.ok) {
+            blocked.push(`${canaryRow.researchItem.externalId}:${canary.reason}`);
+          } else if (canary.publication.status !== "PUBLISHED") {
+            blocked.push(`${canaryRow.researchItem.externalId}:CANARY_NOT_PUBLISHED`);
+          } else {
+            const rootPost = canary.publication.posts.find((post) => post.role === "ROOT");
+            const ctaPost = canary.publication.posts.find((post) => post.role === "CTA");
+            if (!rootPost?.xPostId || !ctaPost?.xPostId) {
+              blocked.push(`${canaryRow.researchItem.externalId}:CANARY_IDS_MISSING`);
+            } else {
+              const live = await readCanaryTweets(stack, account.accountId, [
+                rootPost.xPostId,
+                ctaPost.xPostId,
+              ]);
+              const rootLive = live.get(rootPost.xPostId);
+              const ctaLive = live.get(ctaPost.xPostId);
+              canaryCheck = verifyCanaryPosts({
+                canonicalCid: canaryRow.researchItem.externalId,
+                expectedRoot: canary.rootBody,
+                expectedUrl: canary.url,
+                rootText: rootLive?.text ?? "",
+                ctaText: ctaLive?.text ?? "",
+                rootExpandedUrls: rootLive?.expandedUrls ?? [],
+                ctaExpandedUrls: ctaLive?.expandedUrls ?? [],
+                rootMediaCount: rootLive?.mediaCount ?? 0,
+                ctaMediaCount: ctaLive?.mediaCount ?? 0,
+                sentMediaMatchesCid: true,
+              });
+              canaryPass = canaryCheck.pass;
+              if (!canaryPass) blocked.push(`${canaryRow.researchItem.externalId}:CANARY_FAILED`);
+              else rebuilt.push(canaryRow.researchItem.externalId);
+            }
+          }
         }
-        const root = row.posts.find((post) => post.role === "ROOT")?.body ?? "";
-        const identity = officialIdentityFromRaw(row.researchItem.rawData);
-        const normal = resolveNormalXProductUrl({
-          canonicalCid: row.researchItem.externalId,
-          officialContentId: identity.contentId,
-          officialProductUrl: identity.productUrl,
-        });
-        if (!normal.ok) {
-          blocked.push(`${row.researchItem.externalId}:NORMAL_URL_NOT_VERIFIED`);
-          continue;
+        if (canaryPass && canaryRow) {
+          const rest = ready.filter((row) => row.id !== canaryRow.id);
+          const slots = nextFutureJstSlots(rest.length, new Date());
+          for (let index = 0; index < rest.length; index += 1) {
+            const row = rest[index]!;
+            const slot = slots[index];
+            if (!slot) {
+              blocked.push(`${row.researchItem.externalId}:NO_FUTURE_SLOT`);
+              continue;
+            }
+            const scheduled = await createScheduledNormalPublication({
+              row,
+              prisma,
+              contents,
+              service,
+              publishNow: false,
+              slot,
+            });
+            if (!scheduled.ok) {
+              blocked.push(`${row.researchItem.externalId}:${scheduled.reason}`);
+              continue;
+            }
+            rebuilt.push(row.researchItem.externalId);
+          }
+          const legacyLeft = await prisma.xPublication.count({ where: { status: "PUBLISHED", strategyVersion: { not: { contains: "FANZA_NORMAL" } } } });
+          if (legacyLeft === 0) {
+            await prisma.xRuntimeControl.upsert({
+              where: { key: "PUBLISHING_PAUSED" },
+              create: {
+                key: "PUBLISHING_PAUSED",
+                value: "false",
+                reason: NORMAL_LINK_MIGRATION_MARKER,
+                changedBy: "migration",
+              },
+              update: {
+                value: "false",
+                reason: NORMAL_LINK_MIGRATION_MARKER,
+                changedBy: "migration",
+                changedAt: new Date(),
+              },
+            });
+          }
         }
-        const composed = composeNormalLinkPosts({
-          rootBody: root,
-          url: normal.url,
-          canonicalCid: row.researchItem.externalId,
-        });
-        if (!composed.ok) {
-          blocked.push(`${row.researchItem.externalId}:${composed.reason}`);
-          continue;
-        }
-        const mediaUrl = mediaUrlFromSnapshot(row.generatedContent.inputSnapshot);
-        const officialMedia =
-          mediaUrl && officialMediaMatchesCanonicalCid(mediaUrl, row.researchItem.externalId)
-            ? mediaUrl
-            : null;
-        let candidateId = (
-          await prisma.contentCandidate.findFirst({
-            where: { researchItemId: row.researchItemId },
-            orderBy: [{ rank: "asc" }, { createdAt: "desc" }],
-            select: { id: true },
-          })
-        )?.id ?? null;
-        if (!candidateId) {
-          candidateId = await ensureContentCandidateForPublishedWpX(prisma, row.researchItemId);
-        }
-        if (!candidateId) {
-          blocked.push(`${row.researchItem.externalId}:NO_CONTENT_CANDIDATE`);
-          continue;
-        }
-        const created = await contents.createGeneratedContent({
-          contentCandidateId: candidateId,
-          researchItemId: row.researchItemId,
-          contentType: "X_POST",
-          targetChannel: "X",
-          status: "READY_TO_PUBLISH",
-          title: (row.generatedContent.title ?? row.researchItem.externalId).slice(0, 120),
-          body: composed.rootBody,
-          summary: "",
-          hashtags: [],
-          callToAction: normal.url,
-          affiliateUrl: normal.url,
-          promptVersion: "normal-link-migration",
-          generationProvider: "stored-review-pass",
-          generationModel: "none",
-          inputSnapshot: {
-            source: "normal_link_migration",
-            destinationUrl: normal.url,
-            xSocialAdaptation: {
-              publicationStrategy: "FANZA_NORMAL",
-              parentBody: composed.rootBody,
-              posts: [
-                { sequence: 1, role: "ROOT", body: composed.rootBody },
-                { sequence: 2, role: "CTA", body: composed.ctaBody },
-              ],
-              mediaUrl: officialMedia,
-              mediaMode: officialMedia ? "SAFE_IMAGE" : "TEXT_ONLY",
-            },
-          },
-          contentHash: createHash("sha256").update(composed.rootBody).digest("hex"),
-          version: 1,
-          generatedAt: new Date(),
-        });
-        const hour = Number(slotKeyFromDate(slot).slice(11, 13));
-        const pub = await service.createFromContent({
-          contentId: created.id,
-          strategy: "AUTO",
-          publishNow: false,
-          scheduledAt: slot,
-          actorType: "CLI",
-          actorId: "normal-link-migration",
-        });
-        await prisma.xPublication.update({
-          where: { id: pub.id },
-          data: {
-            idempotencyKey: `x-daily:${slotKeyFromDate(slot)}:${row.researchItem.externalId}:FANZA_NORMAL`,
-            strategyVersion: `${pub.strategyVersion}|slotHour=${hour}|FANZA_NORMAL`,
-          },
-        });
-        rebuilt.push(row.researchItem.externalId);
-      }
-      if (rebuilt.length > 0) {
-        await prisma.xRuntimeControl.upsert({
-          where: { key: "PUBLISHING_PAUSED" },
-          create: {
-            key: "PUBLISHING_PAUSED",
-            value: "false",
-            reason: NORMAL_LINK_MIGRATION_MARKER,
-            changedBy: "migration",
-          },
-          update: {
-            value: "false",
-            reason: NORMAL_LINK_MIGRATION_MARKER,
-            changedBy: "migration",
-            changedAt: new Date(),
-          },
-        });
+        console.log(JSON.stringify({ canary: canaryCheck, canaryPass }));
       }
     }
 
