@@ -30,6 +30,36 @@ function asRecord(v: unknown): Record<string, unknown> {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 }
 
+/** Full regenerations allowed after review rejection before the cid is blocked. */
+export const MAX_REVISION_REQUIRED_GENERATIONS = 2;
+
+/**
+ * APPROVED and REVIEWING always block another full generation.
+ * REVISION_REQUIRED blocks only after the cap, so one review failure can be retried
+ * and further same-cid writer runs are not started.
+ */
+export function productKeysBlockedByExistingVersions(
+  versions: Array<{ status: string; structuredContent: unknown }>,
+): Set<string> {
+  const keys = new Set<string>();
+  const revisionCounts = new Map<string, number>();
+  for (const version of versions) {
+    const key = extractProductKeyFromStructured(version.structuredContent);
+    if (!key) continue;
+    if (version.status === "APPROVED" || version.status === "REVIEWING") {
+      keys.add(key);
+      continue;
+    }
+    if (version.status === "REVISION_REQUIRED") {
+      revisionCounts.set(key, (revisionCounts.get(key) ?? 0) + 1);
+    }
+  }
+  for (const [key, count] of revisionCounts) {
+    if (count >= MAX_REVISION_REQUIRED_GENERATIONS) keys.add(key);
+  }
+  return keys;
+}
+
 export function extractProductKeyFromStructured(structured: unknown): string | null {
   const sc = asRecord(structured);
   const raw =
@@ -152,15 +182,13 @@ export async function loadArticledProductKeys(
     if (k) keys.add(k);
   }
 
-  const approved = await prisma.contentVersion.findMany({
-    where: { status: { in: ["APPROVED", "REVIEWING"] } },
-    select: { structuredContent: true },
+  const versions = await prisma.contentVersion.findMany({
+    where: { status: { in: ["APPROVED", "REVIEWING", "REVISION_REQUIRED"] } },
+    select: { status: true, structuredContent: true },
+    orderBy: { createdAt: "desc" },
     take: 2000,
   });
-  for (const v of approved) {
-    const k = extractProductKeyFromStructured(v.structuredContent);
-    if (k) keys.add(k);
-  }
+  for (const key of productKeysBlockedByExistingVersions(versions)) keys.add(key);
 
   // Also mark ResearchItems that already have GeneratedContent / ContentCandidate linkage
   // via externalId when present on structured content is covered above; Research externalIds
