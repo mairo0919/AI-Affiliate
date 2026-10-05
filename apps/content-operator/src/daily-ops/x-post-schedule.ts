@@ -505,7 +505,9 @@ export function shouldPlanXHorizon(input: {
   forceSmoke?: boolean;
 }): boolean {
   if (input.forceSmoke) return true;
-  return input.xNeeded > 0 || input.openFutureSlots > 0;
+  // Today's unmet count includes past hours. Those are not backfilled, so an open future slot is required.
+  void input.xNeeded;
+  return input.openFutureSlots > 0;
 }
 
 export function planXPostScheduleHorizon(input: {

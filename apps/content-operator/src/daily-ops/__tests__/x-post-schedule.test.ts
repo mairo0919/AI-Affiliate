@@ -496,4 +496,23 @@ describe("x-post-schedule boundary cases (JST)", () => {
       "2026-10-04T23:00:00+09:00",
     ]);
   });
+
+  it("does not assign PASS candidates when every future slot is already reserved", () => {
+    const now = atJst("2026-10-05", 21, 0);
+    const hours = [12, 18, 23];
+    const open = listUpcomingXPostSlots({ now, dayCount: 3, hours, mainHour: 23 });
+    const filled = new Set(open.map((slot) => slot.slotKey));
+    expect(listUpcomingXPostSlots({ now, dayCount: 3, hours, mainHour: 23, filledSlotKeys: filled })).toHaveLength(0);
+    expect(shouldPlanXHorizon({ xNeeded: 2, openFutureSlots: 0 })).toBe(false);
+    const plan = planXPostScheduleHorizon({
+      now,
+      candidates: [pass("kwbd00435"), pass("juvr00281"), pass("mida00890")],
+      maxPostsPerDay: 3,
+      hours,
+      mainHour: 23,
+      filledSlotKeys: filled,
+      dayCount: 3,
+    });
+    expect(plan.filter((row) => row.status === "ASSIGNED")).toHaveLength(0);
+  });
 });

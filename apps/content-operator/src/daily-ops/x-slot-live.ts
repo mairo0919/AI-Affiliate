@@ -23,7 +23,13 @@ import {
   createPrismaXCopyLedger,
   ledgeringXCopyProvider,
 } from "../x/x-copy-ledger.js";
+import {
+  beginXCopyGeneration,
+  readXCopyArtifact,
+  xCopyInputFingerprint,
+} from "../x/x-copy-artifact.js";
 import { resolveXCopyArtifact, xCopyIdentityFromSource, xScheduleGate } from "../x/x-copy-reuse.js";
+import { orderCandidatesPassFirst, runXCandidateRefill, type XRefillMetrics } from "../x/x-copy-refill.js";
 import { XPublicationService } from "../x/publication-service.js";
 import type { ChannelCandidate } from "./channel-selection.js";
 import { allocateXPostSlots, isFutureXSlotInstant, planXPostScheduleHorizon } from "./x-post-schedule.js";
@@ -121,7 +127,7 @@ async function adaptCanonicalForXSchedule(input: {
   llm?: LLMProvider | null;
   model: string;
   trigger: "probe" | "execute";
-}): Promise<Awaited<ReturnType<typeof adaptLoadedCanonicalToX>>> {
+}): Promise<{ result: Awaited<ReturnType<typeof adaptLoadedCanonicalToX>>; generated: boolean }> {
   const identity = xCopyIdentityFromSource({
     source: input.source,
     destinationUrl: input.destinationUrl,
@@ -148,7 +154,7 @@ async function adaptCanonicalForXSchedule(input: {
         llmModel: input.model,
       }),
   });
-  return resolved.result;
+  return { result: resolved.result, generated: resolved.generated };
 }
 
 export async function probeXScheduleCandidates(input: {
@@ -157,82 +163,130 @@ export async function probeXScheduleCandidates(input: {
   config: AppConfig;
   usedCanonicalIds: Set<string>;
   usedContentVersionIds: Set<string>;
+  slotsNeeded: number;
+  maxNewGenerations: number;
   llm?: import("../adapters/types.js").LLMProvider | null;
-}): Promise<XScheduleCandidate[]> {
-  const out: XScheduleCandidate[] = [];
-  let rank = 0;
-  for (const selected of input.ranked) {
-    const cid = selected.canonicalId.trim().toLowerCase();
-    if (!cid || input.usedCanonicalIds.has(cid)) {
-      out.push({
-        canonicalId: cid || selected.canonicalId,
-        pass: false,
-        skipReason: "DUPLICATE_CID",
-        rank: rank++,
-      });
-      continue;
-    }
-    const canonicalSource = await loadCanonicalXSource(input.prisma, selected.canonicalId);
-    const cvId = canonicalSource?.contentVersionId ?? null;
-    if (cvId && input.usedContentVersionIds.has(cvId)) {
-      out.push({
-        canonicalId: cid,
-        contentVersionId: cvId,
-        pass: false,
-        skipReason: "DUPLICATE_CONTENT_VERSION",
-        rank: rank++,
-      });
-      continue;
-    }
-    if (!canonicalSource?.contentVersionId) {
-      out.push({
-        canonicalId: cid,
-        contentVersionId: null,
-        pass: false,
-        skipReason: "NO_CANONICAL_CONTENT_VERSION",
-        rank: rank++,
-      });
-      continue;
-    }
-    const direct = await resolveSlotNormalUrl(input.prisma, cid);
-    if (!direct.ok) {
-      out.push({
-        canonicalId: cid,
-        contentVersionId: cvId,
-        pass: false,
-        skipReason: direct.reason,
-        rank: rank++,
-      });
-      continue;
-    }
-    const adapted = await adaptCanonicalForXSchedule({
-      prisma: input.prisma,
-      researchItemId: selected.researchItemId,
-      source: canonicalSource,
-      destinationUrl: direct.url,
-      llm: input.llm,
-      model: input.config.llmModelWriter,
-      trigger: "probe",
+}): Promise<{ probes: XScheduleCandidate[]; metrics: XRefillMetrics }> {
+  const rawById = new Map<string, unknown>();
+  const passIds = new Set<string>();
+  if (input.ranked.length > 0 && input.slotsNeeded > 0) {
+    const rows = await input.prisma.researchItem.findMany({
+      where: { id: { in: input.ranked.map((candidate) => candidate.researchItemId) } },
+      select: { id: true, rawData: true },
     });
-    const gate = xScheduleGate(adapted);
-    if (!gate.pass) {
-      out.push({
-        canonicalId: cid,
-        contentVersionId: cvId,
-        pass: false,
-        skipReason: gate.skipReason,
-        rank: rank++,
-      });
-      continue;
+    for (const row of rows) {
+      rawById.set(row.id, row.rawData);
+      if (readXCopyArtifact(row.rawData)?.state === "PASS") passIds.add(row.id);
     }
-    out.push({
-      canonicalId: cid,
-      contentVersionId: cvId,
-      pass: true,
-      rank: rank++,
-    });
   }
-  return out;
+  const ordered = orderCandidatesPassFirst(input.ranked, passIds);
+  const refilled = await runXCandidateRefill({
+    slotsNeeded: input.slotsNeeded,
+    maxNewGenerations: input.maxNewGenerations,
+    candidates: ordered,
+    prepare: async (selected) => {
+      const cid = selected.canonicalId.trim().toLowerCase();
+      if (!cid || input.usedCanonicalIds.has(cid)) {
+        return { kind: "hard_block", probe: { canonicalId: cid || selected.canonicalId, pass: false, skipReason: "DUPLICATE_CID" } };
+      }
+      const canonicalSource = await loadCanonicalXSource(input.prisma, selected.canonicalId);
+      const cvId = canonicalSource?.contentVersionId ?? null;
+      if (cvId && input.usedContentVersionIds.has(cvId)) {
+        return {
+          kind: "hard_block",
+          probe: { canonicalId: cid, contentVersionId: cvId, pass: false, skipReason: "DUPLICATE_CONTENT_VERSION" },
+        };
+      }
+      if (!canonicalSource?.contentVersionId) {
+        return {
+          kind: "hard_block",
+          probe: { canonicalId: cid, contentVersionId: null, pass: false, skipReason: "NO_CANONICAL_CONTENT_VERSION" },
+        };
+      }
+      const direct = await resolveSlotNormalUrl(input.prisma, cid);
+      if (!direct.ok) {
+        return {
+          kind: "hard_block",
+          probe: { canonicalId: cid, contentVersionId: cvId, pass: false, skipReason: direct.reason },
+        };
+      }
+      const identity = xCopyIdentityFromSource({
+        source: canonicalSource,
+        destinationUrl: direct.url,
+        model: input.config.llmModelWriter,
+      });
+      const decision = beginXCopyGeneration({
+        existing: readXCopyArtifact(rawById.get(selected.researchItemId)),
+        identity,
+        fingerprint: xCopyInputFingerprint(identity),
+        now: new Date(),
+        ownerToken: "peek",
+        logicalGenerationId: "peek",
+      });
+      if (decision.action === "reuse" && decision.artifact.state === "REJECTED_QUALITY") {
+        return {
+          kind: "cached_reject",
+          probe: {
+            canonicalId: cid,
+            contentVersionId: cvId,
+            pass: false,
+            skipReason: decision.artifact.skipReason ?? "REJECTED_QUALITY",
+          },
+        };
+      }
+      if (decision.action === "wait" || decision.action === "exhausted") {
+        return decision.action === "wait"
+          ? { kind: "transient_wait" }
+          : {
+              kind: "cached_reject",
+              probe: {
+                canonicalId: cid,
+                contentVersionId: cvId,
+                pass: false,
+                skipReason: decision.artifact.skipReason ?? decision.artifact.state,
+              },
+            };
+      }
+      return { kind: "spend", willGenerate: decision.action === "claim" };
+    },
+    materialize: async (selected) => {
+      const cid = selected.canonicalId.trim().toLowerCase();
+      const canonicalSource = await loadCanonicalXSource(input.prisma, selected.canonicalId);
+      const cvId = canonicalSource?.contentVersionId ?? null;
+      const direct = await resolveSlotNormalUrl(input.prisma, cid);
+      if (!canonicalSource?.contentVersionId || !direct.ok) {
+        return {
+          generated: false,
+          transient: false,
+          probe: { canonicalId: cid, contentVersionId: cvId, pass: false, skipReason: direct.ok ? "NO_CANONICAL_CONTENT_VERSION" : direct.reason },
+        };
+      }
+      const adapted = await adaptCanonicalForXSchedule({
+        prisma: input.prisma,
+        researchItemId: selected.researchItemId,
+        source: canonicalSource,
+        destinationUrl: direct.url,
+        llm: input.llm,
+        model: input.config.llmModelWriter,
+        trigger: "probe",
+      });
+      const gate = xScheduleGate(adapted.result);
+      return {
+        generated: adapted.generated,
+        transient: !gate.pass && adapted.result.skip?.failureClass === "GENERATION_FAILURE",
+        probe: {
+          canonicalId: cid,
+          contentVersionId: cvId,
+          pass: gate.pass,
+          skipReason: gate.pass ? null : gate.skipReason,
+        },
+      };
+    },
+  });
+  return {
+    metrics: refilled.metrics,
+    probes: refilled.probes.map((probe, rank) => ({ ...probe, rank })),
+  };
 }
 
 export async function executeAssignedXSlots(input: {
@@ -387,15 +441,17 @@ export async function executeAssignedXSlots(input: {
         });
         continue;
       }
-      const adapted = await adaptCanonicalForXSchedule({
-        prisma: input.prisma,
-        researchItemId: selected.researchItemId,
-        source: canonicalSource,
-        destinationUrl: direct.url,
-        llm: input.llm,
-        model: input.config.llmModelWriter,
-        trigger: "execute",
-      });
+      const adapted = (
+        await adaptCanonicalForXSchedule({
+          prisma: input.prisma,
+          researchItemId: selected.researchItemId,
+          source: canonicalSource,
+          destinationUrl: direct.url,
+          llm: input.llm,
+          model: input.config.llmModelWriter,
+          trigger: "execute",
+        })
+      ).result;
       const gate = xScheduleGate(adapted);
       if (!gate.pass) {
         outcomes.push({

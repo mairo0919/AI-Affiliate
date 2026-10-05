@@ -67,6 +67,8 @@ import {
   type XSlotLiveOutcome,
 } from "./x-slot-live.js";
 import { listUpcomingXPostSlots, shouldPlanXHorizon } from "./x-post-schedule.js";
+import { maxNewXCopyCandidatesForRefill, readConfiguredXCopyRefillCap } from "../x/x-copy-artifact.js";
+import { formatXRefillNote } from "../x/x-copy-refill.js";
 
 export interface DailyLiveResult {
   dayKey: string;
@@ -192,7 +194,7 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
   const xNeeded = Math.min(regularNeeded + extraNeeded, xRoom);
 
   let openFutureSlots = 0;
-  if (!deps.forceSmoke && xNeeded <= 0) {
+  if (!deps.forceSmoke) {
     const filledSlotKeys = await loadFilledXSlotKeys(deps.database.prisma, {
       fromDayKey: dayKey,
       dayCount: 3,
@@ -222,7 +224,7 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
       blog: { ...emptyBlog, note: `blogDone=${blogDone}` },
       x: {
         ...emptyX,
-        note: `xDone=${xCounts.total} standard=${xCounts.standard} extra=${xCounts.extra}`,
+        note: `openFutureSlots=${openFutureSlots} xNeeded=${xNeeded} past_slots_not_backfilled`,
       },
       ranking: { productionReady: false, deferred: true },
       llmCalls: 0,
@@ -644,14 +646,23 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
       xCopyLlm = createLLMProvider(deps.config);
     }
 
-    const probes = await probeXScheduleCandidates({
+    const slotsNeeded = deps.forceSmoke ? Math.max(openFutureSlots, 1) : openFutureSlots;
+    const probed = await probeXScheduleCandidates({
       prisma: deps.database.prisma,
       ranked,
       config: deps.config,
       usedCanonicalIds: usedCids,
       usedContentVersionIds: usedCvs,
+      slotsNeeded,
+      maxNewGenerations: maxNewXCopyCandidatesForRefill(
+        slotsNeeded,
+        readConfiguredXCopyRefillCap(process.env.X_MAX_NEW_COPY_CANDIDATES_PER_REFILL),
+      ),
       llm: xCopyLlm,
     });
+    const probes = probed.probes;
+    const refillNote = formatXRefillNote(probed.metrics);
+    deps.logger.info(refillNote);
 
     // Horizon plan: future slots only (no past-slot backfill / no late publishNow).
     // STANDARD and EXTRA use separate quotas; hard-capped for the extra day.
@@ -699,12 +710,12 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
       x.publicationId = primary.publicationId;
       x.published = primary.published;
       x.held = primary.held || executed.outcomes.every((o) => !o.published);
-      x.note = executed.outcomes
+      x.note = `${refillNote}|${executed.outcomes
         .map((o) => `h${o.hour}:${o.status}:${o.reason}${o.canonicalId ? `:${o.canonicalId}` : ""}`)
-        .join("|");
+        .join("|")}`;
     } else {
       x.held = true;
-      x.note = "no_x_slot_outcomes";
+      x.note = refillNote;
     }
   }
 

@@ -12,9 +12,18 @@ export const X_COPY_REUSE_POLICY_VERSION = "x-copy-reuse-v1";
 
 /** Logical generations of the same fingerprint. Internal writer rewrites stay inside one generation. */
 export const MAX_LOGICAL_X_COPY_GENERATIONS = 3;
+/** Same fingerprint, prompt, policy, and source never spends more than this. Quality rejects stop at one. */
+export const MAX_X_LLM_GENERATIONS_PER_UNCHANGED_ARTIFACT = MAX_LOGICAL_X_COPY_GENERATIONS;
 export const X_COPY_GENERATING_TTL_MS = 3 * 60 * 1000;
-export const X_COPY_QUALITY_RETRY_MS = 6 * 60 * 60 * 1000;
 export const X_COPY_TRANSIENT_RETRY_MS = 5 * 60 * 1000;
+
+/**
+ * Ceiling for new X copy generations in one refill.
+ * 2026-10-05 production: 9 PASS and 2 transient among candidates that reached the writer.
+ * Three open slots at that 0.8 rate need 5 tries. 8 covers a weaker mix without scanning 80.
+ */
+export const MAX_NEW_X_COPY_CANDIDATES_PER_REFILL = 8;
+export const X_COPY_OBSERVED_LLM_PASS_RATE = 0.8;
 
 export type XCopyArtifactState = "PASS" | "REJECTED_QUALITY" | "FAILED_TRANSIENT" | "GENERATING";
 
@@ -228,8 +237,10 @@ export function beginXCopyGeneration(input: {
     const until = same.generatingUntil ? Date.parse(same.generatingUntil) : 0;
     if (Number.isFinite(until) && until > nowMs) return { action: "wait", artifact: same };
   }
-  if (same?.state === "PASS") return { action: "reuse", artifact: same };
-  if (same && same.state !== "GENERATING") {
+  if (same?.state === "PASS" || same?.state === "REJECTED_QUALITY") {
+    return { action: "reuse", artifact: same };
+  }
+  if (same?.state === "FAILED_TRANSIENT") {
     const retryAt = same.nextRetryAt ? Date.parse(same.nextRetryAt) : 0;
     if (Number.isFinite(retryAt) && retryAt > nowMs) return { action: "reuse", artifact: same };
     if (same.logicalGenerationCount >= MAX_LOGICAL_X_COPY_GENERATIONS) {
@@ -279,12 +290,9 @@ export function completeXCopyGeneration(input: {
     return { artifact: current, committed: false };
   }
   const nextRetryAt =
-    input.state === "PASS"
-      ? null
-      : new Date(
-          input.now.getTime() +
-            (input.state === "FAILED_TRANSIENT" ? X_COPY_TRANSIENT_RETRY_MS : X_COPY_QUALITY_RETRY_MS),
-        ).toISOString();
+    input.state === "FAILED_TRANSIENT"
+      ? new Date(input.now.getTime() + X_COPY_TRANSIENT_RETRY_MS).toISOString()
+      : null;
   return {
     committed: true,
     artifact: {
@@ -299,6 +307,24 @@ export function completeXCopyGeneration(input: {
       adaptation: input.adaptation,
     },
   };
+}
+
+export function maxNewXCopyCandidatesForRefill(slotsNeeded: number, configuredCap?: number | null): number {
+  const needed = Math.max(0, Math.floor(slotsNeeded));
+  if (needed === 0) return 0;
+  const cap =
+    configuredCap == null || !Number.isFinite(configuredCap)
+      ? MAX_NEW_X_COPY_CANDIDATES_PER_REFILL
+      : Math.max(0, Math.floor(configuredCap));
+  const evidenced = Math.max(needed, Math.ceil(needed / X_COPY_OBSERVED_LLM_PASS_RATE) + 1);
+  return Math.min(cap, evidenced);
+}
+
+export function readConfiguredXCopyRefillCap(raw: string | undefined): number | null {
+  if (raw == null || raw.trim() === "") return null;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return Math.floor(parsed);
 }
 
 export function classifyXCopyOutcome(input: {

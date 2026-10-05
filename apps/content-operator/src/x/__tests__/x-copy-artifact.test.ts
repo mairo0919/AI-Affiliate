@@ -12,7 +12,6 @@ import { ledgeringXCopyProvider, type XCopyLedgerAttempt } from "../x-copy-ledge
 import {
   MAX_LOGICAL_X_COPY_GENERATIONS,
   readXCopyArtifact,
-  X_COPY_QUALITY_RETRY_MS,
   X_COPY_TRANSIENT_RETRY_MS,
   type XCopyArtifactStore,
   type XCopyIdentity,
@@ -269,12 +268,12 @@ describe("X copy artifact reuse", () => {
     const later = await resolveXCopyArtifact({
       store,
       identity: identity(),
-      now: new Date(start.getTime() + X_COPY_QUALITY_RETRY_MS + 1000),
+      now: new Date(start.getTime() + 6 * 60 * 60 * 1000 + 1000),
       trigger: "probe",
       generate,
     });
-    expect(later.generated).toBe(true);
-    expect(calls).toBe(2);
+    expect(later.generated).toBe(false);
+    expect(calls).toBe(1);
   });
 
   it("retries a transient provider failure on a bounded backoff", async () => {
