@@ -10,6 +10,9 @@ import { detectXAdultExpressions, stripXAdultSpans } from "./x-social-content-po
 /** Lower temperature for X social — reduces run-to-run PASS/FAIL oscillation. */
 export const X_SOCIAL_LLM_TEMPERATURE = 0.2;
 
+/** Writer prompt id. Bumping this allows a new X copy generation for the same product. */
+export const X_SOCIAL_WRITER_PROMPT_VERSION = "v3";
+
 export const X_SOCIAL_WRITER_SYSTEM = [
   "You write one Japanese X post as a third party, not as the performer or the maker.",
   "FOCUS is the single point of the post. Write one post that can be read on its own, about that focus.",
@@ -273,7 +276,7 @@ async function executeWriterOnce(
   const result = await opts.llm.executeTask({
     taskType: "GENERATION_X_SOCIAL",
     promptIdentifier: opts.promptIdentifier,
-    promptVersion: "v3",
+    promptVersion: X_SOCIAL_WRITER_PROMPT_VERSION,
     systemInstruction: prompts.systemInstruction,
     userPrompt: prompts.userPrompt,
     outputSchema: prompts.outputSchema,

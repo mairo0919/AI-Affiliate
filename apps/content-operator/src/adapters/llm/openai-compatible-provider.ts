@@ -1,4 +1,4 @@
-import type { LLMProvider, LLMTaskRequest, LLMTaskResult } from "../types.js";
+import type { LLMProvider, LLMProviderUsage, LLMTaskRequest, LLMTaskResult } from "../types.js";
 import { LLMProviderError } from "../types.js";
 
 export interface OpenAiCompatibleConfig {
@@ -120,6 +120,7 @@ export class OpenAiCompatibleLLMProvider implements LLMProvider {
       };
       const content = json.choices?.[0]?.message?.content ?? "";
       const finishReason = json.choices?.[0]?.finish_reason ?? null;
+      const billedUsage = this.billedUsage(json.usage, args.model);
       if (finishReason === "content_filter") {
         return {
           output: { refused: true },
@@ -141,7 +142,12 @@ export class OpenAiCompatibleLLMProvider implements LLMProvider {
       try {
         parsed = JSON.parse(content) as Record<string, unknown>;
       } catch {
-        throw new LLMProviderError("LLM returned malformed JSON", "malformed_output", false);
+        throw new LLMProviderError(
+          "LLM returned malformed JSON",
+          "malformed_output",
+          false,
+          billedUsage,
+        );
       }
 
       const inputTokens = json.usage?.prompt_tokens ?? Math.ceil(args.user.length / 4);
@@ -181,5 +187,27 @@ export class OpenAiCompatibleLLMProvider implements LLMProvider {
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  /** Present only when the provider returned a usage object on a billed response. */
+  private billedUsage(
+    usage: { prompt_tokens?: number; completion_tokens?: number } | undefined,
+    model: string,
+  ): LLMProviderUsage | null {
+    if (!usage) return null;
+    const inputTokens = usage.prompt_tokens ?? 0;
+    const outputTokens = usage.completion_tokens ?? 0;
+    const estimatedCost =
+      (inputTokens / 1000) * this.config.yenPer1kInput +
+      (outputTokens / 1000) * this.config.yenPer1kOutput;
+    return {
+      inputTokens,
+      outputTokens,
+      estimatedCost,
+      actualCost: null,
+      currency: this.config.currency,
+      provider: this.providerKey,
+      model,
+    };
   }
 }

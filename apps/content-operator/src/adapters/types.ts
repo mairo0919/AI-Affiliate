@@ -211,15 +211,32 @@ export interface LLMProvider {
   executeTask(request: LLMTaskRequest): Promise<LLMTaskResult>;
 }
 
+export type LLMProviderUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  estimatedCost: number;
+  actualCost?: number | null;
+  currency: string;
+  provider: string;
+  model: string;
+};
+
 export class LLMProviderError extends Error {
   readonly errorClass: LLMErrorClass;
   readonly retryable: boolean;
+  readonly usage: LLMProviderUsage | null;
 
-  constructor(message: string, errorClass: LLMErrorClass, retryable = false) {
+  constructor(
+    message: string,
+    errorClass: LLMErrorClass,
+    retryable = false,
+    usage: LLMProviderUsage | null = null,
+  ) {
     super(message);
     this.name = "LLMProviderError";
     this.errorClass = errorClass;
     this.retryable = retryable;
+    this.usage = usage;
   }
 }
 

@@ -33,6 +33,8 @@ import {
   type SocialReviewResult,
 } from "./social-review.js";
 
+export const X_SOCIAL_ADAPTATION_FORMAT = "x-social-adaptation-v7" as const;
+
 export type XLinkMode = "WP_TRAFFIC" | "DIRECT_AFFILIATE" | "COMBINED";
 
 export type { XThreadShape };
@@ -131,7 +133,7 @@ export type XSocialAdaptationResult = {
   mediaRole: "hero" | "auxiliary" | null;
   warnings: string[];
   tracking: {
-    format: "x-social-adaptation-v7";
+    format: typeof X_SOCIAL_ADAPTATION_FORMAT;
     cid: string;
     linkMode: XLinkMode;
     threadShape: XThreadShape;
@@ -347,7 +349,7 @@ function emptyResult(base: {
     mediaRole: base.mediaPick.selectedRole,
     warnings: base.warnings,
     tracking: {
-      format: "x-social-adaptation-v7",
+      format: X_SOCIAL_ADAPTATION_FORMAT,
       cid: base.cid,
       linkMode: base.link.mode,
       threadShape: "SINGLE",
@@ -653,7 +655,7 @@ export async function adaptCanonicalToXSocial(
     mediaRole: mediaPick.selectedRole,
     warnings,
     tracking: {
-      format: "x-social-adaptation-v7",
+      format: X_SOCIAL_ADAPTATION_FORMAT,
       cid: input.cid,
       linkMode: destinationStrategy ? "DIRECT_AFFILIATE" : link.mode,
       threadShape,

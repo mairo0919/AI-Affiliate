@@ -7,9 +7,8 @@ import { createHash } from "node:crypto";
 import type { AppConfig } from "@ai-affiliate/config";
 import { ContentRepository, type DatabaseClient } from "@ai-affiliate/database";
 import type { Logger } from "@ai-affiliate/shared";
-import { textContainsWordPressUrl } from "../adapters/affiliate/fanza-affiliate-provider.js";
+import type { LLMProvider } from "../adapters/types.js";
 import {
-  classifyXDestination,
   officialIdentityFromRaw,
   publishingPauseActive,
   resolveNormalXProductUrl,
@@ -17,7 +16,14 @@ import {
 import {
   adaptLoadedCanonicalToX,
   loadCanonicalXSource,
+  type CanonicalXSource,
 } from "../x/canonical-x-source.js";
+import {
+  createPrismaXCopyArtifactStore,
+  createPrismaXCopyLedger,
+  ledgeringXCopyProvider,
+} from "../x/x-copy-ledger.js";
+import { resolveXCopyArtifact, xCopyIdentityFromSource, xScheduleGate } from "../x/x-copy-reuse.js";
 import { XPublicationService } from "../x/publication-service.js";
 import type { ChannelCandidate } from "./channel-selection.js";
 import { allocateXPostSlots, isFutureXSlotInstant, planXPostScheduleHorizon } from "./x-post-schedule.js";
@@ -107,14 +113,42 @@ async function resolveSlotNormalUrl(
   });
 }
 
-function postsUseNormalDestination(posts: Array<{ body: string }>): boolean {
-  return posts.every((post) => {
-    const urls = post.body.match(/https?:\/\/\S+/gu) ?? [];
-    return urls.every((raw) => {
-      const kind = classifyXDestination(raw.replace(/[)\].,]+$/u, ""));
-      return kind === "FANZA_NORMAL" || kind === "DMM_NORMAL";
-    });
+async function adaptCanonicalForXSchedule(input: {
+  prisma: DatabaseClient["prisma"];
+  researchItemId: string;
+  source: CanonicalXSource;
+  destinationUrl: string;
+  llm?: LLMProvider | null;
+  model: string;
+  trigger: "probe" | "execute";
+}): Promise<Awaited<ReturnType<typeof adaptLoadedCanonicalToX>>> {
+  const identity = xCopyIdentityFromSource({
+    source: input.source,
+    destinationUrl: input.destinationUrl,
+    model: input.model,
   });
+  const ledger = createPrismaXCopyLedger(input.prisma);
+  const resolved = await resolveXCopyArtifact({
+    store: createPrismaXCopyArtifactStore(input.prisma, input.researchItemId),
+    identity,
+    now: new Date(),
+    trigger: input.trigger,
+    generate: async (ctx) =>
+      await adaptLoadedCanonicalToX(input.source, {
+        preferredRoute: "DIRECT_AFFILIATE",
+        disclosure: null,
+        preferWpTraffic: false,
+        allowDirectAffiliate: true,
+        allowCombined: false,
+        affiliateThreadMode: false,
+        normalProductUrl: input.destinationUrl,
+        llm: input.llm
+          ? ledgeringXCopyProvider(input.llm, ledger, { ...ctx, cid: identity.cid })
+          : input.llm,
+        llmModel: input.model,
+      }),
+  });
+  return resolved.result;
 }
 
 export async function probeXScheduleCandidates(input: {
@@ -171,38 +205,22 @@ export async function probeXScheduleCandidates(input: {
       });
       continue;
     }
-    const adapted = await adaptLoadedCanonicalToX(canonicalSource, {
-      preferredRoute: "DIRECT_AFFILIATE",
-      disclosure: null,
-      preferWpTraffic: false,
-      allowDirectAffiliate: true,
-      allowCombined: false,
-      affiliateThreadMode: false,
-      normalProductUrl: direct.url,
+    const adapted = await adaptCanonicalForXSchedule({
+      prisma: input.prisma,
+      researchItemId: selected.researchItemId,
+      source: canonicalSource,
+      destinationUrl: direct.url,
       llm: input.llm,
-      llmModel: input.config.llmModelWriter,
+      model: input.config.llmModelWriter,
+      trigger: "probe",
     });
-    if (adapted.skip || adapted.posts.length === 0) {
+    const gate = xScheduleGate(adapted);
+    if (!gate.pass) {
       out.push({
         canonicalId: cid,
         contentVersionId: cvId,
         pass: false,
-        skipReason: adapted.skip?.reason ?? "SOCIAL_CONTENT_TOO_THIN",
-        rank: rank++,
-      });
-      continue;
-    }
-    if (
-      adapted.publicationStrategy !== "FANZA_NORMAL" ||
-      adapted.posts.some((post) => textContainsWordPressUrl(post.body)) ||
-      !postsUseNormalDestination(adapted.posts) ||
-      !adapted.fanzaUrl
-    ) {
-      out.push({
-        canonicalId: cid,
-        contentVersionId: cvId,
-        pass: false,
-        skipReason: "BLOCKED_INVALID_X_DESTINATION",
+        skipReason: gate.skipReason,
         rank: rank++,
       });
       continue;
@@ -369,46 +387,24 @@ export async function executeAssignedXSlots(input: {
         });
         continue;
       }
-      const adapted = await adaptLoadedCanonicalToX(canonicalSource, {
-        preferredRoute: "DIRECT_AFFILIATE",
-        disclosure: null,
-        preferWpTraffic: false,
-        allowDirectAffiliate: true,
-        allowCombined: false,
-        affiliateThreadMode: false,
-        normalProductUrl: direct.url,
+      const adapted = await adaptCanonicalForXSchedule({
+        prisma: input.prisma,
+        researchItemId: selected.researchItemId,
+        source: canonicalSource,
+        destinationUrl: direct.url,
         llm: input.llm,
-        llmModel: input.config.llmModelWriter,
+        model: input.config.llmModelWriter,
+        trigger: "execute",
       });
-
-      if (adapted.skip || adapted.posts.length === 0) {
+      const gate = xScheduleGate(adapted);
+      if (!gate.pass) {
         outcomes.push({
           hour: assignment.hour,
           role: assignment.role,
           status: "EMPTY",
           canonicalId: selected.canonicalId,
           contentVersionId: canonicalSource.contentVersionId,
-          reason: adapted.skip?.reason ?? "SOCIAL_CONTENT_TOO_THIN",
-          publicationId: null,
-          scheduledAt: assignment.scheduledAt.toISOString(),
-          published: false,
-          held: true,
-        });
-        continue;
-      }
-      if (
-        adapted.publicationStrategy !== "FANZA_NORMAL" ||
-        !postsUseNormalDestination(adapted.posts) ||
-        adapted.posts.some((post) => textContainsWordPressUrl(post.body)) ||
-        !adapted.fanzaUrl
-      ) {
-        outcomes.push({
-          hour: assignment.hour,
-          role: assignment.role,
-          status: "EMPTY",
-          canonicalId: selected.canonicalId,
-          contentVersionId: canonicalSource.contentVersionId,
-          reason: "BLOCKED_INVALID_X_DESTINATION",
+          reason: gate.skipReason,
           publicationId: null,
           scheduledAt: assignment.scheduledAt.toISOString(),
           published: false,

@@ -8,6 +8,7 @@ import type {
 } from "@ai-affiliate/database";
 import type { LLMProvider } from "../adapters/types.js";
 import { LLMProviderError } from "../adapters/types.js";
+import { accountGenerationFailure, retainedFailureTokens } from "./generation-failure-accounting.js";
 import { evaluatePolicies } from "../lifecycle/policy-engine.js";
 import { XCharacterCounter } from "../x/character-counter.js";
 import { BudgetBlockedError, BudgetGuard } from "./budget-guard.js";
@@ -785,6 +786,24 @@ export class ContentGenerationService {
         performers,
         seoSearchIntent,
       });
+    let editorialRunId: string | null = null;
+    try {
+      const editorialRun = await this.repo.createModelRun({
+        provider: this.llm.providerKey,
+        model: this.models.generation,
+        taskType: "GENERATION_BLOGGER",
+        promptIdentifier: "article-editorial-decision-v1",
+        promptVersion: "1",
+        status: "RUNNING",
+        metadata: {
+          phase: "article.editorial-decision",
+          productCanonicalId: input.productCanonicalId ?? null,
+        },
+      });
+      editorialRunId = editorialRun.id;
+    } catch {
+      editorialRunId = null;
+    }
     try {
       const edPrompt = buildEditorialDecisionPlannerPrompt({
         productTitle: input.productTitle,
@@ -808,15 +827,82 @@ export class ContentGenerationService {
         (typeof edLlm.output?.angle === "string"
           ? parseEditorialDecisionJson(JSON.stringify(edLlm.output))
           : null);
+      let adopted = false;
       if (parsed) {
         const g = validateEditorialDecisionGrounding({
           decision: parsed,
           allowedSurfaces: [...evidenceSurfaces, ...planBodyFacts],
           performers,
         });
-        if (g.ok) editorialDecision = parsed;
+        if (g.ok) {
+          editorialDecision = parsed;
+          adopted = true;
+        }
       }
-    } catch {
+      if (editorialRunId) {
+        await this.repo
+          .completeModelRun(editorialRunId, {
+            status: "COMPLETED",
+            inputTokens: edLlm.inputTokens,
+            outputTokens: edLlm.outputTokens,
+            cachedTokens: edLlm.cachedTokens ?? 0,
+            estimatedCost: edLlm.estimatedCost,
+            actualCost: edLlm.actualCost ?? edLlm.estimatedCost,
+            currency: edLlm.currency,
+            metadata: { phase: "article.editorial-decision", adopted },
+          })
+          .catch(() => undefined);
+        await this.repo
+          .createCostRecord({
+            provider: edLlm.provider,
+            serviceOrModel: edLlm.model,
+            operationType: "article.editorial-decision",
+            relatedType: "ContentStrategy",
+            relatedId: input.strategyId,
+            modelRunId: editorialRunId,
+            estimatedAmount: edLlm.estimatedCost,
+            actualAmount: edLlm.actualCost ?? edLlm.estimatedCost,
+            currency: edLlm.currency,
+            metadata: { phase: "article.editorial-decision", adopted },
+          })
+          .catch(() => undefined);
+      }
+    } catch (error) {
+      const accounted = accountGenerationFailure(error);
+      if (editorialRunId) {
+        await this.repo
+          .completeModelRun(editorialRunId, {
+            status: "FAILED",
+            inputTokens: accounted.usage?.inputTokens ?? null,
+            outputTokens: accounted.usage?.outputTokens ?? null,
+            estimatedCost: accounted.usage?.estimatedCost ?? null,
+            actualCost: accounted.usage?.actualCost ?? accounted.usage?.estimatedCost ?? null,
+            currency: accounted.usage?.currency,
+            errorType: accounted.providerPreserved ? accounted.errorType : "editorial_decision_failed",
+            errorDetail: accounted.errorDetail,
+            metadata: {
+              phase: "article.editorial-decision",
+              providerErrorPreserved: accounted.providerPreserved,
+            },
+          })
+          .catch(() => undefined);
+        if (accounted.usage) {
+          await this.repo
+            .createCostRecord({
+              provider: accounted.usage.provider,
+              serviceOrModel: accounted.usage.model,
+              operationType: "article.editorial-decision",
+              relatedType: "ContentStrategy",
+              relatedId: input.strategyId,
+              modelRunId: editorialRunId,
+              estimatedAmount: accounted.usage.estimatedCost,
+              actualAmount: accounted.usage.actualCost ?? accounted.usage.estimatedCost,
+              currency: accounted.usage.currency,
+              metadata: { phase: "article.editorial-decision", usageRetained: true },
+            })
+            .catch(() => undefined);
+        }
+      }
       // keep deterministic fallback — still free-text cut, not fact assembly
     }
 
@@ -1688,14 +1774,55 @@ export class ContentGenerationService {
         });
         throw error;
       }
+      if (error instanceof LLMProviderError) {
+        const accounted = accountGenerationFailure(error);
+        const usage = accounted.usage;
+        const retained = retainedFailureTokens({ providerUsage: usage, response: llm });
+        await this.repo.completeModelRun(modelRun.id, {
+          status: "FAILED",
+          inputTokens: retained.inputTokens,
+          outputTokens: retained.outputTokens,
+          cachedTokens: llm?.cachedTokens ?? 0,
+          estimatedCost: retained.estimatedCost,
+          actualCost:
+            usage?.actualCost ?? llm?.actualCost ?? usage?.estimatedCost ?? llm?.estimatedCost ?? null,
+          currency: usage?.currency ?? llm?.currency,
+          structuredOutputValid: false,
+          errorType: accounted.errorType,
+          errorDetail: accounted.errorDetail,
+          metadata: {
+            finishReason: llm?.finishReason ?? null,
+            llmCompleted: Boolean(usage) || Boolean(llm),
+            persistenceCompleted: false,
+            providerErrorPreserved: true,
+            generationAttempt,
+          },
+        });
+        if (usage) {
+          await this.repo.createCostRecord({
+            provider: usage.provider,
+            serviceOrModel: usage.model,
+            operationType: "GENERATION_BLOGGER",
+            relatedType: "ContentStrategy",
+            relatedId: input.strategyId,
+            modelRunId: modelRun.id,
+            estimatedAmount: usage.estimatedCost,
+            actualAmount: usage.actualCost ?? usage.estimatedCost,
+            currency: usage.currency,
+            metadata: { phase: "article.writer", usageRetained: true },
+          });
+        }
+        throw error;
+      }
       const outputKeys =
         llm?.output && typeof llm.output === "object" ? Object.keys(llm.output) : [];
+      const retained = retainedFailureTokens({ providerUsage: null, response: llm });
       await this.repo.completeModelRun(modelRun.id, {
         status: "FAILED",
-        inputTokens: llm?.inputTokens,
-        outputTokens: llm?.outputTokens,
+        inputTokens: retained.inputTokens,
+        outputTokens: retained.outputTokens,
         cachedTokens: llm?.cachedTokens ?? 0,
-        estimatedCost: llm?.estimatedCost,
+        estimatedCost: retained.estimatedCost,
         actualCost: llm?.actualCost ?? llm?.estimatedCost,
         currency: llm?.currency,
         structuredOutputValid: false,
