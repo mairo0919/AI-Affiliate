@@ -52,6 +52,8 @@ const ACTIVE_RESERVATION_STATUSES = new Set([
   "PARTIALLY_PUBLISHED",
 ]);
 
+const NAVIGATION_IDENTITY_QUERY_KEYS = new Set(["id", "cid"]);
+
 export function canonicalNavigationDestination(body: string): string | null {
   const match = body.match(/https?:\/\/[^\s<>]+/i);
   if (!match) return null;
@@ -59,9 +61,17 @@ export function canonicalNavigationDestination(body: string): string | null {
   try {
     const url = new URL(raw);
     url.hash = "";
-    url.search = "";
+    const identity = new URLSearchParams();
+    const pairs = [...url.searchParams.entries()]
+      .filter(([key, value]) => NAVIGATION_IDENTITY_QUERY_KEYS.has(key.toLowerCase()) && value.trim() !== "")
+      .map(([key, value]) => [key.toLowerCase(), value.trim().toLowerCase()] as const)
+      .sort(([left], [right]) => left.localeCompare(right));
+    for (const [key, value] of pairs) {
+      if (!identity.has(key)) identity.set(key, value);
+    }
     const path = url.pathname.replace(/\/+$/, "") || "/";
-    return `${url.protocol}//${url.host.toLowerCase()}${path}`;
+    const search = identity.toString();
+    return `${url.protocol}//${url.host.toLowerCase()}${path}${search ? `?${search}` : ""}`;
   } catch {
     return raw.toLowerCase();
   }

@@ -308,6 +308,49 @@ describe("publication body duplicate", () => {
     ).toBe("ROOT_EARLIER_RESERVATION");
   });
 
+  it("does not treat different FANZA content ids as the same CTA destination", () => {
+    const published = candidate({
+      postId: "cta-canary",
+      publicationId: "pub-canary",
+      role: "CTA",
+      body: cta("https://video.dmm.co.jp/av/content/?id=13dsvr02004"),
+      publicationStatus: "PUBLISHED",
+      postStatus: "PUBLISHED",
+      xPostId: "2106409198015885776",
+      publicationPublishedAt: new Date("2026-10-03T15:41:09.969Z"),
+      postPublishedAt: new Date("2026-10-03T15:41:09.969Z"),
+    });
+    expect(
+      judge(
+        [
+          rootPost("root-next", "別商品の本文"),
+          ctaPost("cta-next", "https://video.dmm.co.jp/av/content/?id=172reca00044ai"),
+        ],
+        [published],
+      ),
+    ).toBeNull();
+  });
+
+  it("still blocks the same FANZA content id when only tracking params differ", () => {
+    const published = candidate({
+      postId: "cta-same",
+      publicationId: "pub-same",
+      role: "CTA",
+      body: cta("https://video.dmm.co.jp/av/content/?id=172reca00044ai&utm_source=x"),
+      publicationStatus: "PUBLISHED",
+      postStatus: "PUBLISHED",
+      xPostId: "2106409198015885776",
+      publicationPublishedAt: new Date("2026-10-03T15:41:09.969Z"),
+      postPublishedAt: new Date("2026-10-03T15:41:09.969Z"),
+    });
+    expect(
+      judge(
+        [ctaPost("cta-next", "https://video.dmm.co.jp/av/content/?id=172reca00044ai")],
+        [published],
+      )?.kind,
+    ).toBe("CTA_PUBLISHED_DESTINATION");
+  });
+
   it("ignores a BLOCKED unpublished reservation", () => {
     const root = "ROOT A の本文";
     const blocked = candidate({
