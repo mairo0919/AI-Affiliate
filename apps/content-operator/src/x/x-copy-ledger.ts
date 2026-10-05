@@ -41,7 +41,7 @@ export function createPrismaXCopyArtifactStore(
   return {
     async transact(fn) {
       return prisma.$transaction(async (tx) => {
-        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`x-copy:${researchItemId}`}, 0))`;
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`x-copy:${researchItemId}`}, 0))`;
         const row = await tx.researchItem.findUnique({
           where: { id: researchItemId },
           select: { rawData: true },
