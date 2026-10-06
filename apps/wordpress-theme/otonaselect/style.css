@@ -6,7 +6,7 @@ Description: オトナセレクト専用の軽量ブロックテーマ。note風
 Requires at least: 6.7
 Tested up to: 6.8
 Requires PHP: 8.0
-Version: 1.6.8
+Version: 1.6.9
 License: GNU General Public License v2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 Text Domain: otonaselect
@@ -187,6 +187,31 @@ footer.wp-block-group.alignfull > .wp-block-site-title {
 
 .otonaselect-card-grid {
 	gap: var(--wp--preset--spacing--50) !important;
+}
+
+/* Archive lists stay left-aligned. Max 4 columns, same minimum card width as home. */
+.otonaselect-archive {
+	width: 100%;
+	max-width: none;
+	box-sizing: border-box;
+}
+
+.otonaselect-archive > * {
+	max-width: none !important;
+	margin-left: 0 !important;
+	margin-right: 0 !important;
+}
+
+.otonaselect-archive .otonaselect-card-grid {
+	display: grid !important;
+	grid-template-columns: repeat(auto-fill, minmax(min(100%, max(20.5rem, calc((100% - 3.75rem) / 4))), 1fr)) !important;
+	justify-content: start;
+	justify-items: stretch;
+	gap: 1.25rem !important;
+	width: 100%;
+	list-style: none;
+	margin: 0 !important;
+	padding: 0;
 }
 
 .otonaselect-card {
@@ -822,6 +847,16 @@ body.single-post .otonaselect-single-title {
 	.otonaselect-home .otonaselect-card-grid,
 	.otonaselect-home .otonaselect-popular-list {
 		grid-template-columns: repeat(auto-fit, minmax(min(100%, 20.5rem), 1fr)) !important;
+	}
+
+	.otonaselect-archive,
+	.otonaselect-archive.wp-block-group {
+		padding-left: 1rem !important;
+		padding-right: 1rem !important;
+	}
+
+	.otonaselect-archive .otonaselect-card-grid {
+		grid-template-columns: repeat(auto-fill, minmax(min(100%, max(20.5rem, calc((100% - 3.75rem) / 4))), 1fr)) !important;
 	}
 
 	.otonaselect-term-grid {

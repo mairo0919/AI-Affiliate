@@ -496,7 +496,7 @@ add_filter('render_block', static function (string $block_content, array $block)
 	}
 
 	if ($name === 'core/html' && str_contains($block_content, 'otonaselect-popular-posts-slot')) {
-		return otonaselect_render_popular_posts_section(8);
+		return otonaselect_render_popular_posts_section(6);
 	}
 
 	return $block_content;

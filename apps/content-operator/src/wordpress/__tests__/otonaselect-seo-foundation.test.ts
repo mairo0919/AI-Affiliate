@@ -11,8 +11,8 @@ function read(rel: string): string {
 }
 
 describe("otonaselect SEO foundation contracts", () => {
-  it("ships theme 1.6.8 with rewrite flush version gate", () => {
-    expect(read("style.css")).toMatch(/Version:\s*1\.6\.8/);
+  it("ships theme 1.6.9 with rewrite flush version gate", () => {
+    expect(read("style.css")).toMatch(/Version:\s*1\.6\.9/);
     const tax = read("inc/taxonomies.php");
     expect(tax).toContain("otonaselect-tax-rewrite-1.6.7");
     expect(tax).toContain("flush_rewrite_rules");
@@ -31,9 +31,9 @@ describe("otonaselect SEO foundation contracts", () => {
     expect(read("templates/page-series-list.html")).toContain("otonaselect-series-hub-slot");
   });
 
-  it("lists home latest posts by post_date DESC with 8/page and /page/N/", () => {
+  it("lists home latest posts by post_date DESC with 9/page and no home pagination", () => {
     const front = read("templates/front-page.html");
-    expect(front).toMatch(/"perPage":8/);
+    expect(front).toMatch(/"perPage":9/);
     expect(front).toContain("otonaselect-home-nav");
     expect(front).not.toContain("otonaselect-home-sidebar");
     expect(front).not.toContain('"slug":"sponsor"');
@@ -43,13 +43,17 @@ describe("otonaselect SEO foundation contracts", () => {
     expect(front).toMatch(/"orderBy":"date"/);
     expect(front).toMatch(/"inherit":true/);
     expect(front).toMatch(/"sticky":"exclude"/);
-    expect(front).toContain("wp:query-pagination");
-    expect(front).toContain("otonaselect-home-pagination");
+    expect(front).not.toContain("wp:query-pagination");
+    expect(read("templates/archive.html")).toContain("wp:query-pagination");
+    expect(read("templates/taxonomy-performer.html")).toContain("wp:query-pagination");
+    expect(read("templates/taxonomy-series.html")).toContain("wp:query-pagination");
+    expect(read("templates/search.html")).toContain("wp:query-pagination");
+    expect(read("templates/single.html")).toContain('contentSize":"40rem"');
 
     const homeQuery = read("inc/home-query.php");
     expect(homeQuery).toContain("pre_get_posts");
-    expect(homeQuery).toContain("$is_blog_front ? 8 : 12");
-    expect(read("inc/presentation.php")).toContain("otonaselect_render_popular_posts_section(8)");
+    expect(homeQuery).toContain("$is_blog_front ? 9 : 12");
+    expect(read("inc/presentation.php")).toContain("otonaselect_render_popular_posts_section(6)");
     expect(read("inc/taxonomy-hubs.php")).toContain("otonaselect_render_home_performer_cloud(8)");
     expect(homeQuery).toContain("ignore_sticky_posts");
     expect(homeQuery).toContain("orderby', 'date'");

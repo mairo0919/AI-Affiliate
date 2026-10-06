@@ -42,7 +42,7 @@ require_once $otonaselect_inc . '/site-pages.php';
  * Enqueue the theme stylesheet (block themes still benefit from style.css rules).
  */
 add_action('wp_enqueue_scripts', static function (): void {
-	$ver = wp_get_theme()->get('Version') ?: '1.6.8';
+	$ver = wp_get_theme()->get('Version') ?: '1.6.9';
 	wp_enqueue_style(
 		'otonaselect-style',
 		get_stylesheet_uri(),
