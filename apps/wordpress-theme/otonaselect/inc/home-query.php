@@ -35,7 +35,7 @@ add_action(
 
 		$query->set('post_type', 'post');
 		$query->set('post_status', 'publish');
-		$query->set('posts_per_page', 12);
+		$query->set('posts_per_page', $is_blog_front ? 8 : 12);
 		$query->set('orderby', 'date');
 		$query->set('order', 'DESC');
 		$query->set('ignore_sticky_posts', true);

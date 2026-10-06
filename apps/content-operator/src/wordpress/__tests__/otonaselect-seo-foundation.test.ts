@@ -11,8 +11,8 @@ function read(rel: string): string {
 }
 
 describe("otonaselect SEO foundation contracts", () => {
-  it("ships theme 1.6.7 with rewrite flush version gate", () => {
-    expect(read("style.css")).toMatch(/Version:\s*1\.6\.7/);
+  it("ships theme 1.6.8 with rewrite flush version gate", () => {
+    expect(read("style.css")).toMatch(/Version:\s*1\.6\.8/);
     const tax = read("inc/taxonomies.php");
     expect(tax).toContain("otonaselect-tax-rewrite-1.6.7");
     expect(tax).toContain("flush_rewrite_rules");
@@ -31,9 +31,14 @@ describe("otonaselect SEO foundation contracts", () => {
     expect(read("templates/page-series-list.html")).toContain("otonaselect-series-hub-slot");
   });
 
-  it("lists home latest posts by post_date DESC with 12/page and /page/N/", () => {
+  it("lists home latest posts by post_date DESC with 8/page and /page/N/", () => {
     const front = read("templates/front-page.html");
-    expect(front).toMatch(/"perPage":12/);
+    expect(front).toMatch(/"perPage":8/);
+    expect(front).toContain("otonaselect-home-nav");
+    expect(front).not.toContain("otonaselect-home-sidebar");
+    expect(front).not.toContain('"slug":"sponsor"');
+    expect(front).toContain("/categories/");
+    expect(front).toContain("otonaselect-home-performers-slot");
     expect(front).toMatch(/"order":"desc"/);
     expect(front).toMatch(/"orderBy":"date"/);
     expect(front).toMatch(/"inherit":true/);
@@ -43,7 +48,9 @@ describe("otonaselect SEO foundation contracts", () => {
 
     const homeQuery = read("inc/home-query.php");
     expect(homeQuery).toContain("pre_get_posts");
-    expect(homeQuery).toContain("posts_per_page");
+    expect(homeQuery).toContain("$is_blog_front ? 8 : 12");
+    expect(read("inc/presentation.php")).toContain("otonaselect_render_popular_posts_section(8)");
+    expect(read("inc/taxonomy-hubs.php")).toContain("otonaselect_render_home_performer_cloud(8)");
     expect(homeQuery).toContain("ignore_sticky_posts");
     expect(homeQuery).toContain("orderby', 'date'");
     expect(homeQuery).toContain("order', 'DESC'");

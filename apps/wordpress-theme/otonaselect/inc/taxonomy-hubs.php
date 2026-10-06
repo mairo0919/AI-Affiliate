@@ -182,7 +182,7 @@ add_filter('render_block', static function (string $block_content, array $block)
 		return otonaselect_render_series_hub();
 	}
 	if (str_contains($block_content, 'otonaselect-home-performers-slot')) {
-		return otonaselect_render_home_performer_cloud(18);
+		return otonaselect_render_home_performer_cloud(8);
 	}
 	return $block_content;
 }, 9, 2);

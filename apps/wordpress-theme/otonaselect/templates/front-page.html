@@ -1,36 +1,66 @@
 <!-- wp:template-part {"slug":"header","area":"header"} /-->
 
-<!-- wp:group {"tagName":"main","className":"otonaselect-home","style":{"spacing":{"padding":{"top":"var:preset|spacing|60","bottom":"var:preset|spacing|60","left":"var:preset|spacing|50","right":"var:preset|spacing|50"},"blockGap":"var:preset|spacing|60"}},"layout":{"type":"constrained","contentSize":"72.5rem"}} -->
-<main class="wp-block-group otonaselect-home" style="padding-top:var(--wp--preset--spacing--60);padding-right:var(--wp--preset--spacing--50);padding-bottom:var(--wp--preset--spacing--60);padding-left:var(--wp--preset--spacing--50)">
-	<!-- wp:group {"className":"otonaselect-home-intro","style":{"spacing":{"blockGap":"var:preset|spacing|40"}},"layout":{"type":"constrained","contentSize":"45rem"}} -->
+<!-- wp:group {"tagName":"main","className":"otonaselect-home","style":{"spacing":{"padding":{"top":"var:preset|spacing|60","bottom":"var:preset|spacing|60","left":"2rem","right":"2rem"},"blockGap":"var:preset|spacing|50"}},"layout":{"type":"default"}} -->
+<main class="wp-block-group otonaselect-home" style="padding-top:var(--wp--preset--spacing--60);padding-right:2rem;padding-bottom:var(--wp--preset--spacing--60);padding-left:2rem">
+	<!-- wp:group {"className":"otonaselect-home-intro","style":{"spacing":{"blockGap":"var:preset|spacing|40"}},"layout":{"type":"default"}} -->
 	<div class="wp-block-group otonaselect-home-intro">
 		<!-- wp:paragraph {"fontSize":"small","textColor":"muted"} -->
 		<p class="has-muted-color has-text-color has-small-font-size">作品や出演者の情報を、読みやすい記事としてまとめるメディアです。</p>
 		<!-- /wp:paragraph -->
 
-		<!-- wp:group {"anchor":"search","layout":{"type":"constrained"}} -->
-		<div class="wp-block-group" id="search">
+		<!-- wp:group {"anchor":"search","className":"otonaselect-home-search","layout":{"type":"default"}} -->
+		<div class="wp-block-group otonaselect-home-search" id="search">
 			<!-- wp:search {"label":"検索","showLabel":false,"placeholder":"作品名・出演者名・キーワードから探す","buttonText":"検索","buttonPosition":"button-inside","buttonUseIcon":true,"width":100,"widthUnit":"%"} /-->
 		</div>
 		<!-- /wp:group -->
 	</div>
 	<!-- /wp:group -->
 
-	<!-- wp:columns {"className":"otonaselect-home-columns"} -->
-	<div class="wp-block-columns otonaselect-home-columns">
-		<!-- wp:column {"width":"70%","className":"otonaselect-home-main"} -->
-		<div class="wp-block-column otonaselect-home-main" style="flex-basis:70%">
+	<!-- wp:group {"className":"otonaselect-home-shell","layout":{"type":"default"}} -->
+	<div class="wp-block-group otonaselect-home-shell">
+		<!-- wp:group {"tagName":"nav","className":"otonaselect-home-nav","style":{"spacing":{"blockGap":"var:preset|spacing|60"}},"layout":{"type":"default"}} -->
+		<nav class="wp-block-group otonaselect-home-nav">
+			<!-- wp:group {"anchor":"categories","className":"otonaselect-nav-section","style":{"spacing":{"blockGap":"var:preset|spacing|30"}},"layout":{"type":"default"}} -->
+			<div class="wp-block-group otonaselect-nav-section" id="categories">
+				<!-- wp:heading {"level":2,"fontSize":"large"} -->
+				<h2 class="wp-block-heading has-large-font-size">主要カテゴリー</h2>
+				<!-- /wp:heading -->
+
+				<!-- wp:categories {"showPostCounts":true,"displayAsDropdown":false,"showHierarchy":false} /-->
+
+				<!-- wp:paragraph {"fontSize":"small"} -->
+				<p class="has-small-font-size"><a href="/categories/">カテゴリをすべて見る</a></p>
+				<!-- /wp:paragraph -->
+			</div>
+			<!-- /wp:group -->
+
+			<!-- wp:group {"anchor":"performers","className":"otonaselect-nav-section","style":{"spacing":{"blockGap":"var:preset|spacing|30"}},"layout":{"type":"default"}} -->
+			<div class="wp-block-group otonaselect-nav-section" id="performers">
+				<!-- wp:heading {"level":2,"fontSize":"large"} -->
+				<h2 class="wp-block-heading has-large-font-size">出演者から探す</h2>
+				<!-- /wp:heading -->
+
+				<!-- wp:html -->
+				<div class="otonaselect-home-performers-slot"></div>
+				<!-- /wp:html -->
+			</div>
+			<!-- /wp:group -->
+		</nav>
+		<!-- /wp:group -->
+
+		<!-- wp:group {"className":"otonaselect-home-main","style":{"spacing":{"blockGap":"var:preset|spacing|70"}},"layout":{"type":"default"}} -->
+		<div class="wp-block-group otonaselect-home-main">
 			<!-- wp:html -->
 			<div class="otonaselect-popular-posts-slot"></div>
 			<!-- /wp:html -->
 
-			<!-- wp:group {"style":{"spacing":{"blockGap":"var:preset|spacing|40"}},"layout":{"type":"constrained"}} -->
-			<div class="wp-block-group">
+			<!-- wp:group {"className":"otonaselect-latest-section","style":{"spacing":{"blockGap":"var:preset|spacing|40"}},"layout":{"type":"default"}} -->
+			<div class="wp-block-group otonaselect-latest-section">
 				<!-- wp:heading {"level":2,"fontSize":"x-large","className":"otonaselect-section-heading"} -->
 				<h2 class="wp-block-heading has-x-large-font-size otonaselect-section-heading">新着記事</h2>
 				<!-- /wp:heading -->
 
-				<!-- wp:query {"queryId":1,"query":{"perPage":12,"pages":0,"offset":0,"postType":"post","order":"desc","orderBy":"date","author":"","search":"","exclude":[],"sticky":"exclude","inherit":true},"namespace":"otonaselect/home-latest","className":"otonaselect-home-query"} -->
+				<!-- wp:query {"queryId":1,"query":{"perPage":8,"pages":0,"offset":0,"postType":"post","order":"desc","orderBy":"date","author":"","search":"","exclude":[],"sticky":"exclude","inherit":true},"namespace":"otonaselect/home-latest","className":"otonaselect-home-query"} -->
 				<div class="wp-block-query otonaselect-home-query">
 					<!-- wp:post-template {"className":"otonaselect-card-grid","layout":{"type":"grid","columnCount":2}} -->
 						<!-- wp:group {"className":"otonaselect-card","style":{"spacing":{"padding":{"top":"0","bottom":"var:preset|spacing|40"},"blockGap":"var:preset|spacing|30"}},"layout":{"type":"constrained"}} -->
@@ -60,49 +90,9 @@
 			</div>
 			<!-- /wp:group -->
 		</div>
-		<!-- /wp:column -->
-
-		<!-- wp:column {"width":"30%","className":"otonaselect-home-sidebar"} -->
-		<div class="wp-block-column otonaselect-home-sidebar" style="flex-basis:30%">
-			<!-- wp:group {"style":{"spacing":{"blockGap":"var:preset|spacing|60"}},"layout":{"type":"constrained"}} -->
-			<div class="wp-block-group">
-				<!-- wp:group {"anchor":"categories","className":"otonaselect-sidebar-section","style":{"spacing":{"blockGap":"var:preset|spacing|30"}},"layout":{"type":"constrained"}} -->
-				<div class="wp-block-group otonaselect-sidebar-section" id="categories">
-					<!-- wp:heading {"level":2,"fontSize":"large"} -->
-					<h2 class="wp-block-heading has-large-font-size">主要カテゴリー</h2>
-					<!-- /wp:heading -->
-
-					<!-- wp:categories {"showPostCounts":true,"displayAsDropdown":false,"showHierarchy":true} /-->
-
-					<!-- wp:paragraph {"fontSize":"small"} -->
-					<p class="has-small-font-size"><a href="/categories/">カテゴリをすべて見る</a></p>
-					<!-- /wp:paragraph -->
-				</div>
-				<!-- /wp:group -->
-
-				<!-- wp:group {"anchor":"performers","className":"otonaselect-sidebar-section","style":{"spacing":{"blockGap":"var:preset|spacing|30"}},"layout":{"type":"constrained"}} -->
-				<div class="wp-block-group otonaselect-sidebar-section" id="performers">
-					<!-- wp:heading {"level":2,"fontSize":"large"} -->
-					<h2 class="wp-block-heading has-large-font-size">出演者から探す</h2>
-					<!-- /wp:heading -->
-
-					<!-- wp:paragraph {"fontSize":"small","textColor":"muted"} -->
-					<p class="has-muted-color has-text-color has-small-font-size">出演者アーカイブから記事を辿れます。</p>
-					<!-- /wp:paragraph -->
-
-					<!-- wp:html -->
-					<div class="otonaselect-home-performers-slot"></div>
-					<!-- /wp:html -->
-				</div>
-				<!-- /wp:group -->
-
-				<!-- wp:template-part {"slug":"sponsor"} /-->
-			</div>
-			<!-- /wp:group -->
-		</div>
-		<!-- /wp:column -->
+		<!-- /wp:group -->
 	</div>
-	<!-- /wp:columns -->
+	<!-- /wp:group -->
 </main>
 <!-- /wp:group -->
 
