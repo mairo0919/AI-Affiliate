@@ -10,6 +10,7 @@ import { classifyReleaseAge, type ReleaseAgeThresholds } from "./release-age.js"
 import {
   buildWorkEvidenceSurface,
   FANZA_API_POPULAR,
+  FANZA_RECOMMENDED_PRODUCT,
   priorityFieldsForWork,
   type DemandObservationDraft,
   type WorkEvidenceSurface,
@@ -265,7 +266,36 @@ async function attachDemandPriority(
   });
 }
 
-async function loadPopularResearchSupplements(
+/**
+ * Recommended and popular works missing from analysis/WP inventory.
+ * Channel gates still decide whether each one can be generated or posted.
+ */
+export function demandSupplementContentIds(
+  snapshot: readonly DemandObservationDraft[],
+  already: ReadonlySet<string>,
+): string[] {
+  const recommended = snapshot
+    .filter((row) => row.source === FANZA_RECOMMENDED_PRODUCT && row.contentId)
+    .slice()
+    .sort((a, b) => a.rank - b.rank);
+  const popular = snapshot
+    .filter((row) => row.source === FANZA_API_POPULAR && row.contentId)
+    .slice()
+    .sort((a, b) => a.rank - b.rank)
+    .slice(0, 30);
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const row of [...recommended, ...popular]) {
+    const cid = row.contentId?.trim() ?? "";
+    const key = cid.toLowerCase();
+    if (!key || already.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    ids.push(cid);
+  }
+  return ids;
+}
+
+async function loadDemandResearchSupplements(
   prisma: DatabaseClient["prisma"],
   input: {
     releaseAge: ReleaseAgeThresholds;
@@ -275,13 +305,7 @@ async function loadPopularResearchSupplements(
   },
 ): Promise<ChannelCandidate[]> {
   const snapshot = await loadLatestDemandSnapshot(prisma);
-  const popular = snapshot
-    .filter((row) => row.source === FANZA_API_POPULAR && row.contentId)
-    .sort((a, b) => a.rank - b.rank)
-    .slice(0, 30);
-  const missing = popular
-    .map((row) => row.contentId!.trim())
-    .filter((cid) => cid && !input.already.has(cid.toLowerCase()));
+  const missing = demandSupplementContentIds(snapshot, input.already);
   if (missing.length === 0) return [];
   const items = await prisma.researchItem.findMany({
     where: { externalId: { in: missing } },
@@ -436,7 +460,7 @@ export async function loadDailyCandidatePool(
       wpPublished,
       Math.max(limit, wpPublished.length + 20),
     );
-    const popularSupplements = await loadPopularResearchSupplements(prisma, {
+    const popularSupplements = await loadDemandResearchSupplements(prisma, {
       releaseAge: input.releaseAge,
       now,
       blogUrlByCid,
@@ -509,7 +533,7 @@ export async function loadDailyCandidatePool(
     wpPublished,
     Math.max(limit, wpPublished.length + 20),
   );
-  const popularSupplements = await loadPopularResearchSupplements(prisma, {
+  const popularSupplements = await loadDemandResearchSupplements(prisma, {
     releaseAge: input.releaseAge,
     now,
     blogUrlByCid,

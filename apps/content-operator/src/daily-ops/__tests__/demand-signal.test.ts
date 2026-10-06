@@ -249,6 +249,39 @@ describe("FANZA demand candidate priority", () => {
     expect(alreadyOnX.x.selection.selected?.canonicalId).toBe("rec-b");
   });
 
+  it("lets X select a recommended work that is not ready for WordPress", () => {
+    const pool = [
+      work({
+        canonicalId: "rec-no-article",
+        recommendedRank: 1,
+        totalScore: 25,
+        sampleImageCount: 1,
+        pageEvidenceRichness: 0.2,
+      }),
+      work({ canonicalId: "normal-ready", totalScore: 99, popularityScore: 99 }),
+    ];
+    const plan = planDailyChannels({
+      pool,
+      mixWeights: {
+        singleProduct: 0.25,
+        popularRanking: 0.15,
+        performerRanking: 0.15,
+        newRelease: 0.25,
+        olderTitle: 0.2,
+      },
+      releaseAge: { recentMaxDays: 60, olderMinDays: 365 },
+      channelDuplicate: { sameProductCooldownDays: 14, sameBodyCooldownDays: 7 },
+      dayKey: "2026-10-06",
+      minTotalScore: 20,
+      minSampleImages: 3,
+      minEvidenceRichness: 0.25,
+      now: new Date("2026-10-06T03:00:00Z"),
+      channelHistory: [],
+    });
+    expect(plan.blog.selection.selected?.canonicalId).toBe("normal-ready");
+    expect(plan.x.selection.selected?.canonicalId).toBe("rec-no-article");
+  });
+
   it("lets an evidence-ineligible recommended work fall through to a normal work", () => {
     const selected = selectDailyProductCandidate(
       [

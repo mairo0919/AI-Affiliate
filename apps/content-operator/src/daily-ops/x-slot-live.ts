@@ -157,6 +157,24 @@ async function adaptCanonicalForXSchedule(input: {
   return { result: resolved.result, generated: resolved.generated };
 }
 
+/**
+ * X admission uses the official product source.
+ * A WordPress ContentVersion is not required, and its absence is not a block.
+ */
+export function xAdmissionBlock(input: {
+  hasVerifiedProductSource: boolean;
+  contentVersionId: string | null;
+  usedContentVersionIds: ReadonlySet<string>;
+  officialUrl: { ok: true } | { ok: false; reason: string };
+}): string | null {
+  if (!input.hasVerifiedProductSource) return "NO_VERIFIED_X_SOURCE";
+  if (input.contentVersionId && input.usedContentVersionIds.has(input.contentVersionId)) {
+    return "DUPLICATE_CONTENT_VERSION";
+  }
+  if (!input.officialUrl.ok) return input.officialUrl.reason;
+  return null;
+}
+
 export async function probeXScheduleCandidates(input: {
   prisma: DatabaseClient["prisma"];
   ranked: ChannelCandidate[];
@@ -191,23 +209,19 @@ export async function probeXScheduleCandidates(input: {
       }
       const canonicalSource = await loadCanonicalXSource(input.prisma, selected.canonicalId);
       const cvId = canonicalSource?.contentVersionId ?? null;
-      if (cvId && input.usedContentVersionIds.has(cvId)) {
+      const direct = canonicalSource
+        ? await resolveSlotNormalUrl(input.prisma, cid)
+        : { ok: false as const, reason: "NORMAL_URL_NOT_VERIFIED" };
+      const admission = xAdmissionBlock({
+        hasVerifiedProductSource: canonicalSource != null,
+        contentVersionId: cvId,
+        usedContentVersionIds: input.usedContentVersionIds,
+        officialUrl: direct,
+      });
+      if (admission || !canonicalSource || !direct.ok) {
         return {
           kind: "hard_block",
-          probe: { canonicalId: cid, contentVersionId: cvId, pass: false, skipReason: "DUPLICATE_CONTENT_VERSION" },
-        };
-      }
-      if (!canonicalSource?.contentVersionId) {
-        return {
-          kind: "hard_block",
-          probe: { canonicalId: cid, contentVersionId: null, pass: false, skipReason: "NO_CANONICAL_CONTENT_VERSION" },
-        };
-      }
-      const direct = await resolveSlotNormalUrl(input.prisma, cid);
-      if (!direct.ok) {
-        return {
-          kind: "hard_block",
-          probe: { canonicalId: cid, contentVersionId: cvId, pass: false, skipReason: direct.reason },
+          probe: { canonicalId: cid, contentVersionId: cvId, pass: false, skipReason: admission ?? "NO_VERIFIED_X_SOURCE" },
         };
       }
       const identity = xCopyIdentityFromSource({
@@ -253,12 +267,25 @@ export async function probeXScheduleCandidates(input: {
       const cid = selected.canonicalId.trim().toLowerCase();
       const canonicalSource = await loadCanonicalXSource(input.prisma, selected.canonicalId);
       const cvId = canonicalSource?.contentVersionId ?? null;
-      const direct = await resolveSlotNormalUrl(input.prisma, cid);
-      if (!canonicalSource?.contentVersionId || !direct.ok) {
+      const direct = canonicalSource
+        ? await resolveSlotNormalUrl(input.prisma, cid)
+        : { ok: false as const, reason: "NORMAL_URL_NOT_VERIFIED" };
+      const admission = xAdmissionBlock({
+        hasVerifiedProductSource: canonicalSource != null,
+        contentVersionId: cvId,
+        usedContentVersionIds: new Set(),
+        officialUrl: direct,
+      });
+      if (admission || !canonicalSource || !direct.ok) {
         return {
           generated: false,
           transient: false,
-          probe: { canonicalId: cid, contentVersionId: cvId, pass: false, skipReason: direct.ok ? "NO_CANONICAL_CONTENT_VERSION" : direct.reason },
+          probe: {
+            canonicalId: cid,
+            contentVersionId: cvId,
+            pass: false,
+            skipReason: admission ?? "NO_VERIFIED_X_SOURCE",
+          },
         };
       }
       const adapted = await adaptCanonicalForXSchedule({
@@ -409,14 +436,14 @@ export async function executeAssignedXSlots(input: {
         input.prisma,
         selected.canonicalId,
       );
-      if (!canonicalSource?.contentVersionId) {
+      if (!canonicalSource) {
         outcomes.push({
           hour: assignment.hour,
           role: assignment.role,
           status: "EMPTY",
           canonicalId: selected.canonicalId,
           contentVersionId: null,
-          reason: "NO_CANONICAL_CONTENT_VERSION",
+          reason: "NO_VERIFIED_X_SOURCE",
           publicationId: null,
           scheduledAt: assignment.scheduledAt.toISOString(),
           published: false,
@@ -529,7 +556,7 @@ export async function executeAssignedXSlots(input: {
         generationProvider: "canonical-adapt",
         generationModel: "none",
         inputSnapshot: {
-          source: "canonical_content_version",
+          source: canonicalSource.contentVersionId ? "canonical_content_version" : "official_product_source",
           contentVersionId: canonicalSource.contentVersionId,
           dailyXRoute: "BLOG_TRAFFIC",
           destinationUrl: primaryUrl,
