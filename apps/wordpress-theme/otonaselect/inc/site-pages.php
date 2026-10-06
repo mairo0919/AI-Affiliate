@@ -78,6 +78,10 @@ HTML,
 <!-- /wp:html -->
 HTML,
 		],
+		'latest' => [
+			'title' => '新着記事',
+			'content' => '',
+		],
 		'series-list' => [
 			'title' => 'シリーズ一覧',
 			'content' => <<<'HTML'

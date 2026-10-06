@@ -11,8 +11,8 @@ function read(rel: string): string {
 }
 
 describe("otonaselect SEO foundation contracts", () => {
-  it("ships theme 1.6.9 with rewrite flush version gate", () => {
-    expect(read("style.css")).toMatch(/Version:\s*1\.6\.9/);
+  it("ships theme 1.6.10 with rewrite flush version gate", () => {
+    expect(read("style.css")).toMatch(/Version:\s*1\.6\.10/);
     const tax = read("inc/taxonomies.php");
     expect(tax).toContain("otonaselect-tax-rewrite-1.6.7");
     expect(tax).toContain("flush_rewrite_rules");
@@ -44,6 +44,16 @@ describe("otonaselect SEO foundation contracts", () => {
     expect(front).toMatch(/"inherit":true/);
     expect(front).toMatch(/"sticky":"exclude"/);
     expect(front).not.toContain("wp:query-pagination");
+    expect(front).toContain('href="/latest/"');
+    expect(front).toContain("新着記事をすべて見る");
+    const latest = read("templates/page-latest.html");
+    expect(latest).toMatch(/"perPage":12/);
+    expect(latest).toMatch(/"order":"desc"/);
+    expect(latest).toMatch(/"orderBy":"date"/);
+    expect(latest).toContain("wp:query-pagination");
+    expect(latest).toContain("otonaselect-archive");
+    expect(latest).toContain("新着記事");
+    expect(latest).not.toContain("otonaselect-home-nav");
     expect(read("templates/archive.html")).toContain("wp:query-pagination");
     expect(read("templates/taxonomy-performer.html")).toContain("wp:query-pagination");
     expect(read("templates/taxonomy-series.html")).toContain("wp:query-pagination");

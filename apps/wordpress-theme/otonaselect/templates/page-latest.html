@@ -1,0 +1,41 @@
+<!-- wp:template-part {"slug":"header","area":"header"} /-->
+
+<!-- wp:group {"tagName":"main","className":"otonaselect-archive","style":{"spacing":{"padding":{"top":"var:preset|spacing|60","bottom":"var:preset|spacing|60","left":"2rem","right":"2rem"},"blockGap":"var:preset|spacing|50"}},"layout":{"type":"default"}} -->
+<main class="wp-block-group otonaselect-archive" style="padding-top:var(--wp--preset--spacing--60);padding-right:2rem;padding-bottom:var(--wp--preset--spacing--60);padding-left:2rem">
+	<!-- wp:html -->
+	<div class="otonaselect-breadcrumbs-slot"></div>
+	<!-- /wp:html -->
+
+	<!-- wp:heading {"level":1,"fontSize":"x-large"} -->
+	<h1 class="wp-block-heading has-x-large-font-size">新着記事</h1>
+	<!-- /wp:heading -->
+
+	<!-- wp:query {"queryId":70,"query":{"perPage":12,"pages":0,"offset":0,"postType":"post","order":"desc","orderBy":"date","author":"","search":"","exclude":[],"sticky":"exclude","inherit":false},"layout":{"type":"default"}} -->
+	<div class="wp-block-query">
+		<!-- wp:post-template {"className":"otonaselect-card-grid","layout":{"type":"grid","columnCount":2}} -->
+			<!-- wp:group {"className":"otonaselect-card","style":{"spacing":{"padding":{"top":"0","bottom":"var:preset|spacing|40"},"blockGap":"var:preset|spacing|30"}},"layout":{"type":"constrained"}} -->
+			<div class="wp-block-group otonaselect-card" style="padding-top:0;padding-bottom:var(--wp--preset--spacing--40)">
+				<!-- wp:post-featured-image {"isLink":true,"aspectRatio":"16/9","className":"otonaselect-card-image"} /-->
+				<!-- wp:post-title {"isLink":true,"fontSize":"large"} /-->
+				<!-- wp:post-date {"format":"Y年n月j日","fontSize":"small"} /-->
+			</div>
+			<!-- /wp:group -->
+		<!-- /wp:post-template -->
+
+		<!-- wp:query-pagination {"paginationArrow":"arrow","className":"otonaselect-home-pagination","layout":{"type":"flex","justifyContent":"center","flexWrap":"wrap"}} -->
+			<!-- wp:query-pagination-previous {"label":"前へ"} /-->
+			<!-- wp:query-pagination-numbers /-->
+			<!-- wp:query-pagination-next {"label":"次へ"} /-->
+		<!-- /wp:query-pagination -->
+
+		<!-- wp:query-no-results -->
+			<!-- wp:paragraph {"textColor":"muted","fontSize":"small"} -->
+			<p class="has-muted-color has-text-color has-small-font-size">この条件に当てはまる記事はまだありません。</p>
+			<!-- /wp:paragraph -->
+		<!-- /wp:query-no-results -->
+	</div>
+	<!-- /wp:query -->
+</main>
+<!-- /wp:group -->
+
+<!-- wp:template-part {"slug":"footer","area":"footer"} /-->
