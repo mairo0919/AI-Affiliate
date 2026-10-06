@@ -1,3 +1,5 @@
+import { publicationPriorityClass } from "../daily-ops/demand-signal.js";
+
 export type XRefillMetrics = {
   neededSlots: number;
   candidatesConsidered: number;
@@ -48,6 +50,30 @@ export function orderCandidatesPassFirst<T extends { researchItemId: string }>(
     else rest.push(candidate);
   }
   return [...pass, ...rest];
+}
+
+const PRIORITY_CLASS_RANK = { RECOMMENDED: 0, STRONG_DEMAND: 1, NORMAL: 2 } as const;
+
+export function orderCandidatesByPublicationPriority<
+  T extends {
+    researchItemId: string;
+    recommendedRank?: number | null;
+    popularRank?: number | null;
+  },
+>(ranked: readonly T[], passResearchItemIds: ReadonlySet<string>): T[] {
+  return ranked
+    .map((candidate, index) => ({ candidate, index }))
+    .sort((left, right) => {
+      const leftClass = publicationPriorityClass(left.candidate);
+      const rightClass = publicationPriorityClass(right.candidate);
+      const classDelta = PRIORITY_CLASS_RANK[leftClass] - PRIORITY_CLASS_RANK[rightClass];
+      if (classDelta !== 0) return classDelta;
+      const leftPass = passResearchItemIds.has(left.candidate.researchItemId) ? 0 : 1;
+      const rightPass = passResearchItemIds.has(right.candidate.researchItemId) ? 0 : 1;
+      if (leftPass !== rightPass) return leftPass - rightPass;
+      return left.index - right.index;
+    })
+    .map((row) => row.candidate);
 }
 
 export function formatXRefillNote(metrics: XRefillMetrics): string {

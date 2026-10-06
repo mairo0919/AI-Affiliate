@@ -94,6 +94,13 @@ export function evaluatePublicEligibilityFromStructured(structured: unknown): {
   return { eligible: evaluation.pass, evaluation };
 }
 
+/** Published, drafted, or scheduled WordPress targets are not free stock. */
+export function wordpressTargetBlocksReuse(
+  targets: readonly { status: string; publishedExternalId?: string | null }[],
+): boolean {
+  return targets.some((target) => Boolean(target.publishedExternalId) || target.status === "SCHEDULED");
+}
+
 /**
  * List APPROVED versions. Optionally only unused stock (no WP draft/publish/schedule).
  */
@@ -126,7 +133,7 @@ export async function listApprovedStock(
       select: { id: true, status: true, publishedExternalId: true },
       take: 5,
     });
-    const hasWordPressTarget = targets.some((t) => Boolean(t.publishedExternalId) || t.status === "SCHEDULED");
+    const hasWordPressTarget = wordpressTargetBlocksReuse(targets);
     if (options?.unusedOnly && hasWordPressTarget) continue;
 
     const pub = evaluatePublicEligibilityFromStructured(v.structuredContent);

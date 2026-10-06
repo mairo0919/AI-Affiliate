@@ -27,6 +27,14 @@ import {
 } from "./approved-stock.js";
 import { computeFutureReserveBudget, loadStockRuntimeConfig } from "./stock-config.js";
 import { confirmFanzaAffiliateImageTerms } from "./confirm-fanza-image-terms.js";
+import { createLogger } from "@ai-affiliate/shared";
+import { loadLatestDemandSnapshot } from "../daily-ops/demand-store.js";
+import {
+  compareDemandPriority,
+  demandPriorityReason,
+  productDemandRanks,
+  publicationPriorityClass,
+} from "../daily-ops/demand-signal.js";
 
 export type PublishSlotScheduleResult = {
   skipped: boolean;
@@ -51,6 +59,33 @@ export type PublishSlotScheduleResult = {
   publicBlocked: Array<{ contentVersionId: string; productKey: string | null; reasons: string[] }>;
   otherSkipped: Array<{ contentVersionId: string; reason: string }>;
 };
+
+export function orderStockByPublicationPriority<
+  T extends { productKey: string | null; updatedAt: Date },
+>(
+  rows: readonly T[],
+  ranks: ReadonlyMap<string, { recommendedRank: number | null; popularRank: number | null }>,
+): T[] {
+  const empty = { recommendedRank: null, popularRank: null };
+  return rows.slice().sort((left, right) => {
+    const demand = compareDemandPriority(
+      ranks.get(left.productKey ?? "") ?? empty,
+      ranks.get(right.productKey ?? "") ?? empty,
+    );
+    if (demand !== 0) return demand;
+    return left.updatedAt.getTime() - right.updatedAt.getTime();
+  });
+}
+
+/** Already reserved future keys stay reserved. Only keys absent from the set are open. */
+export function futureSlotsStillOpen<T extends { year: number; month: number; day: number; hour: number }>(
+  slots: readonly T[],
+  reservedKeys: ReadonlySet<string>,
+): T[] {
+  return slots.filter(
+    (slot) => !reservedKeys.has(slotKey(slot.year, slot.month, slot.day, slot.hour)),
+  );
+}
 
 function slotKey(year: number, month: number, day: number, hour: number): string {
   const p = (n: number) => String(n).padStart(2, "0");
@@ -154,6 +189,7 @@ export async function runPublishSlotScheduler(deps: {
 }): Promise<PublishSlotScheduleResult> {
   const runtime = loadStockRuntimeConfig();
   const now = deps.now ?? new Date();
+  const logger = createLogger("info");
 
   const emptySkip = (skipReason: string): PublishSlotScheduleResult => ({
     skipped: true,
@@ -223,6 +259,10 @@ export async function runPublishSlotScheduler(deps: {
     }
     queue.push(row);
   }
+  const demandRanks = productDemandRanks(await loadLatestDemandSnapshot(deps.database.prisma));
+  const ordered = orderStockByPublicationPriority(queue, demandRanks);
+  queue.length = 0;
+  queue.push(...ordered);
 
   // Existing WP inventory (#43/#46): keep DRAFT until PUBLIC-eligible, then promote to future.
   const protectedIds = runtime.protectedWpPostIds.map(String);
@@ -344,14 +384,11 @@ export async function runPublishSlotScheduler(deps: {
     if (!reservedKeys.has(key)) openSlotsBeforeReserve += 1;
   }
 
-  for (const slot of slots) {
+  for (const slot of futureSlotsStillOpen(slots, reservedKeys)) {
     if (reserved.length >= maxPerTick) {
       break;
     }
     const key = slotKey(slot.year, slot.month, slot.day, slot.hour);
-    if (reservedKeys.has(key)) {
-      continue;
-    }
 
     let placed = false;
     while (queueIdx < queue.length && !placed) {
@@ -400,6 +437,13 @@ export async function runPublishSlotScheduler(deps: {
       }
 
       if (result.ok && result.published) {
+        const rank = demandRanks.get(candidate.productKey ?? "") ?? {
+          recommendedRank: null,
+          popularRank: null,
+        };
+        logger.info(
+          `publication_priority channel=WP cid=${candidate.productKey ?? "-"} recommended=${publicationPriorityClass(rank) === "RECOMMENDED" ? "YES" : "NO"} class=${publicationPriorityClass(rank)} sources=${demandPriorityReason(rank)} selected=WP skip=-`,
+        );
         reserved.push({
           slot: key,
           contentVersionId: candidate.contentVersionId,

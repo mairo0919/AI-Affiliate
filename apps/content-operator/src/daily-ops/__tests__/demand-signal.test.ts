@@ -16,9 +16,11 @@ import {
   FANZA_RECOMMENDED_PRODUCT,
   buildWorkEvidenceSurface,
   keywordMatchesEvidence,
+  compareDemandPriority,
   demandAdjustedScore,
   parseDemandIngest,
   priorityFieldsForWork,
+  publicationPriorityClass,
   selectLatestDemandSnapshot,
 } from "../demand-signal.js";
 
@@ -169,18 +171,24 @@ describe("FANZA demand candidate priority", () => {
 
     const explained = explainArticleCandidateOrder(pool, demandConfig);
     const eligible = explained.rows.filter((row) => row.generationOrder != null);
-    const byAdjusted = [...eligible].sort(
-      (a, b) => demandAdjustedScore(b.candidate) - demandAdjustedScore(a.candidate),
-    );
+    const byClass = [...eligible].sort((a, b) => compareDemandPriority(a.candidate, b.candidate));
     expect(eligible.map((row) => row.candidate.canonicalId)).toEqual(
-      byAdjusted.map((row) => row.candidate.canonicalId),
+      byClass.map((row) => row.candidate.canonicalId),
     );
     const popularIndex = eligible.findIndex((row) => row.candidate.canonicalId === "popular-top");
     const normalIndex = eligible.findIndex((row) => row.candidate.canonicalId === "normal-01");
     const searchIndex = eligible.findIndex((row) => row.candidate.canonicalId === "srch-03");
-    expect(popularIndex).toBeGreaterThanOrEqual(0);
+    const lastRecommended = Math.max(
+      ...eligible
+        .map((row, index) => (publicationPriorityClass(row.candidate) === "RECOMMENDED" ? index : -1))
+        .filter((index) => index >= 0),
+    );
+    expect(popularIndex).toBeGreaterThan(lastRecommended);
     expect(normalIndex).toBeGreaterThan(popularIndex);
     expect(searchIndex).toBeGreaterThan(popularIndex);
+    expect(demandAdjustedScore(eligible.find((row) => row.candidate.canonicalId === "popular-top")!.candidate)).toBeGreaterThan(
+      demandAdjustedScore(eligible.find((row) => row.candidate.canonicalId === "rec-10")!.candidate),
+    );
     expect(eligible.length).toBeGreaterThan(3);
     const thin = explained.rows.find((row) => row.candidate.canonicalId === "rec-05");
     expect(thin?.evidenceEligible).toBe(false);
@@ -195,13 +203,11 @@ describe("FANZA demand candidate priority", () => {
     const withoutDemand = selectDailyProductCandidate(pool, { ...demandConfig, applyDemandPriority: false });
     expect(withoutDemand.selected?.canonicalId).toBe("normal-01");
     const withDemand = selectDailyProductCandidate(pool, demandConfig);
-    const best = [...pool]
-      .filter((candidate) => candidate.sampleImageCount >= 3 && candidate.pageEvidenceRichness >= 0.25 && candidate.totalScore >= 20)
-      .sort((a, b) => demandAdjustedScore(b) - demandAdjustedScore(a))[0];
-    expect(withDemand.selected?.canonicalId).toBe(best?.canonicalId);
+    expect(withDemand.selected?.canonicalId).toBe("rec-02");
+    expect(publicationPriorityClass(withDemand.selected!)).toBe("RECOMMENDED");
   });
 
-  it("uses demand for blog order only and keeps already articled products out", () => {
+  it("uses the same demand class for blog and X and keeps already articled products out", () => {
     const pool = [
       work({ canonicalId: "rec-a", recommendedRank: 1, totalScore: 25 }),
       work({ canonicalId: "rec-b", recommendedRank: 2, totalScore: 25 }),
@@ -226,13 +232,33 @@ describe("FANZA demand candidate priority", () => {
     };
     const open = planDailyChannels({ ...shared, channelHistory: [] });
     expect(open.blog.selection.selected?.canonicalId).toBe("rec-a");
-    expect(open.x.selection.selected?.canonicalId).toBe("score-high");
+    expect(open.x.selection.selected?.canonicalId).toBe("rec-b");
 
     const published = planDailyChannels({
       ...shared,
       channelHistory: [{ channel: "BLOG", canonicalId: "rec-a", publishedAt: "2026-09-01T00:00:00Z" }],
     });
     expect(published.blog.selection.selected?.canonicalId).toBe("rec-b");
+    expect(published.x.selection.selected?.canonicalId).toBe("rec-a");
+
+    const alreadyOnX = planDailyChannels({
+      ...shared,
+      channelHistory: [{ channel: "X", canonicalId: "rec-a", publishedAt: "2026-09-28T00:00:00Z" }],
+    });
+    expect(alreadyOnX.blog.selection.selected?.canonicalId).toBe("rec-a");
+    expect(alreadyOnX.x.selection.selected?.canonicalId).toBe("rec-b");
+  });
+
+  it("lets an evidence-ineligible recommended work fall through to a normal work", () => {
+    const selected = selectDailyProductCandidate(
+      [
+        work({ canonicalId: "rec-thin", recommendedRank: 1, totalScore: 90, sampleImageCount: 0, pageEvidenceRichness: 0.1 }),
+        work({ canonicalId: "normal-ok", totalScore: 30 }),
+      ],
+      demandConfig,
+    );
+    expect(selected.selected?.canonicalId).toBe("normal-ok");
+    expect(selected.skippedEvidence).toBeGreaterThan(0);
   });
 
   it("does not put an unmatched demand keyword into the writer prompt", () => {

@@ -79,10 +79,11 @@ export type DemandPriorityFields = {
   seoQueryStatus?: "VALID" | "NO_NATURAL_QUERY" | null;
 };
 
-const DELIMITERS = /[\s　、。,.|｜/／・「」『』【】\[\]()（）:：;；!！?？]+/;
+// Ideographic spaces are real FANZA delimiters. The escaped bracket keeps "]" inside the class.
+const DELIMITERS = /[\s　、。,.|｜/／・「」『』【】\[\]()（）:：;；!！?？]+/; // eslint-disable-line no-irregular-whitespace, no-useless-escape
 
 export function normalizeDemandText(value: string): string {
-  return value.normalize("NFKC").replace(/[\s　・]/g, "").toLowerCase();
+  return value.normalize("NFKC").replace(/[\s　・]/g, "").toLowerCase(); // eslint-disable-line no-irregular-whitespace
 }
 
 function demandTokens(value: string): string[] {
@@ -439,6 +440,20 @@ export function validSegmentRank(rank: number | null | undefined): number | null
   return rank;
 }
 
+export type PublicationPriorityClass = "RECOMMENDED" | "STRONG_DEMAND" | "NORMAL";
+
+const PUBLICATION_PRIORITY_RANK: Record<PublicationPriorityClass, number> = {
+  RECOMMENDED: 0,
+  STRONG_DEMAND: 1,
+  NORMAL: 2,
+};
+
+export function publicationPriorityClass(fields: DemandPriorityFields): PublicationPriorityClass {
+  if (validRecommendedRank(fields.recommendedRank) != null) return "RECOMMENDED";
+  if (validPopularRank(fields.popularRank) != null) return "STRONG_DEMAND";
+  return "NORMAL";
+}
+
 export function demandTier(fields: DemandPriorityFields): 1 | 2 | 3 | 4 | 5 {
   if (validRecommendedRank(fields.recommendedRank) != null) return 1;
   if (validPopularRank(fields.popularRank) != null) return 2;
@@ -472,17 +487,38 @@ export function demandAdjustedScore(fields: DemandPriorityFields & { totalScore?
 }
 
 /**
- * Higher adjusted score first. Equal scores fall through to the existing candidate sort.
+ * Recommended, then strong demand, then the existing adjusted score.
+ * Equal scores fall through to the existing candidate sort.
  * NEW and REVIEW lists do not reorder candidates.
  */
 export function compareDemandPriority(
   a: DemandPriorityFields & { totalScore?: number },
   b: DemandPriorityFields & { totalScore?: number },
 ): number {
+  const classDelta =
+    PUBLICATION_PRIORITY_RANK[publicationPriorityClass(a)] -
+    PUBLICATION_PRIORITY_RANK[publicationPriorityClass(b)];
+  if (classDelta !== 0) return classDelta;
   const left = demandAdjustedScore(a);
   const right = demandAdjustedScore(b);
   if (left === right) return 0;
   return left > right ? -1 : 1;
+}
+
+/** Latest recommended and popular ranks only. Search matching still needs evidence. */
+export function productDemandRanks(
+  observations: DemandObservationDraft[],
+): Map<string, { recommendedRank: number | null; popularRank: number | null }> {
+  const ranks = new Map<string, { recommendedRank: number | null; popularRank: number | null }>();
+  for (const row of selectLatestDemandSnapshot(observations)) {
+    if (!row.contentId) continue;
+    const key = contentKey(row.contentId);
+    const current = ranks.get(key) ?? { recommendedRank: null, popularRank: null };
+    if (row.source === FANZA_RECOMMENDED_PRODUCT) current.recommendedRank = row.rank;
+    if (row.source === FANZA_API_POPULAR) current.popularRank = row.rank;
+    ranks.set(key, current);
+  }
+  return ranks;
 }
 
 function formatSegmentSignals(signals: SegmentDemandSignal[] | null | undefined): string {

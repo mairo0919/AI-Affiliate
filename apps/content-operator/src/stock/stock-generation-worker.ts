@@ -38,6 +38,7 @@ import {
 } from "./stock-attempt-ledger.js";
 import { confirmFanzaAffiliateImageTerms } from "./confirm-fanza-image-terms.js";
 import { evaluateStockArticleQualityGate } from "./stock-quality-gate.js";
+import { demandPriorityReason, publicationPriorityClass } from "../daily-ops/demand-signal.js";
 
 export { evaluateStockArticleQualityGate } from "./stock-quality-gate.js";
 
@@ -288,6 +289,9 @@ export async function runStockGenerationBatch(deps: {
 
       const productKey = normalizeProductKey(selected.canonicalId) ?? selected.canonicalId;
       usedThisBatch.add(productKey);
+      logger.info(
+        `publication_priority channel=WP cid=${selected.canonicalId} recommended=${publicationPriorityClass(selected) === "RECOMMENDED" ? "YES" : "NO"} class=${publicationPriorityClass(selected)} sources=${demandPriorityReason(selected)} selected=WP skip=-`,
+      );
 
       const ctaUrl =
         selected.affiliateUrl?.trim() ||

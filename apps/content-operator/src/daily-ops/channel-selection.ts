@@ -106,7 +106,7 @@ function pickForSlot(
     recentActressKeys: string[];
     recentMakerKeys: string[];
     recentSeriesKeys: string[];
-    /** Blog article order only. X stays on the existing score sort. */
+    /** Recommended, then popular, then the existing score. Evidence gates still apply. */
     applyDemandPriority?: boolean;
   },
 ): DailySelectionResult {
@@ -206,6 +206,7 @@ export function planDailyChannels(input: ChannelSelectionInput): ChannelDayPlan 
     recentActressKeys: input.xRecentActressKeys ?? [],
     recentMakerKeys: [],
     recentSeriesKeys: [],
+    applyDemandPriority: true,
   });
 
   // If soft-exclude emptied X pool, fall back allowing same product
@@ -227,6 +228,7 @@ export function planDailyChannels(input: ChannelSelectionInput): ChannelDayPlan 
       recentActressKeys: input.xRecentActressKeys ?? [],
       recentMakerKeys: [],
       recentSeriesKeys: [],
+      applyDemandPriority: true,
     });
   }
 
@@ -339,6 +341,7 @@ export function listRankedXCandidates(
       recentActressKeys: input.xRecentActressKeys ?? [],
       recentMakerKeys: [],
       recentSeriesKeys: [],
+      applyDemandPriority: true,
     });
     if (!pick.selected) break;
     used.add(pick.selected.canonicalId.toLowerCase());

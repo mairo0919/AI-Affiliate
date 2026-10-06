@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { maxNewXCopyCandidatesForRefill, MAX_NEW_X_COPY_CANDIDATES_PER_REFILL } from "../x-copy-artifact.js";
-import { runXCandidateRefill, type XRefillPrepare } from "../x-copy-refill.js";
+import {
+  orderCandidatesByPublicationPriority,
+  runXCandidateRefill,
+  type XRefillPrepare,
+} from "../x-copy-refill.js";
 
 function spend(willGenerate: boolean): XRefillPrepare {
   return { kind: "spend", willGenerate };
@@ -155,6 +159,80 @@ describe("x candidate refill", () => {
     });
     expect(seen).toEqual(["transient", "next"]);
     expect(result.metrics.transientFailed).toBe(1);
+    expect(result.metrics.slotsFilled).toBe(1);
+  });
+
+  it("does not generate when recommended works exist but no future slot is open", async () => {
+    let calls = 0;
+    const result = await runXCandidateRefill({
+      slotsNeeded: 0,
+      maxNewGenerations: maxNewXCopyCandidatesForRefill(0),
+      candidates: [
+        { researchItemId: "rec", recommendedRank: 1 },
+        { researchItemId: "normal" },
+      ],
+      prepare: async () => {
+        calls += 1;
+        return spend(true);
+      },
+      materialize: async () => {
+        calls += 1;
+        return { probe: { canonicalId: "rec", pass: true }, generated: true, transient: false };
+      },
+    });
+    expect(calls).toBe(0);
+    expect(result.metrics.newLlmGenerations).toBe(0);
+  });
+
+  it("reuses a recommended PASS artifact before generating for anyone else", async () => {
+    const ordered = orderCandidatesByPublicationPriority(
+      [
+        { researchItemId: "normal-pass", recommendedRank: null, popularRank: null },
+        { researchItemId: "rec-new", recommendedRank: 2, popularRank: null },
+        { researchItemId: "rec-pass", recommendedRank: 4, popularRank: null },
+      ],
+      new Set(["normal-pass", "rec-pass"]),
+    );
+    expect(ordered.map((row) => row.researchItemId)).toEqual(["rec-pass", "rec-new", "normal-pass"]);
+    let generated = 0;
+    const result = await runXCandidateRefill({
+      slotsNeeded: 1,
+      maxNewGenerations: 5,
+      candidates: ordered,
+      prepare: async (row) => spend(row.researchItemId !== "rec-pass"),
+      materialize: async (row) => {
+        generated += row.researchItemId === "rec-pass" ? 0 : 1;
+        return { probe: { canonicalId: row.researchItemId, pass: true }, generated: false, transient: false };
+      },
+    });
+    expect(result.probes.map((probe) => probe.canonicalId)).toEqual(["rec-pass"]);
+    expect(result.metrics.passArtifactReused).toBe(1);
+    expect(result.metrics.newLlmGenerations).toBe(0);
+    expect(generated).toBe(0);
+  });
+
+  it("considers an eligible recommended work before a normal PASS when one slot is open", async () => {
+    const ordered = orderCandidatesByPublicationPriority(
+      [
+        { researchItemId: "normal-pass", recommendedRank: null, popularRank: null },
+        { researchItemId: "rec-new", recommendedRank: 8, popularRank: null },
+      ],
+      new Set(["normal-pass"]),
+    );
+    expect(ordered[0]?.researchItemId).toBe("rec-new");
+    const seen: string[] = [];
+    const result = await runXCandidateRefill({
+      slotsNeeded: 1,
+      maxNewGenerations: 1,
+      candidates: ordered,
+      prepare: async () => spend(true),
+      materialize: async (row) => {
+        seen.push(row.researchItemId);
+        return { probe: { canonicalId: row.researchItemId, pass: true }, generated: true, transient: false };
+      },
+    });
+    expect(seen).toEqual(["rec-new"]);
+    expect(result.metrics.newLlmGenerations).toBe(1);
     expect(result.metrics.slotsFilled).toBe(1);
   });
 

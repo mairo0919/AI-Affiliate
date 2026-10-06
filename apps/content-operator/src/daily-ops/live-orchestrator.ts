@@ -69,6 +69,7 @@ import {
 import { listUpcomingXPostSlots, shouldPlanXHorizon } from "./x-post-schedule.js";
 import { maxNewXCopyCandidatesForRefill, readConfiguredXCopyRefillCap } from "../x/x-copy-artifact.js";
 import { formatXRefillNote } from "../x/x-copy-refill.js";
+import { demandPriorityReason, publicationPriorityClass } from "./demand-signal.js";
 
 export interface DailyLiveResult {
   dayKey: string;
@@ -686,6 +687,19 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
     const rankedByCid = new Map(
       ranked.map((c) => [c.canonicalId.trim().toLowerCase(), c] as const),
     );
+    if (slotsNeeded > 0) {
+      const assigned = new Set(
+        assignments
+          .map((assignment) => assignment.candidate?.canonicalId?.trim().toLowerCase())
+          .filter((cid): cid is string => Boolean(cid)),
+      );
+      for (const probe of probes) {
+        const fields = rankedByCid.get(probe.canonicalId.trim().toLowerCase()) ?? {};
+        deps.logger.info(
+          `publication_priority channel=X cid=${probe.canonicalId} recommended=${publicationPriorityClass(fields) === "RECOMMENDED" ? "YES" : "NO"} class=${publicationPriorityClass(fields)} sources=${demandPriorityReason(fields)} selected=${assigned.has(probe.canonicalId.trim().toLowerCase()) ? "X" : "-"} skip=${probe.skipReason ?? "-"}`,
+        );
+      }
+    }
 
     const executed = await executeAssignedXSlots({
       assignments,

@@ -29,7 +29,7 @@ import {
   xCopyInputFingerprint,
 } from "../x/x-copy-artifact.js";
 import { resolveXCopyArtifact, xCopyIdentityFromSource, xScheduleGate } from "../x/x-copy-reuse.js";
-import { orderCandidatesPassFirst, runXCandidateRefill, type XRefillMetrics } from "../x/x-copy-refill.js";
+import { orderCandidatesByPublicationPriority, runXCandidateRefill, type XRefillMetrics } from "../x/x-copy-refill.js";
 import { XPublicationService } from "../x/publication-service.js";
 import type { ChannelCandidate } from "./channel-selection.js";
 import { allocateXPostSlots, isFutureXSlotInstant, planXPostScheduleHorizon } from "./x-post-schedule.js";
@@ -179,7 +179,7 @@ export async function probeXScheduleCandidates(input: {
       if (readXCopyArtifact(row.rawData)?.state === "PASS") passIds.add(row.id);
     }
   }
-  const ordered = orderCandidatesPassFirst(input.ranked, passIds);
+  const ordered = orderCandidatesByPublicationPriority(input.ranked, passIds);
   const refilled = await runXCandidateRefill({
     slotsNeeded: input.slotsNeeded,
     maxNewGenerations: input.maxNewGenerations,
