@@ -146,7 +146,10 @@ export async function runXSocialPipeline(
   }
 
   let draft = await writeXSocialCopy(plan, { llm: input.llm, model: input.model });
-  let review = reviewXSocialCopy(draft.body, plan, { maxChars: input.maxBodyChars ?? 240 });
+  let review = reviewXSocialCopy(draft.body, plan, {
+    maxChars: input.maxBodyChars ?? 240,
+    officialDescription: input.officialDescription,
+  });
   let rewritten = false;
   const maxRewrites = input.maxRewrites ?? (input.llm ? 4 : 1);
 
@@ -167,13 +170,19 @@ export async function runXSocialPipeline(
       sentences: once.split(/。/u).filter(Boolean).map((s) => `${s}。`),
       mode: draft.mode,
     };
-    review = reviewXSocialCopy(draft.body, plan, { maxChars: input.maxBodyChars ?? 240 });
+    review = reviewXSocialCopy(draft.body, plan, {
+      maxChars: input.maxBodyChars ?? 240,
+      officialDescription: input.officialDescription,
+    });
   }
 
   if (!review.ok) {
     const grounded = composeGroundedIntro(plan);
     if (grounded && grounded !== draft.body) {
-      const groundedReview = reviewXSocialCopy(grounded, plan, { maxChars: input.maxBodyChars ?? 240 });
+      const groundedReview = reviewXSocialCopy(grounded, plan, {
+        maxChars: input.maxBodyChars ?? 240,
+        officialDescription: input.officialDescription,
+      });
       if (groundedReview.ok) {
         return {
           ok: true,
@@ -225,7 +234,8 @@ export async function runXSocialPipeline(
 }
 
 /** @deprecated Navigation is composeXThreadPublication responsibility — do not append WP URL to parent. */
-export function assembleWpTrafficPost(body: string, _wpUrl: string | null): string {
+export function assembleWpTrafficPost(body: string, wpUrl: string | null): string {
+  void wpUrl;
   return body.trim();
 }
 

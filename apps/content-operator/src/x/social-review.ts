@@ -14,8 +14,19 @@ import {
   classifyXProseQuality,
   isTemplateExplainer,
   isTitleFragmentRun,
-  ungroundedContentWord,
 } from "./x-copy-quality.js";
+import {
+  copiesOfficialDescription,
+  countEmoji,
+  detectListedPhrase,
+  hasHashtag,
+  identifiesXWork,
+  isSubjectiveReaction,
+  recentOpeningClash,
+  ungroundedProductWord,
+  X_AD_COPY_PATTERNS,
+  X_AI_PHRASE_PATTERNS,
+} from "./x-copy-voice.js";
 import { detectXAdultExpressions } from "./x-social-content-policy.js";
 import type { XSocialPlan } from "./social-plan.js";
 import { writeXSocialCopy, synthesizeXSocialFromPlan } from "./social-write.js";
@@ -48,7 +59,7 @@ export type SocialReviewResult = {
 };
 
 const SOURCE_VOICE_RE =
-  /してあげる|してあげ|ご体験あれ|できるんだ|聞かせて|したい。|されたい。|思います。|ご存じですか|だよね|なんだよ|がしたい|とがしたい|思いっきりしたい|見ていただけたら|いただけると|の好き[？?]|興奮する[？?]/u;
+  /してあげる|してあげ|ご体験あれ|できるんだ|聞かせて|したい。|されたい。|思います。|ご存じですか|がしたい|とがしたい|思いっきりしたい|見ていただけたら|いただけると|の好き[？?]|興奮する[？?]/u;
 
 const MECHANICAL_TEMPLATE_RE =
   /が出演する作品|を軸にした作品紹介|の作品紹介。|時間収録のまとめ|の近作では、|見どころとして、|がどう展開するか気になる/u;
@@ -173,7 +184,7 @@ function isMechanicalIntro(body: string, plan: XSocialPlan): boolean {
 export function reviewXSocialCopy(
   body: string,
   plan: XSocialPlan,
-  opts?: { maxChars?: number },
+  opts?: { maxChars?: number; officialDescription?: string | null; recentBodies?: string[] },
 ): SocialReviewResult {
   const findings: SocialReviewFinding[] = [];
   const maxChars = opts?.maxChars ?? 240;
@@ -314,7 +325,9 @@ export function reviewXSocialCopy(
   const primaryValues = (plan.semanticFacts ?? [])
     .filter((fact) => fact.salience === "primary")
     .map((fact) => fact.value);
+  const workNamed = identifiesXWork(text, plan);
   for (const code of classifyXProseQuality(text, { focus: plan.angle, productTitle: plan.productTitle })) {
+    if (code === "FOCUS_NOT_SPECIFIC" && workNamed) continue;
     fail("PROSE_QUALITY", code, `x prose quality: ${code}`);
   }
 
@@ -384,11 +397,13 @@ export function reviewXSocialCopy(
   }
 
   // Publish bar: too short / name-only stubs.
-  if (compactLen > 0 && compactLen < 36 && !(concreteHook && compactLen >= 16) && !honestShort) {
+  const personalShort = workNamed && compactLen >= 10;
+  if (compactLen > 0 && compactLen < 36 && !personalShort && !(concreteHook && compactLen >= 16) && !honestShort) {
     fail("PRODUCT_SPECIFICITY", "LOW_INFORMATION", "body too short for publish-quality intro");
   } else if (
     sents.length <= 1 &&
     compactLen < 48 &&
+    !personalShort &&
     !concreteHook &&
     !honestShort &&
     (Boolean(plan.corePremise) || plan.workUnderstanding.length >= 1)
@@ -411,7 +426,7 @@ export function reviewXSocialCopy(
   ]
     .filter((part): part is string => Boolean(part && part.trim()))
     .join("\n");
-  const extraWord = ungroundedContentWord(text, groundedForWords);
+  const extraWord = ungroundedProductWord(text, groundedForWords);
   if (extraWord) {
     fail("GROUNDING", "UNGROUNDED", `ungrounded word: ${extraWord}`);
   }
@@ -440,6 +455,7 @@ export function reviewXSocialCopy(
   for (const sent of sents) {
     if (/出演$/u.test(sent) && plan.subject && sent.includes(plan.subject)) continue;
     if (isSoftEditorialWrap(sent) && plan.subject && text.includes(plan.subject)) continue;
+    if (workNamed && isSubjectiveReaction(sent, groundedForWords)) continue;
     if (!isGrounded(sent, plan)) {
       fail("GROUNDING", "UNGROUNDED", `ungrounded: ${sent.slice(0, 32)}`);
     }
@@ -458,10 +474,40 @@ export function reviewXSocialCopy(
     fail("MEDIA_FIT", "TOO_LONG", `body exceeds ${maxChars}`);
   }
 
+  const exemptPhrase = plan.productTitle;
+  const aiPhrase = detectListedPhrase(text, X_AI_PHRASE_PATTERNS, exemptPhrase);
+  if (aiPhrase) {
+    fail("VOICE", "AI_PHRASE_DETECTED", `ai phrase: ${aiPhrase}`);
+  }
+  const adPhrase = detectListedPhrase(text, X_AD_COPY_PATTERNS, exemptPhrase);
+  if (adPhrase) {
+    fail("MEDIA_FIT", "AD_COPY_DETECTED", `ad copy: ${adPhrase}`);
+  }
+  if (
+    copiesOfficialDescription(text, opts?.officialDescription, [
+      plan.productTitle,
+      plan.subject ?? "",
+      plan.canonicalContext.seriesName ?? "",
+      ...plan.canonicalContext.performers,
+    ])
+  ) {
+    fail("FACTUAL_CONSISTENCY", "OFFICIAL_DESCRIPTION_COPY", "official description pasted into the post");
+  }
+  if (countEmoji(text) > 2) {
+    fail("VOICE", "EMOJI_OVERUSE", "more than two emoji");
+  }
+  if (hasHashtag(text)) {
+    fail("MEDIA_FIT", "HASHTAG", "hashtag is not part of this X copy");
+  }
+  if (recentOpeningClash(text, opts?.recentBodies ?? [])) {
+    fail("VOICE", "TOO_SIMILAR_TO_RECENT_POST", "opening matches a recent post");
+  }
+
   if (sents.length >= 2) {
     const groundedCount = sents.filter(
       (s) =>
         isGrounded(s, plan) ||
+        (workNamed && isSubjectiveReaction(s, groundedForWords)) ||
         (isSoftEditorialWrap(s) && !!plan.subject && text.includes(plan.subject)),
     ).length;
     if (groundedCount < sents.length) {
@@ -506,6 +552,12 @@ export function reviewXSocialCopy(
     "PACKAGE_SCENE_NARRATION",
     "SCENE_NARRATION",
     "SOURCE_VOICE",
+    "AI_PHRASE_DETECTED",
+    "AD_COPY_DETECTED",
+    "OFFICIAL_DESCRIPTION_COPY",
+    "EMOJI_OVERUSE",
+    "HASHTAG",
+    "TOO_SIMILAR_TO_RECENT_POST",
     "BRAND_SLOGAN",
     "PARENT_URL_FORCED",
     "THREAD_DUPLICATE",
@@ -699,11 +751,23 @@ function findingsToHints(findings: SocialReviewFinding[]): string[] {
   if (codes.has("TOO_LONG")) {
     hints.push("Shorten to fit X length while keeping the work-specific hook.");
   }
-  if (codes.has("STOCK_CTA")) {
-    hints.push("Remove CTA / navigation filler; publication adds the URL.");
+  if (codes.has("STOCK_CTA") || codes.has("AD_COPY_DETECTED")) {
+    hints.push("Remove CTA and ad lines. Publication adds the URL. Do not write 詳細はこちら or 今すぐチェック.");
+  }
+  if (codes.has("AI_PHRASE_DETECTED") || codes.has("EMOJI_OVERUSE")) {
+    hints.push("Drop promo slang and extra emoji. Write it like a plain personal post.");
+  }
+  if (codes.has("OFFICIAL_DESCRIPTION_COPY")) {
+    hints.push("Do not paste the official description. Use it only as what you are allowed to mention.");
+  }
+  if (codes.has("TOO_SIMILAR_TO_RECENT_POST")) {
+    hints.push("Change the opening and the sentence shape from the recent post.");
+  }
+  if (codes.has("HASHTAG")) {
+    hints.push("Remove hashtags.");
   }
   if (hints.length === 0) {
-    hints.push("Rewrite as publish-quality third-party media introduction.");
+    hints.push("Rewrite as one ordinary personal X post. Do not turn it into an ad or a review article.");
   }
   return hints;
 }
@@ -722,7 +786,7 @@ export async function rewriteXSocialCopyOnce(
     );
   }
   hints.push(
-    "Rewrite as a complete publish-quality third-party intro from the same grounded understanding — not a partial patch that invents new claims.",
+    "Rewrite as one ordinary personal post. Subjective reactions are allowed. Do not invent product facts, and do not paste the official description.",
   );
 
   if (opts?.llm) {

@@ -1,11 +1,12 @@
 /**
- * X Writer — writes natural third-party media copy from an XSocialPlan.
+ * X Writer — one personal X post from an XSocialPlan.
  * Production path prefers LLM. synthesize is offline/test-only — not a publish fallback.
  */
 
 import type { LLMProvider } from "../adapters/types.js";
 import type { XSocialPlan } from "./social-plan.js";
 import { detectXAdultExpressions, stripXAdultSpans } from "./x-social-content-policy.js";
+import { chooseXCopyArchetype, xCopyArchetypeDirection } from "./x-copy-voice.js";
 
 /** Lower temperature for X social — reduces run-to-run PASS/FAIL oscillation. */
 export const X_SOCIAL_LLM_TEMPERATURE = 0.2;
@@ -14,21 +15,18 @@ export const X_SOCIAL_LLM_TEMPERATURE = 0.2;
 export const X_SOCIAL_WRITER_PROMPT_VERSION = "v3";
 
 export const X_SOCIAL_WRITER_SYSTEM = [
-  "You write one Japanese X post as a third party, not as the performer or the maker.",
-  "FOCUS is the single point of the post. Write one post that can be read on its own, about that focus.",
-  "Do not summarize an article. Do not write a product-catalog description. Do not shorten a work overview.",
-  "Do not put every fact into the post. Keep the sentence on FOCUS.",
-  "RELATIONS are the only connections you may write. Do not join two facts unless a relation says so.",
-  "A campaign is not something that 収録される. A person is not the work. A runtime is not the point of the post.",
-  "Say the relation that contains FOCUS. Runtime, disc count, BEST, and 配信限定 may only sit beside that focus.",
-  "If the only true relation is performer plus a runtime, BEST, or 配信限定, return {\"body\":\"\"}.",
-  "Do not write a post that is only 「の作品は、〜だ」, 「のシリーズ作品は、〜だ」, or 「AはBだ」. Do not end with 「がある」 after a number, a person, or する.",
-  "Do not write 「出演作では」, 「が出演する作品では」, 「作品では」, 「という状況設定」, 「として制作されています」, 「が特徴」, or 「展開されます」.",
-  "Do not use an overview frame: a name or title, then 本作は, then a summary; a work は a project として制作; a setting が特徴; a title paraphrase という作品.",
-  "Do not add rankings, demand, or evaluations such as 魅力, 圧巻, 必見, 世界観, 話題, 楽しめる, 迫力, 濃密, 際立って, 没入, or 注目.",
-  "Do not drop a word inside a phrase, and do not delete spaces to join title pieces.",
-  "If only one fact exists, do not invent a second one, and still do not use 「の作品は、〜だ」.",
-  "No URL. No hashtag. No navigation line.",
+  "あなたは成人向け作品を普段から見ている日本人男性の個人Xアカウントとして、投稿を1つ書く。",
+  "宣伝文ではない。タイムラインに流れてくる普通の個人の投稿を書く。",
+  "上手くまとめない。広告コピーにしない。レビュー記事にしない。インフルエンサー口調にしない。",
+  "毎回、フック、説明、おすすめ、CTA、という構造にしない。",
+  "短い投稿でよい。独り言でよい。少し雑でよい。個人的な好みや、見た・見ようと思った、という主観は作ってよい。",
+  "作品の具体的な事実は、渡された公式情報だけを使う。",
+  "公式説明文を切り取って貼らない。正式タイトルを毎回全文で入れなくてよい。出演者名、シリーズ名、これ、今回のやつ、でも作品が分かるなら足りる。",
+  "存在しない出演者、プレイ内容、シーン、シリーズ関係、ランキング、売上、評価は作らない。",
+  "刺さる、強すぎる、反則、破壊力、沼る、優勝、神作、圧倒的、没入感、クオリティ高い、見逃せない、要チェック、好きな人にはたまらない、必見、ヤバい、は使わない。似た広告口調も使わない。",
+  "絵文字は0個が普通。使うときも2個まで。毎投稿で火や目や年齢制限の絵文字を付けない。",
+  "ハッシュタグは付けない。URLは付けない。本文でURLへ誘導する営業文句は書かない。",
+  "最大文字数まで埋めない。VERY_SHORT、SHORT、MEDIUMを投稿ごとに変える。",
   "Return JSON only: {\"body\":\"...\"}.",
 ].join(" ");
 
@@ -66,7 +64,7 @@ function isStyleReject(text: string): boolean {
 }
 
 function isPublishableWriterBody(text: string): boolean {
-  if (!text || text.replace(/\s+/g, "").length < 28) return false;
+  if (!text || text.replace(/\s+/g, "").length < 8) return false;
   if (isAdultUnsafe(text)) return false;
   if (isStyleReject(text)) return false;
   return true;
@@ -219,7 +217,7 @@ function finalizeBody(cleaned: string): SocialWriteResult {
 
 export function buildXSocialWriterPrompts(
   plan: XSocialPlan,
-  opts?: { revisionHints?: string[]; previousBody?: string | null },
+  opts?: { revisionHints?: string[]; previousBody?: string | null; recentArchetypes?: string[] },
 ): {
   systemInstruction: string;
   userPrompt: string;
@@ -233,12 +231,17 @@ export function buildXSocialWriterPrompts(
   };
   const hints = (opts?.revisionHints ?? []).filter(Boolean);
   const prev = (opts?.previousBody ?? "").trim();
+  const archetype = chooseXCopyArchetype(
+    [plan.productTitle, plan.subject ?? "", ...(plan.canonicalContext.performers ?? [])].join("\n"),
+    opts?.recentArchetypes ?? [],
+  );
   return {
     systemInstruction: X_SOCIAL_WRITER_SYSTEM,
     userPrompt: [
-      "Write one standalone X post in Japanese. Turn it on FOCUS. Do not summarize the work.",
-      "Parent only — no URLs, no hashtags, no article/navigation CTA (publication owns replies).",
-      "Use FOCUS as written. Do not paraphrase the title into an overview.",
+      "個人のX投稿を1つ。公式説明の要約にしない。",
+      "URLもハッシュタグも営業CTAも書かない。URLは投稿側が付ける。",
+      xCopyArchetypeDirection(archetype),
+      "この型の例文をそのまま使わない。書き出しを毎回同じにしない。",
       hints.length ? `Revision requirements:\n- ${hints.join("\n- ")}` : "",
       prev
         ? `Previous draft (do not copy flaws; rewrite from grounded plan):\n${prev.slice(0, 280)}`
@@ -253,7 +256,7 @@ export function buildXSocialWriterPrompts(
       additionalProperties: false,
       required: ["body"],
       properties: {
-        body: { type: "string", minLength: 24, maxLength: 280 },
+        body: { type: "string", minLength: 8, maxLength: 280 },
       },
     },
   };
@@ -266,12 +269,14 @@ async function executeWriterOnce(
     model?: string;
     revisionHints?: string[];
     previousBody?: string | null;
+    recentArchetypes?: string[];
     promptIdentifier: string;
   },
 ): Promise<string | null> {
   const prompts = buildXSocialWriterPrompts(plan, {
     revisionHints: opts.revisionHints,
     previousBody: opts.previousBody,
+    recentArchetypes: opts.recentArchetypes,
   });
   const result = await opts.llm.executeTask({
     taskType: "GENERATION_X_SOCIAL",
@@ -311,6 +316,7 @@ export async function writeXSocialCopy(
     model?: string;
     revisionHints?: string[];
     previousBody?: string | null;
+    recentArchetypes?: string[];
   },
 ): Promise<SocialWriteResult> {
   const llm = opts?.llm ?? null;
@@ -321,6 +327,7 @@ export async function writeXSocialCopy(
         model: opts?.model,
         revisionHints: opts?.revisionHints,
         previousBody: opts?.previousBody,
+        recentArchetypes: opts?.recentArchetypes,
         promptIdentifier: "x.social.generate",
       });
       if (cleaned) {
@@ -360,6 +367,7 @@ export async function writeXSocialCopy(
             model: opts?.model,
             revisionHints: retryHints,
             previousBody: salvaged || cleaned,
+            recentArchetypes: opts?.recentArchetypes,
             promptIdentifier: "x.social.generate.retry_safe",
           });
           if (retryClean && isPublishableWriterBody(retryClean)) {
