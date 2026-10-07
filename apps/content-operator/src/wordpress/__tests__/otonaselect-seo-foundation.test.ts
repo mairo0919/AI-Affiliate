@@ -11,8 +11,8 @@ function read(rel: string): string {
 }
 
 describe("otonaselect SEO foundation contracts", () => {
-  it("ships theme 1.6.10 with rewrite flush version gate", () => {
-    expect(read("style.css")).toMatch(/Version:\s*1\.6\.10/);
+  it("ships theme 1.6.11 with rewrite flush version gate", () => {
+    expect(read("style.css")).toMatch(/Version:\s*1\.6\.11/);
     const tax = read("inc/taxonomies.php");
     expect(tax).toContain("otonaselect-tax-rewrite-1.6.7");
     expect(tax).toContain("flush_rewrite_rules");
@@ -31,7 +31,7 @@ describe("otonaselect SEO foundation contracts", () => {
     expect(read("templates/page-series-list.html")).toContain("otonaselect-series-hub-slot");
   });
 
-  it("lists home latest posts by post_date DESC with 9/page and no home pagination", () => {
+  it("lists home latest posts by post_date DESC with 9/page and /page/N/ pagination", () => {
     const front = read("templates/front-page.html");
     expect(front).toMatch(/"perPage":9/);
     expect(front).toContain("otonaselect-home-nav");
@@ -43,9 +43,15 @@ describe("otonaselect SEO foundation contracts", () => {
     expect(front).toMatch(/"orderBy":"date"/);
     expect(front).toMatch(/"inherit":true/);
     expect(front).toMatch(/"sticky":"exclude"/);
-    expect(front).not.toContain("wp:query-pagination");
-    expect(front).toContain('href="/latest/"');
-    expect(front).toContain("新着記事をすべて見る");
+    expect(front).toContain("wp:query-pagination");
+    expect(front).toContain("otonaselect-home-pagination");
+    expect(front).not.toContain('href="/latest/"');
+    expect(front).not.toContain("新着記事をすべて見る");
+    expect(read("style.css")).toContain(".otonaselect-home .otonaselect-section-heading");
+    expect(read("style.css")).toContain("font-size: 32px");
+    expect(read("style.css")).toContain("font-size: 26px");
+    expect(read("style.css")).toContain("font-size: 20px");
+    expect(read("style.css")).toContain("font-size: 18px");
     const latest = read("templates/page-latest.html");
     expect(latest).toMatch(/"perPage":12/);
     expect(latest).toMatch(/"order":"desc"/);
@@ -69,6 +75,8 @@ describe("otonaselect SEO foundation contracts", () => {
     expect(homeQuery).toContain("orderby', 'date'");
     expect(homeQuery).toContain("order', 'DESC'");
     expect(homeQuery).toContain("set_404");
+    expect(homeQuery).not.toContain("query-70-page");
+    expect(homeQuery).not.toContain("/latest/");
 
     const seo = read("inc/seo-head.php");
     expect(seo).toContain("/page/");

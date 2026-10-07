@@ -1,6 +1,7 @@
 <?php
 /**
- * Front / home latest posts: publish date DESC, 12 per page, standard /page/N/.
+ * Front / home latest posts: publish date DESC, 9 per page, standard /page/N/.
+ * Taxonomy archives stay at 12.
  *
  * @package OtonaSelect
  */
@@ -52,17 +53,6 @@ add_action(
 		if (is_admin() || is_feed() || is_preview()) {
 			return;
 		}
-		if (is_front_page() && is_paged()) {
-			$front_page = max(
-				(int) get_query_var('paged'),
-				(int) get_query_var('page')
-			);
-			if ($front_page > 1) {
-				wp_safe_redirect(home_url('/latest/?query-70-page=' . $front_page), 302);
-				exit;
-			}
-		}
-
 		if (!(is_home() || is_front_page()) || !is_paged()) {
 			return;
 		}
