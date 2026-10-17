@@ -497,6 +497,11 @@ describe("x-post-schedule boundary cases (JST)", () => {
     ]);
   });
 
+  it("does not plan X copy while X publishing is disabled", () => {
+    expect(shouldPlanXHorizon({ xNeeded: 3, openFutureSlots: 9, releaseMode: "DISABLED" })).toBe(false);
+    expect(shouldPlanXHorizon({ xNeeded: 3, openFutureSlots: 9, releaseMode: "LIMITED" })).toBe(true);
+  });
+
   it("does not assign PASS candidates when every future slot is already reserved", () => {
     const now = atJst("2026-10-05", 21, 0);
     const hours = [12, 18, 23];

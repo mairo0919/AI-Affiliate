@@ -124,8 +124,26 @@ export function ledgeringXCopyProvider(
     async executeTask(request: LLMTaskRequest): Promise<LLMTaskResult> {
       httpAttempt += 1;
       const attempt = httpAttempt;
+      const gatedRequest: LLMTaskRequest = {
+        ...request,
+        safety: {
+          ...(request.safety ?? {}),
+          channel: "X",
+          operation: request.taskType,
+          trigger: ctx.trigger,
+          cid: ctx.cid,
+          artifactFingerprint: ctx.fingerprint,
+          attemptKind: "creative",
+        },
+      };
       try {
-        const result = await inner.executeTask(request);
+        const result = await inner.executeTask(gatedRequest);
+        const executionRunId = result.metadata?.executionRunId;
+        if (typeof executionRunId === "string") {
+          ctx.runIds?.push(executionRunId);
+          if (!firstModelRunId) firstModelRunId = executionRunId;
+          return result;
+        }
         const id = await ledger
           .recordAttempt({
             provider: result.provider,
@@ -151,6 +169,11 @@ export function ledgeringXCopyProvider(
         if (!firstModelRunId && id) firstModelRunId = id;
         return result;
       } catch (error) {
+        const executionRunId = (error as { executionRunId?: string }).executionRunId;
+        if (typeof executionRunId === "string") {
+          ctx.runIds?.push(executionRunId);
+          throw error;
+        }
         const providerError = error instanceof LLMProviderError ? error : null;
         const usage = providerError?.usage ?? null;
         const id = await ledger

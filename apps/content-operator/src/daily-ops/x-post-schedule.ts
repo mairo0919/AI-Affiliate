@@ -503,8 +503,11 @@ export function shouldPlanXHorizon(input: {
   xNeeded: number;
   openFutureSlots: number;
   forceSmoke?: boolean;
+  releaseMode?: string;
 }): boolean {
   if (input.forceSmoke) return true;
+  // Copy generated while X publishing is disabled would never be posted.
+  if (input.releaseMode === "DISABLED") return false;
   // Today's unmet count includes past hours. Those are not backfilled, so an open future slot is required.
   void input.xNeeded;
   return input.openFutureSlots > 0;

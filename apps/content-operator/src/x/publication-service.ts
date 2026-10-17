@@ -23,6 +23,7 @@ import { createXPublishingProvider } from "./providers/index.js";
 import { planPostMediaIds, resolveRootMediaUrl } from "./publication-media-plan.js";
 import { XPublishError, type GeneratedXPublication } from "./types.js";
 import { STRATEGY_VERSION } from "./types.js";
+import { linkXPublicationByCid } from "../adapters/llm/wp-article-safety.js";
 import { outgoingXPostText, XPrePublishGuard } from "./ops/pre-publish-guard.js";
 import { isNormalOfficialCtaBody, resolveNormalXProductUrl } from "./x-normal-destination.js";
 import {
@@ -483,6 +484,7 @@ export class XPublicationService {
         relatedPublicationId: post.relatedPublicationId,
       })),
     });
+    await linkXPublicationByCid(productKey, created.id);
 
     if (this.ops) {
       // Formal invariant: expiresAt = max(now+TTL, scheduledAt+publishGrace)

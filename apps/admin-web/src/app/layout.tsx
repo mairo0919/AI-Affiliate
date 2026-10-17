@@ -14,6 +14,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           <aside className="nav">
             <div className="brand">AI Affiliate Ops</div>
             <a href="/">Dashboard</a>
+            <a href="/factory">Factory Control</a>
             <a href="/content-review">Content Review</a>
             <a href="/publications">Publications</a>
             <a href="/analytics">Analytics</a>

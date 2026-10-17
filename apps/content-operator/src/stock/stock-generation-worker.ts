@@ -8,7 +8,10 @@ import type { DatabaseClient, LifecycleRepository } from "@ai-affiliate/database
 import { AnalysisRepository, P6Repository, ResearchRepository } from "@ai-affiliate/database";
 import { createLogger } from "@ai-affiliate/shared";
 import { AnalysisEngine } from "../analysis/analysis-engine.js";
+import { bindLlmExecutionStore, bindLlmTick } from "../adapters/llm/llm-execution-binding.js";
+import { loadLlmSafetyLimits } from "../adapters/llm/llm-safety-limits.js";
 import { requireApiLLMProvider } from "../adapters/llm/create-llm-provider.js";
+import { createPrismaLlmRunStore } from "../adapters/llm/llm-execution-prisma-store.js";
 import { ContentGenerationService } from "../generation/content-generation-service.js";
 import { runCanonicalArticlePipeline } from "../generation/canonical-article-pipeline.js";
 import { seedP45Prompts } from "../generation/p45-service.js";
@@ -238,6 +241,12 @@ export async function runStockGenerationBatch(deps: {
   const usedThisBatch = new Set<string>();
 
   await seedP45Prompts(deps.lifecycle);
+  bindLlmExecutionStore(createPrismaLlmRunStore(deps.database.prisma));
+  bindLlmTick({
+    channel: "WORDPRESS",
+    tickId: `wp-${dayKey}-${now.getTime()}`,
+    newGenerationBudget: loadLlmSafetyLimits().wpArticleTickCap,
+  });
   const llm = requireApiLLMProvider(deps.config);
   const generation = new ContentGenerationService(deps.lifecycle, llm, {
     generation: deps.config.llmModelGeneration,

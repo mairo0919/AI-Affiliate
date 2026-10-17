@@ -14,6 +14,7 @@ import {
 import type { Logger } from "@ai-affiliate/shared";
 import type { PublisherAdapter } from "../adapters/types.js";
 import { createLLMProvider, requireApiLLMProvider } from "../adapters/llm/create-llm-provider.js";
+import { bindLlmTick } from "../adapters/llm/llm-execution-binding.js";
 import { buildFanzaCanonicalProductUrl } from "../adapters/affiliate/fanza-affiliate-provider.js";
 import {
   wordpressCredentialsPresent,
@@ -215,7 +216,7 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
   if (
     !deps.forceSmoke &&
     blogNeeded <= 0 &&
-    !shouldPlanXHorizon({ xNeeded, openFutureSlots })
+    !shouldPlanXHorizon({ xNeeded, openFutureSlots, releaseMode: deps.config.xReleaseMode })
   ) {
     return {
       dayKey,
@@ -603,7 +604,14 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
   }
 
   // ——— X (fixed JST slots: 12:00 / 18:00 SECONDARY + 23:00 MAIN; WP_TRAFFIC only) ———
-  if (shouldPlanXHorizon({ xNeeded, openFutureSlots, forceSmoke: deps.forceSmoke })) {
+  if (
+    shouldPlanXHorizon({
+      xNeeded,
+      openFutureSlots,
+      forceSmoke: deps.forceSmoke,
+      releaseMode: deps.config.xReleaseMode,
+    })
+  ) {
     x.attempted = true;
     x.route = "BLOG_TRAFFIC";
     const filledSlotKeys = await loadFilledXSlotKeys(deps.database.prisma, {
@@ -643,11 +651,17 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
     let xCopyLlm;
     try {
       xCopyLlm = requireApiLLMProvider(deps.config);
-    } catch {
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("execution ledger")) throw error;
       xCopyLlm = createLLMProvider(deps.config);
     }
 
     const slotsNeeded = deps.forceSmoke ? Math.max(openFutureSlots, 1) : openFutureSlots;
+    bindLlmTick({
+      channel: "X",
+      tickId: `x-${dayKey}-${now.getTime()}`,
+      newGenerationBudget: Math.max(1, slotsNeeded) + 2,
+    });
     const probed = await probeXScheduleCandidates({
       prisma: deps.database.prisma,
       ranked,

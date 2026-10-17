@@ -2087,11 +2087,63 @@ model ModelRun {
   metadata              Json?
   createdAt             DateTime       @default(now())
 
+  /// Gate vocabulary: PLANNED REQUESTED SUCCEEDED FAILED BLOCKED STALE_REQUEST.
+  /// Null on rows written before the execution gate.
+  executionStatus       String?
+  requestedAt           DateTime?
+  finishedAt            DateTime?
+  channel               String?
+  operation             String?
+  trigger               String?
+  canonicalCid          String?
+  contentVersionId      String?
+  xPublicationId        String?
+  publicationTargetId   String?
+  publishedExternalId   String?
+  artifactFingerprint   String?
+  modelRequested        String?
+  modelActual           String?
+  logicalAttempt        Int?
+  httpAttempt           Int?
+  /// creative | http. HTTP retries are not creative rewrites.
+  attemptKind           String?
+  tickId                String?
+  disposition           String?
+  errorCode             String?
+  httpStatus            Int?
+  retryable             Boolean?
+  failureStage          String?
+  blockReason           String?
+  reasoningTokens       Int?
+  /// Null when the provider did not return a token count. Never coerced to 0.
+  usageKnown            Boolean?
+  estimatedCostUsd      Float?
+  reservedCostUsd       Float?
+  ledgerVersion         String?
+
   costs CostRecord[]
 
   @@index([taskType, startedAt])
   @@index([provider, model, startedAt])
   @@index([status])
+  @@index([executionStatus, startedAt])
+  @@index([artifactFingerprint, executionStatus])
+  @@index([tickId, attemptKind])
+  @@index([canonicalCid, startedAt])
+}
+
+/// Circuit breaker for LLM execution. Additive. Does not connect Learning to Brain.
+model LlmCircuitState {
+  id                   String    @id @default(cuid())
+  scopeType            String
+  scopeKey             String
+  state                String    @default("CLOSED")
+  consecutiveFailures  Int       @default(0)
+  openedAt             DateTime?
+  reason               String?
+  updatedAt            DateTime  @updatedAt
+
+  @@unique([scopeType, scopeKey])
 }
 
 model CostRecord {

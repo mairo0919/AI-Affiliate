@@ -13,6 +13,7 @@ import type { ContentReviewService } from "../admin/content-review-service.js";
 import { claimStatementsFromPageEvidence } from "../article-pattern/evidence-pack.js";
 import type { PageEvidenceMetaShape } from "../article-pattern/official-page-evidence-atoms.js";
 import type { ContentGenerationService } from "../generation/content-generation-service.js";
+import { readLlmSafety, settleWpRuns } from "../adapters/llm/wp-article-safety.js";
 import {
   ensureOfficialEnrichmentForStockItem,
   isUsableOfficialPageEvidence,
@@ -44,7 +45,10 @@ export type CanonicalPipelineInput = {
   objective: string;
   autoApprove: boolean;
   approveActor: string;
-  /** Optional extra deterministic checks after Review PASS (never replace Review). */
+  /**
+   * Optional extra deterministic checks (never replace Review). They run before the LLM
+   * reviews so a version they reject does not pay for six reviews first.
+   */
   auxiliarySafetyOk?: (input: {
     title: string;
     structuredContent: Record<string, unknown>;
@@ -232,17 +236,6 @@ export async function runCanonicalArticlePipeline(
     officialActorCount: enrichment.actorCount,
   });
 
-  const review = await input.generation.runQualityReviews(generated.version.id);
-  if (review.overall === "failed") {
-    return {
-      ok: false,
-      reason: "CANONICAL_REVIEW_FAILED",
-      enrichment,
-      contentVersionId: generated.version.id,
-      reviewOverall: review.overall,
-    };
-  }
-
   if (input.auxiliarySafetyOk) {
     const aux = input.auxiliarySafetyOk({
       title: generated.version.title,
@@ -253,14 +246,39 @@ export async function runCanonicalArticlePipeline(
       },
     });
     if (!aux.ok) {
+      const writers = readLlmSafety(generated.version.structuredContent).runs.filter(
+        (run) => run.operation === "WP_WRITER" || run.operation === "WP_REWRITE",
+      );
+      const latest = writers.reduce<(typeof writers)[number] | null>(
+        (best, run) => (!best || run.logicalAttempt >= best.logicalAttempt ? run : best),
+        null,
+      );
+      if (latest) {
+        await settleWpRuns([latest], () => "DISCARDED_POLICY", { contentVersionId: generated.version.id });
+      }
+      // REVISION_REQUIRED counts toward the same-cid regeneration cap. Leaving the
+      // version in REVIEWING blocked the cid permanently after one attempt.
+      await input.lifecycle.updateContentVersionStatus(generated.version.id, "REVISION_REQUIRED");
       return {
         ok: false,
         reason: `AUXILIARY_SAFETY:${aux.reason}`,
         enrichment,
         contentVersionId: generated.version.id,
-        reviewOverall: review.overall,
       };
     }
+  }
+
+  const review = await input.generation.runQualityReviews(generated.version.id, {
+    stopOnFirstFailure: true,
+  });
+  if (review.overall === "failed") {
+    return {
+      ok: false,
+      reason: "CANONICAL_REVIEW_FAILED",
+      enrichment,
+      contentVersionId: generated.version.id,
+      reviewOverall: review.overall,
+    };
   }
 
   let approved = false;

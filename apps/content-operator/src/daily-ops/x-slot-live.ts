@@ -8,6 +8,8 @@ import type { AppConfig } from "@ai-affiliate/config";
 import { ContentRepository, type DatabaseClient } from "@ai-affiliate/database";
 import type { Logger } from "@ai-affiliate/shared";
 import type { LLMProvider } from "../adapters/types.js";
+import { getLlmExecutionStore } from "../adapters/llm/llm-execution-binding.js";
+import { dispositionForSocialSkip, settleLlmDisposition } from "../adapters/llm/llm-execution-gate.js";
 import {
   officialIdentityFromRaw,
   publishingPauseActive,
@@ -134,6 +136,7 @@ async function adaptCanonicalForXSchedule(input: {
     model: input.model,
   });
   const ledger = createPrismaXCopyLedger(input.prisma);
+  const runIds: string[] = [];
   const resolved = await resolveXCopyArtifact({
     store: createPrismaXCopyArtifactStore(input.prisma, input.researchItemId),
     identity,
@@ -149,11 +152,21 @@ async function adaptCanonicalForXSchedule(input: {
         affiliateThreadMode: false,
         normalProductUrl: input.destinationUrl,
         llm: input.llm
-          ? ledgeringXCopyProvider(input.llm, ledger, { ...ctx, cid: identity.cid })
+          ? ledgeringXCopyProvider(input.llm, ledger, { ...ctx, cid: identity.cid, runIds })
           : input.llm,
         llmModel: input.model,
       }),
   });
+  const store = getLlmExecutionStore();
+  if (store && resolved.generated && runIds.length > 0) {
+    const gate = xScheduleGate(resolved.result);
+    const disposition = gate.pass ? "ADOPTED" : dispositionForSocialSkip(gate.skipReason);
+    for (const runId of runIds) {
+      await settleLlmDisposition(store, runId, disposition, {
+        contentVersionId: input.source.contentVersionId,
+      });
+    }
+  }
   return { result: resolved.result, generated: resolved.generated };
 }
 

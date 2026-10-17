@@ -31,6 +31,8 @@ export type XCopyGenerationContext = {
   logicalGenerationId: string;
   fingerprint: string;
   trigger: "probe" | "execute";
+  /** Filled by the execution gate. Disposition is settled after review. */
+  runIds?: string[];
 };
 
 export function xCopyIdentityFromSource(input: {

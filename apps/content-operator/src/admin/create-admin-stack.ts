@@ -10,7 +10,9 @@ import {
   type DatabaseClient,
 } from "@ai-affiliate/database";
 import { MockAffiliateProvider } from "../adapters/affiliate/mock-affiliate-provider.js";
+import { bindLlmExecutionStore } from "../adapters/llm/llm-execution-binding.js";
 import { createLLMProvider } from "../adapters/llm/create-llm-provider.js";
+import { createPrismaLlmRunStore } from "../adapters/llm/llm-execution-prisma-store.js";
 import { createBloggerPublisherFromConfig } from "../adapters/publisher/blogger-api-publisher.js";
 import { createWordPressPublisherFromConfig } from "../adapters/publisher/wordpress-api-publisher.js";
 import { MockPublisher } from "../adapters/publisher/mock-publisher.js";
@@ -99,6 +101,7 @@ export async function createAdminStack(options?: {
   const usingMockWordPress =
     forceMock || config.wordpressMode !== "api" || !config.wordpressAllowExternalRequests;
 
+  if (!usingMockLlm) bindLlmExecutionStore(createPrismaLlmRunStore(database.prisma));
   const llm = usingMockLlm ? createLLMProvider({ ...config, llmMode: "mock" }) : createLLMProvider(config);
   const publishers: {
     BLOGGER: PublisherAdapter;

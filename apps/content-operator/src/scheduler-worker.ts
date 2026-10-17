@@ -8,6 +8,10 @@ import { loadConfig } from "@ai-affiliate/config";
 import { createDatabaseClient } from "@ai-affiliate/database";
 import { createLogger } from "@ai-affiliate/shared";
 import { SchedulerPipeline } from "./schedules/index.js";
+import { bindLlmExecutionStore } from "./adapters/llm/llm-execution-binding.js";
+import { recoverStaleRequests } from "./adapters/llm/llm-execution-gate.js";
+import { createPrismaLlmRunStore } from "./adapters/llm/llm-execution-prisma-store.js";
+import { loadLlmSafetyLimits } from "./adapters/llm/llm-safety-limits.js";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -27,6 +31,8 @@ async function main(): Promise<void> {
 
   const database = createDatabaseClient();
   await database.connect();
+  const llmStore = createPrismaLlmRunStore(database.prisma);
+  bindLlmExecutionStore(llmStore);
   const pipeline = new SchedulerPipeline({ logger, database, config });
 
   let stopping = false;
@@ -40,6 +46,7 @@ async function main(): Promise<void> {
   while (!stopping) {
     const started = Date.now();
     try {
+      await recoverStaleRequests(llmStore, new Date(), loadLlmSafetyLimits().staleRequestMs);
       const result = await pipeline.run();
       const stockGen =
         "skipped" in result.stockGeneration && result.stockGeneration.skipped

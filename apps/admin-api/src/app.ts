@@ -19,6 +19,14 @@ import {
 } from "./auth.js";
 import { AdminHttpError, correlationMiddleware, mapError } from "./errors.js";
 import {
+  parseFactoryRange,
+  readFactoryOverview,
+  readFactoryPerformance,
+  readFactoryRun,
+  readFactorySafety,
+  readFactoryUsage,
+} from "./factory-read.js";
+import {
   mapAttribution,
   mapAudit,
   mapConflict,
@@ -1108,6 +1116,35 @@ export async function createAdminApp(stack: AdminStack): Promise<Hono<{ Variable
         createdAt: r.createdAt.toISOString(),
       })),
     });
+  });
+
+  app.get("/factory/overview", async (c) => {
+    await authed(c, "read");
+    const range = parseFactoryRange(c.req.query("range"));
+    return c.json(await readFactoryOverview(stack.database.prisma, range));
+  });
+
+  app.get("/factory/usage", async (c) => {
+    await authed(c, "read");
+    const range = parseFactoryRange(c.req.query("range"));
+    return c.json(await readFactoryUsage(stack.database.prisma, range));
+  });
+
+  app.get("/factory/usage/:id", async (c) => {
+    await authed(c, "read");
+    const run = await readFactoryRun(stack.database.prisma, c.req.param("id"));
+    if (!run) return c.json({ error: { message: "run not found" } }, 404);
+    return c.json(run);
+  });
+
+  app.get("/factory/safety", async (c) => {
+    await authed(c, "read");
+    return c.json(await readFactorySafety(stack.database.prisma));
+  });
+
+  app.get("/factory/performance", async (c) => {
+    await authed(c, "read");
+    return c.json(await readFactoryPerformance(stack.database.prisma));
   });
 
   return app;

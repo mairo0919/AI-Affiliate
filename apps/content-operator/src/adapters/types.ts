@@ -174,6 +174,22 @@ export interface LLMTaskRequest {
   timeoutMs?: number;
   /** Optional sampling temperature (provider default when omitted). */
   temperature?: number;
+  /** Execution-gate context. Production sends do not proceed without a ledger. */
+  safety?: {
+    channel?: string | null;
+    operation?: string | null;
+    trigger?: string | null;
+    cid?: string | null;
+    contentVersionId?: string | null;
+    xPublicationId?: string | null;
+    artifactFingerprint?: string | null;
+    logicalAttempt?: number | null;
+    attemptKind?: "creative" | "http" | "review" | null;
+    tickId?: string | null;
+    newGenerationBudget?: number | null;
+    regenerateReason?: string | null;
+    reconcileStale?: boolean | null;
+  } | null;
 }
 
 export type LLMErrorClass =
@@ -183,6 +199,7 @@ export type LLMErrorClass =
   | "non_retryable"
   | "auth"
   | "rate_limit"
+  | "insufficient_quota"
   | "malformed_output"
   | "schema_mismatch"
   | "policy_refusal"

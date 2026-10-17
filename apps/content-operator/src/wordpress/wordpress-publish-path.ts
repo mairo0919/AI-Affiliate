@@ -4,10 +4,14 @@
  */
 import type { AppConfig } from "@ai-affiliate/config";
 import type {
+  DatabaseClient,
   LifecycleRepository,
   PublicationRecord,
 } from "@ai-affiliate/database";
 import type { PublisherAdapter } from "../adapters/types.js";
+import { bindLlmExecutionStore } from "../adapters/llm/llm-execution-binding.js";
+import { createPrismaLlmRunStore } from "../adapters/llm/llm-execution-prisma-store.js";
+import { linkSafetyRuns, readLlmSafety } from "../adapters/llm/wp-article-safety.js";
 import {
   createWordPressPublisherFromConfig,
   wordpressCredentialsPresent,
@@ -707,6 +711,10 @@ export async function publishContentVersionToWordPress(
     : null;
   if (!publicationMetadata || !existingQuality?.pass) {
     try {
+      const prisma = deps.prisma as unknown as DatabaseClient["prisma"];
+      if (typeof prisma.$transaction === "function") {
+        bindLlmExecutionStore(createPrismaLlmRunStore(prisma));
+      }
       const llm = createLLMProvider(deps.config);
       publicationMetadata = await generatePublicationMetadata({ evidence, llm });
     } catch {
@@ -1107,6 +1115,11 @@ export async function publishContentVersionToWordPress(
         imageEvalNotes: platformMetadata.imageEvalNotes,
       },
     });
+    await linkSafetyRuns(readLlmSafety(version.structuredContent).runs, {
+      contentVersionId: version.id,
+      publicationTargetId: existingTarget.id,
+      publishedExternalId: existingTarget.publishedExternalId,
+    });
     return {
       ok: true,
       published: true,
@@ -1146,6 +1159,11 @@ export async function publishContentVersionToWordPress(
     externalId: published.externalId,
     url: published.url,
     responseSummary: (published.responseSummary as Record<string, unknown>) ?? null,
+  });
+  await linkSafetyRuns(readLlmSafety(version.structuredContent).runs, {
+    contentVersionId: version.id,
+    publicationTargetId: target.id,
+    publishedExternalId: published.externalId,
   });
 
   return {

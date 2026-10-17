@@ -8,7 +8,9 @@ import type { AppConfig } from "@ai-affiliate/config";
 import type { DatabaseClient, LifecycleRepository } from "@ai-affiliate/database";
 import { P6Repository, ResearchRepository } from "@ai-affiliate/database";
 import { createLogger } from "@ai-affiliate/shared";
+import { bindLlmExecutionStore } from "../adapters/llm/llm-execution-binding.js";
 import { requireApiLLMProvider } from "../adapters/llm/create-llm-provider.js";
+import { createPrismaLlmRunStore } from "../adapters/llm/llm-execution-prisma-store.js";
 import { ContentReviewService } from "../admin/content-review-service.js";
 import { buildFanzaCanonicalProductUrl } from "../adapters/affiliate/fanza-affiliate-provider.js";
 import { validateFanzaAffiliateUrl } from "../daily-blog/affiliate-url.js";
@@ -119,6 +121,7 @@ export async function repairApiArticleQualityInPlace(input: {
   const logger = createLogger("info");
   const research = new ResearchRepository(input.database.prisma);
   await seedP45Prompts(input.lifecycle);
+  bindLlmExecutionStore(createPrismaLlmRunStore(input.database.prisma));
   const llm = requireApiLLMProvider(input.config);
   const generation = new ContentGenerationService(input.lifecycle, llm, {
     generation: input.config.llmModelGeneration,

@@ -66,6 +66,20 @@ describe("canonical pipeline invariants — source structure", () => {
     expect(canonical).not.toMatch(/fanza-only|FANZA_WRITER|stockWriter/i);
   });
 
+  it("auxiliary checks run before paid reviews, and reviews stop at the first failure", () => {
+    const canonical = readSrc("generation/canonical-article-pipeline.ts");
+    const auxAt = canonical.indexOf("input.auxiliarySafetyOk({");
+    const reviewAt = canonical.indexOf("input.generation.runQualityReviews(");
+    expect(auxAt).toBeGreaterThan(-1);
+    expect(reviewAt).toBeGreaterThan(auxAt);
+    expect(canonical).toMatch(/runQualityReviews\(generated\.version\.id,\s*\{\s*stopOnFirstFailure:\s*true/);
+    // An auxiliary rejection must count toward the same-cid cap instead of staying REVIEWING.
+    expect(canonical).toMatch(/updateContentVersionStatus\(generated\.version\.id,\s*"REVISION_REQUIRED"\)/);
+
+    const service = readSrc("generation/content-generation-service.ts");
+    expect(service).toMatch(/options\?\.stopOnFirstFailure && \(overall === "failed"/);
+  });
+
   it("10: no FANZA-dedicated Writer entry point", () => {
     const files = walkTsFiles(srcRoot);
     for (const file of files) {

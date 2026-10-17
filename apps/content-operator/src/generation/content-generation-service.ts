@@ -7,6 +7,14 @@ import type {
   ReviewResult,
 } from "@ai-affiliate/database";
 import type { LLMProvider } from "../adapters/types.js";
+import {
+  executionRunId,
+  readLlmSafety,
+  settleWpRuns,
+  wpContentIdentity,
+  wpLlmSafety,
+  type WpSafetyRun,
+} from "../adapters/llm/wp-article-safety.js";
 import { LLMProviderError } from "../adapters/types.js";
 import { accountGenerationFailure, retainedFailureTokens } from "./generation-failure-accounting.js";
 import { evaluatePolicies } from "../lifecycle/policy-engine.js";
@@ -450,6 +458,8 @@ export class ContentGenerationService {
       claimIds: input.claimIds,
     });
     const claims = preflight.claims;
+    const wpSafetyRuns: WpSafetyRun[] = [];
+    const articleIdentity = wpContentIdentity(input);
     const promptClaims = selectClaimsForBloggerPrompt(claims);
     const supportedIds = promptClaims.map((c) => c.id);
 
@@ -820,6 +830,12 @@ export class ContentGenerationService {
         userPrompt: edPrompt.user,
         model: this.models.generation,
         input: { productTitle: input.productTitle, phase: "editorial_decision" },
+        safety: wpLlmSafety({
+          cid: input.productCanonicalId,
+          operation: "WP_BRAIN",
+          promptVersion: "1",
+          contentIdentity: articleIdentity,
+        }),
       });
       const rawText = JSON.stringify(edLlm.output ?? {});
       const parsed =
@@ -838,6 +854,14 @@ export class ContentGenerationService {
           editorialDecision = parsed;
           adopted = true;
         }
+      }
+      const brainRunId = executionRunId(edLlm);
+      if (brainRunId) {
+        wpSafetyRuns.push({ id: brainRunId, operation: "WP_BRAIN", logicalAttempt: 1 });
+        await settleWpRuns(
+          [{ id: brainRunId, operation: "WP_BRAIN", logicalAttempt: 1 }],
+          () => (adopted ? "ADOPTED" : "DISCARDED_OTHER"),
+        );
       }
       if (editorialRunId) {
         await this.repo
@@ -1317,6 +1341,16 @@ export class ContentGenerationService {
         finalUserPrompt = userPrompt;
 
         try {
+          if (generationAttempt > 1) {
+            await settleWpRuns(
+              wpSafetyRuns.filter(
+                (run) =>
+                  (run.operation === "WP_WRITER" || run.operation === "WP_REWRITE") &&
+                  run.logicalAttempt === generationAttempt - 1,
+              ),
+              () => "DISCARDED_REWRITE",
+            );
+          }
           llm = await this.llm.executeTask({
             taskType: "GENERATION_BLOGGER",
             promptIdentifier: prompt.identifier,
@@ -1325,6 +1359,14 @@ export class ContentGenerationService {
             userPrompt,
             outputSchema,
             model: this.models.generation,
+            safety: wpLlmSafety({
+              cid: input.productCanonicalId,
+              operation: input.revisionType && input.revisionType !== "initial" ? "WP_REWRITE" : "WP_WRITER",
+              promptVersion: prompt.version,
+              contentIdentity: articleIdentity,
+              logicalAttempt: generationAttempt,
+              regenerateReason: generationAttempt > 1 ? "plan-execution-retry" : null,
+            }),
             input: {
               productTitle: input.productTitle,
               ctaUrl: input.ctaUrl ?? null,
@@ -1346,6 +1388,14 @@ export class ContentGenerationService {
               productLinkIds: input.productLinkIds ?? [],
             },
           });
+          const writerRunId = executionRunId(llm);
+          if (writerRunId) {
+            wpSafetyRuns.push({
+              id: writerRunId,
+              operation: input.revisionType && input.revisionType !== "initial" ? "WP_REWRITE" : "WP_WRITER",
+              logicalAttempt: generationAttempt,
+            });
+          }
         } catch (error) {
           await this.repo.completeModelRun(modelRun.id, {
             status: "FAILED",
@@ -2094,6 +2144,11 @@ export class ContentGenerationService {
             omitCtaBridge: claimUsagePlan.omitCtaBridge,
           },
           brainProvenance,
+          llmSafety: {
+            cid: input.productCanonicalId ?? null,
+            contentIdentity: articleIdentity,
+            runs: wpSafetyRuns,
+          },
           generationAttempt,
           generationAttemptTraces,
           rawPlanCompliance: rawPlanComplianceMeta,
@@ -2500,6 +2555,8 @@ export class ContentGenerationService {
       allowedReviewTypes?: string[];
       skipSemanticEditorialLlm?: boolean;
       skipSemanticDeterministicExtras?: boolean;
+      /** Skip the remaining LLM reviews once the version has already failed. */
+      stopOnFirstFailure?: boolean;
     },
   ): Promise<{
     overall: "passed" | "warning" | "failed" | "manual_review_required";
@@ -2566,9 +2623,13 @@ export class ContentGenerationService {
     const existing = await this.repo.listReviewsForContentVersion(version.id);
     let reusedCount = 0;
     let newLlmReviewCount = 0;
+    const reviewRuns: WpSafetyRun[] = [];
 
     let overall: "passed" | "warning" | "failed" | "manual_review_required" = "passed";
     for (const reviewType of reviewTypes) {
+      if (options?.stopOnFirstFailure && (overall === "failed" || policy.overall === "BLOCKED")) {
+        break;
+      }
       const promptId =
         reviewType === "claim-consistency"
           ? "review.claim"
@@ -2650,6 +2711,7 @@ export class ContentGenerationService {
         inputRef: version.id,
       });
 
+      const storedSafety = readLlmSafety(version.structuredContent);
       const llm = await this.llm.executeTask({
         taskType: "REVIEW",
         promptIdentifier: prompt.identifier,
@@ -2658,7 +2720,17 @@ export class ContentGenerationService {
         userPrompt: seoReview?.user ?? rendered.userPrompt,
         model: this.models.review,
         input: { title: version.title, body: version.body, reviewType },
+        safety: wpLlmSafety({
+          cid: storedSafety.cid,
+          operation: "WP_REVIEW",
+          promptVersion: prompt.version,
+          contentIdentity: storedSafety.contentIdentity || version.id,
+          contentVersionId: version.id,
+          logicalAttempt: 1,
+        }),
       });
+      const reviewRunId = executionRunId(llm);
+      if (reviewRunId) reviewRuns.push({ id: reviewRunId, operation: "WP_REVIEW", logicalAttempt: 1 });
 
       await this.repo.completeModelRun(modelRun.id, {
         status: "COMPLETED",
@@ -2809,6 +2881,19 @@ export class ContentGenerationService {
       overall === "failed" ? "REVISION_REQUIRED" : "REVIEWING",
     );
 
+    const storedSafety = readLlmSafety(version.structuredContent);
+    const writers = storedSafety.runs.filter((run) => run.operation === "WP_WRITER" || run.operation === "WP_REWRITE");
+    const latestWriter = writers.reduce<WpSafetyRun | null>(
+      (best, run) => (!best || run.logicalAttempt >= best.logicalAttempt ? run : best),
+      null,
+    );
+    if (latestWriter) {
+      await settleWpRuns([latestWriter], () => (overall === "failed" ? "DISCARDED_REVIEW" : "ADOPTED"), {
+        contentVersionId: version.id,
+      });
+    }
+    await settleWpRuns(reviewRuns, () => "ADOPTED", { contentVersionId: version.id });
+
     return {
       overall,
       reviews,
@@ -2867,6 +2952,7 @@ export class ContentGenerationService {
       status: "RUNNING",
       inputRef: source.id,
     });
+    const sourceSafety = readLlmSafety(source.structuredContent);
     const llm = await this.llm.executeTask({
       taskType: "REVISION",
       promptIdentifier: prompt.identifier,
@@ -2874,6 +2960,15 @@ export class ContentGenerationService {
       systemInstruction: rendered.systemInstruction,
       userPrompt: rendered.userPrompt,
       model: this.models.revision,
+      safety: wpLlmSafety({
+        cid: sourceSafety.cid,
+        operation: "WP_REWRITE",
+        promptVersion: prompt.version,
+        contentIdentity: sourceSafety.contentIdentity || source.id,
+        contentVersionId: source.id,
+        logicalAttempt: (sourceSafety.runs.filter((run) => run.operation === "WP_WRITER" || run.operation === "WP_REWRITE").length || 0) + 1,
+        regenerateReason: "partial-revision",
+      }),
       input: {
         title: source.title,
         body: source.body,

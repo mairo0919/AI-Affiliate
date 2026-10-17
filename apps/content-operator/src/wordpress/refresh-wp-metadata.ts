@@ -4,7 +4,9 @@
 
 import type { AppConfig } from "@ai-affiliate/config";
 import type { DatabaseClient, LifecycleRepository } from "@ai-affiliate/database";
+import { bindLlmExecutionStore } from "../adapters/llm/llm-execution-binding.js";
 import { requireApiLLMProvider } from "../adapters/llm/create-llm-provider.js";
+import { createPrismaLlmRunStore } from "../adapters/llm/llm-execution-prisma-store.js";
 import {
   createWordPressPublisherFromConfig,
   type WordPressApiPublisher,
@@ -222,6 +224,7 @@ export async function refreshWordPressPublicationMetadata(deps: {
   orphanCidByExternalId?: Record<string, string>;
 }): Promise<{ rows: MetadataRefreshRow[] }> {
   const publisher = createWordPressPublisherFromConfig(deps.config) as WordPressApiPublisher;
+  if (deps.useLlm !== false) bindLlmExecutionStore(createPrismaLlmRunStore(deps.database.prisma));
   const llm = deps.useLlm === false ? null : requireApiLLMProvider(deps.config);
   const rows: MetadataRefreshRow[] = [];
 
