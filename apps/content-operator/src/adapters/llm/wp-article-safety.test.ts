@@ -11,6 +11,7 @@ import {
 import { linkSafetyRuns, linkXPublicationByCid, settleWpRuns, wpArticleFingerprint, wpLlmSafety } from "./wp-article-safety.js";
 
 const limits: LlmSafetyLimits = {
+  globalMonthlyUsd: 1000,
   globalDailyUsd: 100,
   gpt41DailyUsd: 100,
   xWriterDailyUsd: 100,

@@ -10,6 +10,7 @@ import {
 } from "./llm-execution-gate.js";
 
 const limits: LlmSafetyLimits = {
+  globalMonthlyUsd: 1000,
   globalDailyUsd: 100,
   gpt41DailyUsd: 100,
   xWriterDailyUsd: 100,
@@ -287,6 +288,32 @@ describe("llm execution gate", () => {
       safety: { channel: "X", artifactFingerprint: "cost-b", tickId: "cost-2", newGenerationBudget: 4 },
     });
     expect(over.blockReason).toBe("BLOCKED_BUDGET");
+  });
+
+  it("blocks once the calendar month's spend is used, even on a fresh day, and resets next month", async () => {
+    const store = new MemoryLlmRunStore();
+    const monthly = { ...limits, globalMonthlyUsd: 2.03 };
+    const expensive = {
+      ...okResult(),
+      usage: { inputTokens: 1_000_000, cachedInputTokens: 0, outputTokens: 1_000, reasoningTokens: null },
+    };
+    await base(store, async () => expensive, {
+      limits: monthly,
+      now: new Date("2026-10-02T00:00:00.000Z"),
+      safety: { channel: "X", artifactFingerprint: "month-a", tickId: "m1", newGenerationBudget: 4 },
+    });
+    const sameMonth = await base(store, async () => okResult(), {
+      limits: monthly,
+      now: new Date("2026-10-20T00:00:00.000Z"),
+      safety: { channel: "X", artifactFingerprint: "month-b", tickId: "m2", newGenerationBudget: 4 },
+    });
+    expect(sameMonth.blockReason).toBe("BLOCKED_MONTHLY_BUDGET");
+    const nextMonth = await base(store, async () => okResult(), {
+      limits: monthly,
+      now: new Date("2026-11-01T00:00:00.000Z"),
+      safety: { channel: "X", artifactFingerprint: "month-c", tickId: "m3", newGenerationBudget: 4 },
+    });
+    expect(nextMonth.blocked).toBe(false);
   });
 
   it("aggregates adopted and discarded runs and does not zero unknown metrics", async () => {

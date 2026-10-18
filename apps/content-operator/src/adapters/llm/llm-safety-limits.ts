@@ -1,4 +1,6 @@
 export type LlmSafetyLimits = {
+  /** Calendar month (UTC, same as OpenAI billing). The binding limit; the daily caps only spread it out. */
+  globalMonthlyUsd: number;
   globalDailyUsd: number;
   gpt41DailyUsd: number;
   xWriterDailyUsd: number;
@@ -22,9 +24,10 @@ function positive(raw: string | undefined, fallback: number): number {
 /** Code defaults are the safe side. Production env is not changed by this module. */
 export function loadLlmSafetyLimits(env: NodeJS.ProcessEnv = process.env): LlmSafetyLimits {
   return {
-    globalDailyUsd: positive(env.GLOBAL_DAILY_LLM_BUDGET_USD, 15),
-    gpt41DailyUsd: positive(env.GPT41_DAILY_BUDGET_USD, 2),
-    xWriterDailyUsd: positive(env.X_WRITER_DAILY_BUDGET_USD, 2),
+    globalMonthlyUsd: positive(env.GLOBAL_MONTHLY_LLM_BUDGET_USD, 10),
+    globalDailyUsd: positive(env.GLOBAL_DAILY_LLM_BUDGET_USD, 0.5),
+    gpt41DailyUsd: positive(env.GPT41_DAILY_BUDGET_USD, 0.2),
+    xWriterDailyUsd: positive(env.X_WRITER_DAILY_BUDGET_USD, 0.2),
     logicalCallLimit: positive(env.LLM_LOGICAL_CALL_LIMIT, 5),
     httpRetryLimit: positive(env.LLM_HTTP_RETRY_LIMIT, 2),
     absoluteTickCap: positive(env.LLM_ABSOLUTE_TICK_CAP, 12),

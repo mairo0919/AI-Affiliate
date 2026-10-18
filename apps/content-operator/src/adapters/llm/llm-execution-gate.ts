@@ -118,6 +118,8 @@ export interface LlmRunStore {
   update(id: string, patch: Partial<LlmRunRecord>): Promise<LlmRunRecord>;
   findById(id: string): Promise<LlmRunRecord | null>;
   list(query?: { fingerprint?: string | null }): Promise<LlmRunRecord[]>;
+  /** Spent plus still-reserved USD for runs created at or after `since`. */
+  costSince(since: Date): Promise<number>;
   withLock<T>(key: string, fn: () => Promise<T>): Promise<T>;
   getCircuit(scopeType: CircuitRecord["scopeType"], scopeKey: string): Promise<CircuitRecord | null>;
   saveCircuit(row: CircuitRecord): Promise<void>;
@@ -147,6 +149,12 @@ export class MemoryLlmRunStore implements LlmRunStore {
 
   async list(): Promise<LlmRunRecord[]> {
     return this.runs.map((row) => ({ ...row }));
+  }
+
+  async costSince(since: Date): Promise<number> {
+    return this.runs
+      .filter((run) => run.createdAt >= since)
+      .reduce((total, run) => total + runCostUsd(run), 0);
   }
 
   async withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
@@ -349,17 +357,24 @@ async function noteSuccess(
   });
 }
 
+export function runCostUsd(run: Pick<LlmRunRecord, "executionStatus" | "estimatedCostUsd" | "reservedCostUsd">): number {
+  if (run.executionStatus === "SUCCEEDED") return run.estimatedCostUsd ?? run.reservedCostUsd ?? 0;
+  if (run.executionStatus === "REQUESTED" || run.executionStatus === "PLANNED") return run.reservedCostUsd ?? 0;
+  return 0;
+}
+
 function spentAndReserved(runs: LlmRunRecord[], now: Date, predicate: (run: LlmRunRecord) => boolean): number {
   const day = dayKey(now);
   let total = 0;
   for (const run of runs) {
     if (dayKey(run.createdAt) !== day || !predicate(run)) continue;
-    if (run.executionStatus === "SUCCEEDED") total += run.estimatedCostUsd ?? run.reservedCostUsd ?? 0;
-    else if (run.executionStatus === "REQUESTED" || run.executionStatus === "PLANNED") {
-      total += run.reservedCostUsd ?? 0;
-    }
+    total += runCostUsd(run);
   }
   return total;
+}
+
+function monthStartUtc(now: Date): Date {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
 }
 
 export async function executeLlmRun(input: ExecuteLlmRunInput): Promise<{
@@ -653,6 +668,8 @@ async function blockingReason(input: {
   const reserve = reservationUsd(input.model);
   const all = spentAndReserved(input.runs, input.now, () => true);
   if (all + reserve > input.limits.globalDailyUsd) return "BLOCKED_BUDGET";
+  const month = await input.store.costSince(monthStartUtc(input.now));
+  if (month + reserve > input.limits.globalMonthlyUsd) return "BLOCKED_MONTHLY_BUDGET";
   if (isGpt41(input.model)) {
     const gpt = spentAndReserved(input.runs, input.now, (run) => isGpt41(run.modelRequested));
     if (gpt + reserve > input.limits.gpt41DailyUsd) return "BLOCKED_BUDGET";

@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { DatabaseClient } from "@ai-affiliate/database";
 import type { CircuitRecord, LlmRunRecord, LlmRunStore } from "./llm-execution-gate.js";
-import { LLM_LEDGER_VERSION } from "./llm-execution-gate.js";
+import { LLM_LEDGER_VERSION, runCostUsd } from "./llm-execution-gate.js";
 
 type Prisma = DatabaseClient["prisma"];
 type Tx = Omit<Prisma, "$connect" | "$disconnect" | "$on" | "$transaction" | "$extends">;
@@ -201,6 +201,26 @@ export function createPrismaLlmRunStore(prisma: Prisma): LlmRunStore {
         take: 5000,
       });
       return rows.map(fromRow);
+    },
+    async costSince(since) {
+      const rows = await db().modelRun.findMany({
+        where: {
+          ledgerVersion: LLM_LEDGER_VERSION,
+          createdAt: { gte: since },
+          executionStatus: { in: ["SUCCEEDED", "REQUESTED", "PLANNED"] },
+        },
+        select: { executionStatus: true, estimatedCostUsd: true, reservedCostUsd: true },
+      });
+      return rows.reduce(
+        (total, row) =>
+          total +
+          runCostUsd({
+            executionStatus: (row.executionStatus ?? "PLANNED") as LlmRunRecord["executionStatus"],
+            estimatedCostUsd: row.estimatedCostUsd,
+            reservedCostUsd: row.reservedCostUsd,
+          }),
+        0,
+      );
     },
     async withLock(key, fn) {
       return prisma.$transaction(async (tx) => {
