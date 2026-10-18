@@ -12,6 +12,7 @@ import { ledgeringXCopyProvider, type XCopyLedgerAttempt } from "../x-copy-ledge
 import {
   MAX_LOGICAL_X_COPY_GENERATIONS,
   readXCopyArtifact,
+  X_COPY_REJECTED_RETRY_AFTER_MS,
   X_COPY_TRANSIENT_RETRY_MS,
   type XCopyArtifactStore,
   type XCopyIdentity,
@@ -299,6 +300,46 @@ describe("X copy artifact reuse", () => {
     await resolveXCopyArtifact({ store, identity: identity(), now, trigger: "probe", generate });
     expect(calls).toBe(MAX_LOGICAL_X_COPY_GENERATIONS);
     expect(readXCopyArtifact(store.snapshot())?.state).toBe("FAILED_TRANSIENT");
+  });
+
+  it("writes a rejected copy again once the cooldown has passed, with a regenerate reason", async () => {
+    const store = memoryStore();
+    const reasons: Array<string | null | undefined> = [];
+    const generate = async (ctx: { regenerateReason?: string | null }) => {
+      reasons.push(ctx.regenerateReason);
+      return adaptation({
+        skip: { reason: "SOCIAL_REVIEW_FAILED", detail: "quality", failureClass: "QUALITY_FAILURE" },
+      });
+    };
+    const start = new Date("2026-10-05T03:00:00Z");
+    await resolveXCopyArtifact({ store, identity: identity(), now: start, trigger: "probe", generate });
+    const later = await resolveXCopyArtifact({
+      store,
+      identity: identity(),
+      now: new Date(start.getTime() + X_COPY_REJECTED_RETRY_AFTER_MS + 1000),
+      trigger: "probe",
+      generate,
+    });
+    expect(later.generated).toBe(true);
+    expect(reasons).toEqual([null, "x-rejected-cooldown-retry"]);
+  });
+
+  it("tries an exhausted transient failure again after the cooldown", async () => {
+    const store = memoryStore();
+    let calls = 0;
+    const generate = async () => {
+      calls += 1;
+      throw new Error("CIRCUIT_OPEN");
+    };
+    let now = new Date("2026-10-05T03:00:00Z");
+    for (let attempt = 1; attempt <= MAX_LOGICAL_X_COPY_GENERATIONS + 1; attempt += 1) {
+      await resolveXCopyArtifact({ store, identity: identity(), now, trigger: "probe", generate });
+      now = new Date(now.getTime() + X_COPY_TRANSIENT_RETRY_MS + 1000);
+    }
+    expect(calls).toBe(MAX_LOGICAL_X_COPY_GENERATIONS);
+    now = new Date(now.getTime() + X_COPY_REJECTED_RETRY_AFTER_MS);
+    await resolveXCopyArtifact({ store, identity: identity(), now, trigger: "probe", generate });
+    expect(calls).toBe(MAX_LOGICAL_X_COPY_GENERATIONS + 1);
   });
 
   it("starts at most one generation when probes overlap", async () => {

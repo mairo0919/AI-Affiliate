@@ -33,6 +33,8 @@ export type XCopyGenerationContext = {
   trigger: "probe" | "execute";
   /** Filled by the execution gate. Disposition is settled after review. */
   runIds?: string[];
+  /** Set when a rejected copy is written again after its cooldown. */
+  regenerateReason?: string | null;
 };
 
 export function xCopyIdentityFromSource(input: {
@@ -174,6 +176,7 @@ export async function resolveXCopyArtifact(input: {
       logicalGenerationId,
       fingerprint,
       trigger: input.trigger,
+      regenerateReason: claim.regenerateReason ?? null,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message.slice(0, 240) : "x_copy_generation_failed";

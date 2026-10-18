@@ -160,7 +160,12 @@ async function adaptCanonicalForXSchedule(input: {
   const store = getLlmExecutionStore();
   if (store && resolved.generated && runIds.length > 0) {
     const gate = xScheduleGate(resolved.result);
-    const disposition = gate.pass ? "ADOPTED" : dispositionForSocialSkip(gate.skipReason);
+    // A writer or network failure is not a quality verdict, so it must not lock the fingerprint.
+    const disposition = gate.pass
+      ? "ADOPTED"
+      : resolved.result.skip?.failureClass === "GENERATION_FAILURE"
+        ? "DISCARDED_OTHER"
+        : dispositionForSocialSkip(gate.skipReason);
     for (const runId of runIds) {
       await settleLlmDisposition(store, runId, disposition, {
         contentVersionId: input.source.contentVersionId,

@@ -30,6 +30,12 @@ export const X_SOCIAL_WRITER_SYSTEM = [
   "Return JSON only: {\"body\":\"...\"}.",
 ].join(" ");
 
+/**
+ * X counts Japanese characters as 2 and allows 280. The root carries no URL,
+ * and a little room is kept for the disclosure label when it lands on the root.
+ */
+export const X_SOCIAL_BODY_MAX_WEIGHTED = 270;
+
 export type SocialWriteResult = {
   body: string;
   sentences: string[];
@@ -202,17 +208,25 @@ function extractBody(output: unknown): string | null {
   return null;
 }
 
+/** Keep the writer's own punctuation and line breaks. Sentences are only split for review. */
 function finalizeBody(cleaned: string): SocialWriteResult {
-  const sentences = cleaned
-    .split(/[。！？]/u)
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .map((s) => ensurePeriod(s));
-  return {
-    body: sentences.join("") || ensurePeriod(cleaned),
-    sentences: sentences.length ? sentences : [ensurePeriod(cleaned)],
-    mode: "llm",
-  };
+  const body = cleaned.trim();
+  return { body, sentences: splitXSentences(body), mode: "llm" };
+}
+
+export function splitXSentences(body: string): string[] {
+  return (body.match(/[^。！？!?\n]+[。！？!?]*/gu) ?? []).map((s) => s.trim()).filter(Boolean);
+}
+
+/** Spaces collapse; line breaks stay (at most one blank line). */
+export function normalizeXBodyWhitespace(text: string): string {
+  return text
+    .replace(/[ \t\u3000]+/gu, " ")
+    .split("\n")
+    .map((line) => line.trim())
+    .join("\n")
+    .replace(/\n{3,}/gu, "\n\n")
+    .trim();
 }
 
 export function buildXSocialWriterPrompts(
@@ -242,6 +256,7 @@ export function buildXSocialWriterPrompts(
       "URLもハッシュタグも営業CTAも書かない。URLは投稿側が付ける。",
       xCopyArchetypeDirection(archetype),
       "この型の例文をそのまま使わない。書き出しを毎回同じにしない。",
+      `日本語で${X_SOCIAL_BODY_MAX_WEIGHTED / 2}字以内（Xの文字数制限）。改行や「！」「？」は自然なら使ってよい。`,
       hints.length ? `Revision requirements:\n- ${hints.join("\n- ")}` : "",
       prev
         ? `Previous draft (do not copy flaws; rewrite from grounded plan):\n${prev.slice(0, 280)}`
@@ -256,7 +271,7 @@ export function buildXSocialWriterPrompts(
       additionalProperties: false,
       required: ["body"],
       properties: {
-        body: { type: "string", minLength: 8, maxLength: 280 },
+        body: { type: "string", minLength: 8, maxLength: X_SOCIAL_BODY_MAX_WEIGHTED / 2 },
       },
     },
   };
@@ -296,10 +311,7 @@ async function executeWriterOnce(
   });
   const body = extractBody(result.output);
   if (!body) return null;
-  return body
-    .replace(/https?:\/\/\S+/gu, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  return normalizeXBodyWhitespace(body.replace(/https?:\/\/\S+/gu, ""));
 }
 
 /**
@@ -390,17 +402,9 @@ export async function writeXSocialCopy(
         return finalizeBody(cleaned);
       }
     } catch (err) {
-      // Surface LLM/network/quota failures as empty body (Review → GENERATION_FAILURE).
-      // Do not synthesize a publish body.
-      if (process.env.X_SOCIAL_WRITER_DEBUG === "1") {
-        console.error(
-          JSON.stringify({
-            phase: "x_writer_llm_error",
-            message: err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200),
-          }),
-        );
-      }
-      return { body: "", sentences: [], mode: "llm" };
+      // A model, network, quota, or gate failure is not a draft. Let the caller record it as a
+      // transient generation failure instead of reviewing an empty body.
+      throw err instanceof Error ? err : new Error(String(err));
     }
     return { body: "", sentences: [], mode: "llm" };
   }

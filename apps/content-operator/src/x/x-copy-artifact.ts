@@ -16,6 +16,8 @@ export const MAX_LOGICAL_X_COPY_GENERATIONS = 3;
 export const MAX_X_LLM_GENERATIONS_PER_UNCHANGED_ARTIFACT = MAX_LOGICAL_X_COPY_GENERATIONS;
 export const X_COPY_GENERATING_TTL_MS = 3 * 60 * 1000;
 export const X_COPY_TRANSIENT_RETRY_MS = 5 * 60 * 1000;
+/** A rejected or exhausted copy is written again after this, instead of being dropped for good. */
+export const X_COPY_REJECTED_RETRY_AFTER_MS = 3 * 24 * 60 * 60 * 1000;
 
 /**
  * Ceiling for new X copy generations in one refill.
@@ -101,7 +103,7 @@ export type XCopyClaim =
   | { action: "reuse"; artifact: XCopyArtifact }
   | { action: "wait"; artifact: XCopyArtifact }
   | { action: "exhausted"; artifact: XCopyArtifact }
-  | { action: "claim"; artifact: XCopyArtifact };
+  | { action: "claim"; artifact: XCopyArtifact; regenerateReason?: string | null };
 
 export function xCopyInputFingerprint(identity: XCopyIdentity): string {
   const payload = {
@@ -237,21 +239,31 @@ export function beginXCopyGeneration(input: {
     const until = same.generatingUntil ? Date.parse(same.generatingUntil) : 0;
     if (Number.isFinite(until) && until > nowMs) return { action: "wait", artifact: same };
   }
-  if (same?.state === "PASS" || same?.state === "REJECTED_QUALITY") {
+  const updatedMs = same ? Date.parse(same.updatedAt) : Number.NaN;
+  const cooledDown = Number.isFinite(updatedMs) && nowMs - updatedMs >= X_COPY_REJECTED_RETRY_AFTER_MS;
+  let regenerateReason: string | null = null;
+  let priorCount = same?.logicalGenerationCount ?? 0;
+  if (same?.state === "PASS") {
     return { action: "reuse", artifact: same };
+  }
+  if (same?.state === "REJECTED_QUALITY") {
+    if (!cooledDown) return { action: "reuse", artifact: same };
+    regenerateReason = "x-rejected-cooldown-retry";
+    priorCount = 0;
   }
   if (same?.state === "FAILED_TRANSIENT") {
     const retryAt = same.nextRetryAt ? Date.parse(same.nextRetryAt) : 0;
     if (Number.isFinite(retryAt) && retryAt > nowMs) return { action: "reuse", artifact: same };
     if (same.logicalGenerationCount >= MAX_LOGICAL_X_COPY_GENERATIONS) {
-      return { action: "exhausted", artifact: same };
+      if (!cooledDown) return { action: "exhausted", artifact: same };
+      priorCount = 0;
     }
   }
   if (same?.state === "GENERATING" && same.logicalGenerationCount >= MAX_LOGICAL_X_COPY_GENERATIONS) {
-    return { action: "exhausted", artifact: same };
+    if (!cooledDown) return { action: "exhausted", artifact: same };
+    priorCount = 0;
   }
 
-  const priorCount = same?.logicalGenerationCount ?? 0;
   const artifact: XCopyArtifact = {
     version: 1,
     fingerprint: input.fingerprint,
@@ -273,7 +285,7 @@ export function beginXCopyGeneration(input: {
     failureClass: null,
     adaptation: null,
   };
-  return { action: "claim", artifact };
+  return { action: "claim", artifact, regenerateReason };
 }
 
 export function completeXCopyGeneration(input: {

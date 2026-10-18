@@ -160,7 +160,14 @@ function withDisclosure(body: string, disclosure: string): string {
 
 /** Parent is writer copy. URLs belong on replies. */
 function stripUrls(body: string): string {
-  return body.replace(/https?:\/\/\S+/gu, " ").replace(/\s+/g, " ").trim();
+  return body
+    .replace(/https?:\/\/\S+/gu, " ")
+    .replace(/[ \t\u3000]+/gu, " ")
+    .split("\n")
+    .map((line) => line.trim())
+    .join("\n")
+    .replace(/\n{3,}/gu, "\n\n")
+    .trim();
 }
 
 /**

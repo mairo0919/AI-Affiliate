@@ -6,7 +6,7 @@
 import type { LLMProvider } from "../adapters/types.js";
 import type { XSocialPlan, XPlanSkip } from "./social-plan.js";
 import { planXSocial } from "./social-plan.js";
-import { composeGroundedIntro, writeXSocialCopy } from "./social-write.js";
+import { splitXSentences, writeXSocialCopy } from "./social-write.js";
 import {
   reviewXSocialCopy,
   rewriteXSocialCopyOnce,
@@ -145,58 +145,27 @@ export async function runXSocialPipeline(
     };
   }
 
-  let draft = await writeXSocialCopy(plan, { llm: input.llm, model: input.model });
-  let review = reviewXSocialCopy(draft.body, plan, {
-    maxChars: input.maxBodyChars ?? 240,
+  const reviewOpts = {
+    maxChars: input.maxBodyChars,
     officialDescription: input.officialDescription,
-  });
+  };
+  let draft = await writeXSocialCopy(plan, { llm: input.llm, model: input.model });
+  let review = reviewXSocialCopy(draft.body, plan, reviewOpts);
   let rewritten = false;
   const maxRewrites = input.maxRewrites ?? (input.llm ? 4 : 1);
 
   let attempts = 0;
-  let previousBody = draft.body;
   while (!review.ok && review.canRewrite && attempts < maxRewrites) {
     attempts += 1;
-    const once = await rewriteXSocialCopyOnce(previousBody, plan, review.findings, {
+    // Always revise the draft the findings were written about.
+    const once = await rewriteXSocialCopyOnce(draft.body, plan, review.findings, {
       llm: input.llm,
       model: input.model,
     });
-    if (!once) break;
-    if (once === draft.body && previousBody === draft.body) break;
+    if (!once || once === draft.body) break;
     rewritten = true;
-    previousBody = draft.body;
-    draft = {
-      body: once,
-      sentences: once.split(/。/u).filter(Boolean).map((s) => `${s}。`),
-      mode: draft.mode,
-    };
-    review = reviewXSocialCopy(draft.body, plan, {
-      maxChars: input.maxBodyChars ?? 240,
-      officialDescription: input.officialDescription,
-    });
-  }
-
-  if (!review.ok) {
-    const grounded = composeGroundedIntro(plan);
-    if (grounded && grounded !== draft.body) {
-      const groundedReview = reviewXSocialCopy(grounded, plan, {
-        maxChars: input.maxBodyChars ?? 240,
-        officialDescription: input.officialDescription,
-      });
-      if (groundedReview.ok) {
-        return {
-          ok: true,
-          plan,
-          draftBody: draft.body,
-          finalBody: grounded,
-          reviewFindings: groundedReview.findings,
-          review: groundedReview,
-          rewritten: true,
-          writerMode: draft.mode,
-          rewriteAttempts: attempts,
-        };
-      }
-    }
+    draft = { body: once, sentences: splitXSentences(once), mode: draft.mode };
+    review = reviewXSocialCopy(draft.body, plan, reviewOpts);
   }
 
   if (!review.ok) {

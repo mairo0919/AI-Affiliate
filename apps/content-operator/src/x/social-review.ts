@@ -28,6 +28,8 @@ import {
   X_AI_PHRASE_PATTERNS,
 } from "./x-copy-voice.js";
 import { detectXAdultExpressions } from "./x-social-content-policy.js";
+import { XCharacterCounter } from "./character-counter.js";
+import { X_SOCIAL_BODY_MAX_WEIGHTED } from "./social-write.js";
 import type { XSocialPlan } from "./social-plan.js";
 import { writeXSocialCopy, synthesizeXSocialFromPlan } from "./social-write.js";
 import type { LLMProvider } from "../adapters/types.js";
@@ -184,10 +186,17 @@ function isMechanicalIntro(body: string, plan: XSocialPlan): boolean {
 export function reviewXSocialCopy(
   body: string,
   plan: XSocialPlan,
-  opts?: { maxChars?: number; officialDescription?: string | null; recentBodies?: string[] },
+  opts?: {
+    /** Plain character cap (tests). X itself is checked by weighted length below. */
+    maxChars?: number;
+    maxWeightedLength?: number;
+    officialDescription?: string | null;
+    recentBodies?: string[];
+  },
 ): SocialReviewResult {
   const findings: SocialReviewFinding[] = [];
-  const maxChars = opts?.maxChars ?? 240;
+  const maxChars = opts?.maxChars ?? Number.POSITIVE_INFINITY;
+  const maxWeighted = opts?.maxWeightedLength ?? X_SOCIAL_BODY_MAX_WEIGHTED;
   const text = body.trim();
   const sents = sentencesOf(text);
 
@@ -470,8 +479,9 @@ export function reviewXSocialCopy(
     fail("PRODUCT_SPECIFICITY", "TOO_THIN", "identity/chronology insufficient");
   }
 
-  if (compactLen > maxChars) {
-    fail("MEDIA_FIT", "TOO_LONG", `body exceeds ${maxChars}`);
+  const weighted = new XCharacterCounter().count(text).weightedLength;
+  if (compactLen > maxChars || weighted > maxWeighted) {
+    fail("MEDIA_FIT", "TOO_LONG", `body is ${weighted} of ${maxWeighted} on X`);
   }
 
   const exemptPhrase = plan.productTitle;
@@ -749,7 +759,9 @@ function findingsToHints(findings: SocialReviewFinding[]): string[] {
     );
   }
   if (codes.has("TOO_LONG")) {
-    hints.push("Shorten to fit X length while keeping the work-specific hook.");
+    hints.push(
+      `Shorten to ${Math.floor(X_SOCIAL_BODY_MAX_WEIGHTED / 2)} Japanese characters or fewer (X counts each as 2) while keeping the work-specific hook.`,
+    );
   }
   if (codes.has("STOCK_CTA") || codes.has("AD_COPY_DETECTED")) {
     hints.push("Remove CTA and ad lines. Publication adds the URL. Do not write 詳細はこちら or 今すぐチェック.");

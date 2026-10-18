@@ -134,6 +134,7 @@ export function ledgeringXCopyProvider(
           cid: ctx.cid,
           artifactFingerprint: ctx.fingerprint,
           attemptKind: "creative",
+          regenerateReason: ctx.regenerateReason ?? request.safety?.regenerateReason ?? null,
         },
       };
       try {
