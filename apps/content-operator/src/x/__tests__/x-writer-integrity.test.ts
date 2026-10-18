@@ -66,8 +66,8 @@ describe("X writer integrity", () => {
 
   it("revises the draft the findings were about, not an older one", async () => {
     // Both drafts fail on findings that keep the previous draft as the rewrite anchor.
-    const first = "九井スナオの完全主観ホラー、気になってた。夜に見るのはやめておこう。";
-    const second = "九井スナオの完全主観ホラー、気になってた。昼に見るのがよさそう。";
+    const first = "九井スナオとミサキの完全主観ホラー、気になってた。";
+    const second = "九井スナオとアヤカの完全主観ホラー、気になってた。";
     const line = "九井スナオの完全主観ホラー、気になってた。";
     const llm = scripted([first, second, line]);
     await runXSocialPipeline({
@@ -81,5 +81,27 @@ describe("X writer integrity", () => {
     expect(llm.prompts).toHaveLength(3);
     expect(llm.prompts[2]!.userPrompt).toContain(second);
     expect(llm.prompts[2]!.userPrompt).not.toContain(first);
+  });
+
+  it("lets a personal reaction through, and still stops an invented name or number", () => {
+    const pass = [
+      "九井スナオの完全主観ホラー、気になってた。夜に見るのはやめておこう。",
+      "九井スナオ、こういう役も合うんだな。完全主観ホラーは初めて見るかも。",
+      "神出鬼没って書いてあって笑った。九井スナオの完全主観ホラー、あとで見る。",
+      "九井スナオの新作、完全主観ホラーらしい。怖いの苦手だけど見たい！",
+    ];
+    for (const body of pass) {
+      const blocking = reviewXSocialCopy(body, plan()).findings.filter((f) => f.severity === "BLOCKING");
+      expect(blocking.map((f) => f.code), body).toEqual([]);
+    }
+    const invented = [
+      "九井スナオとミサキの完全主観ホラー、気になってた。",
+      "九井スナオの完全主観ホラー、120分もあるのか。",
+      "怖いの苦手だけど見たい。夜に見るのはやめておこう。",
+    ];
+    for (const body of invented) {
+      const codes = reviewXSocialCopy(body, plan()).findings.map((f) => f.code);
+      expect(codes, body).toContain("UNGROUNDED");
+    }
   });
 });

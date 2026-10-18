@@ -183,27 +183,24 @@ export function isTemplateExplainer(text: string): boolean {
   return false;
 }
 
-const STRUCTURAL_CONTENT_WORD =
-  /^(?:作品|紹介|収録|出演|企画|シリーズ|焦点|ベスト|総集|配信|限定|時間|ボリューム|タイトル)$/u;
-
 /**
- * A kanji word in the post that is not in the safe facts, the performer, or the small set of framing words.
- * This catches a new scene, feeling, or viewpoint that the planner did not pass through.
+ * A name-like word in the post that the official information does not contain:
+ * a katakana word, a Latin word, or a number. These are where invented performers, series,
+ * labels, runtimes, and rankings show up. Ordinary kanji words are left alone, because the
+ * writer is allowed its own reaction and a reaction is not a product fact.
  */
 export function ungroundedContentWord(text: string, grounded: string): string | null {
-  const tokens = text.match(/[一-龯]{2,}/gu) ?? [];
+  const groundedKey = grounded.normalize("NFKC").toLowerCase();
+  const tokens = text.normalize("NFKC").match(/[ァ-ヶー]{3,}|[A-Za-z]{3,}|\d{2,}/gu) ?? [];
   for (const token of tokens) {
-    if (STRUCTURAL_CONTENT_WORD.test(token)) continue;
-    if (grounded.includes(token)) continue;
-    return token;
-  }
-  const kana = text.match(/[ァ-ヶー]{3,}/gu) ?? [];
-  for (const token of kana) {
-    if (grounded.includes(token)) continue;
+    if (FRAMING_WORD.test(token)) continue;
+    if (groundedKey.includes(token.toLowerCase())) continue;
     return token;
   }
   return null;
 }
+
+const FRAMING_WORD = /^(?:シリーズ|タイトル|ボリューム|ベスト)$/u;
 
 const SOURCE_PHRASE_SPLIT = /[！!？?。．…／/|｜＆&]+|\s+/u;
 

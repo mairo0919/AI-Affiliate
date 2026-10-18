@@ -90,35 +90,6 @@ export const X_AD_COPY_PATTERNS: RegExp[] = [
   /オススメです/u,
 ];
 
-/** Reaction words that are not product facts. Adjust from live samples. */
-export const X_SUBJECTIVE_WORDS = [
-  "昨日",
-  "今日",
-  "最近",
-  "普通",
-  "個人",
-  "保存",
-  "今回",
-  "新作",
-  "内容",
-  "好み",
-  "感想",
-  "自分",
-  "笑",
-  "一応",
-  "設定",
-  "組合",
-  "期待",
-  "最初",
-  "今度",
-  "結構",
-  "タイトル",
-  "シリーズ",
-] as const;
-
-const REACTION_RE =
-  /見た|よかった|好き|気にな|思った|出てた|出てる|保存|一応|なんか|普通に|個人的|なんだよ|だよね|かも|笑|あとで|昨日|今回|新しい|これか|久しぶり|とりあえず/u;
-
 function hashSeed(seed: string): number {
   let hash = 2166136261;
   for (let i = 0; i < seed.length; i += 1) {
@@ -195,19 +166,8 @@ export function identifiesXWork(text: string, plan: XSocialPlan): boolean {
   return names.some((name) => name.length >= 2 && text.includes(name));
 }
 
-export function stripSubjectiveWords(text: string): string {
-  let next = text;
-  for (const word of X_SUBJECTIVE_WORDS) next = next.split(word).join("");
-  return next;
-}
-
 export function ungroundedProductWord(text: string, grounded: string): string | null {
-  return ungroundedContentWord(stripSubjectiveWords(text), grounded);
-}
-
-export function isSubjectiveReaction(sentence: string, grounded: string): boolean {
-  if (!REACTION_RE.test(sentence)) return false;
-  return ungroundedProductWord(sentence, grounded) == null;
+  return ungroundedContentWord(text, grounded);
 }
 
 export function recentOpeningClash(body: string, recent: readonly string[]): boolean {

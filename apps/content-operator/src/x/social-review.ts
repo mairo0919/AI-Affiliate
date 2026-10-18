@@ -21,7 +21,6 @@ import {
   detectListedPhrase,
   hasHashtag,
   identifiesXWork,
-  isSubjectiveReaction,
   recentOpeningClash,
   ungroundedProductWord,
   X_AD_COPY_PATTERNS,
@@ -152,14 +151,6 @@ function isGrounded(sentence: string, plan: XSocialPlan): boolean {
     }
   }
   return false;
-}
-
-function isSoftEditorialWrap(sentence: string): boolean {
-  return (
-    sentence.length <= 42 &&
-    /注目|印象|雰囲気|焦点|紹介できる|取り上げ|気になる点|差別化/u.test(sentence) &&
-    !/魅力を存分|間違いなし|核心を成して/u.test(sentence)
-  );
 }
 
 function isMechanicalIntro(body: string, plan: XSocialPlan): boolean {
@@ -300,8 +291,8 @@ export function reviewXSocialCopy(
   }
 
   if (
-    isTitleFragmentRun(text) ||
-    sents.some((sent) => isTitleFragmentRun(sent)) ||
+    // Per clause: casual speech often drops particles across a whole post, a pasted title does not use commas.
+    text.split(/[、。！？!?…\n]/u).some((clause) => isTitleFragmentRun(clause)) ||
     (plan.productTitle ? hasJoinedSourcePhrases(text, plan.productTitle) : false)
   ) {
     fail(
@@ -427,6 +418,8 @@ export function reviewXSocialCopy(
 
   const semanticValues = (plan.semanticFacts ?? []).map((fact) => fact.value);
   const groundedForWords = [
+    plan.productTitle,
+    opts?.officialDescription,
     plan.subject,
     plan.contentType,
     plan.canonicalContext.seriesName,
@@ -461,13 +454,9 @@ export function reviewXSocialCopy(
     fail("NATURAL_JAPANESE", "FRAGMENT_ASSEMBLY", "raw claim fragment pasted as body");
   }
 
-  for (const sent of sents) {
-    if (/出演$/u.test(sent) && plan.subject && sent.includes(plan.subject)) continue;
-    if (isSoftEditorialWrap(sent) && plan.subject && text.includes(plan.subject)) continue;
-    if (workNamed && isSubjectiveReaction(sent, groundedForWords)) continue;
-    if (!isGrounded(sent, plan)) {
-      fail("GROUNDING", "UNGROUNDED", `ungrounded: ${sent.slice(0, 32)}`);
-    }
+  // A reaction is allowed. The post only has to be about this work.
+  if (text && !workNamed && !sents.some((sent) => isGrounded(sent, plan))) {
+    fail("GROUNDING", "UNGROUNDED", "post does not identify the work");
   }
 
   if (
@@ -511,18 +500,6 @@ export function reviewXSocialCopy(
   }
   if (recentOpeningClash(text, opts?.recentBodies ?? [])) {
     fail("VOICE", "TOO_SIMILAR_TO_RECENT_POST", "opening matches a recent post");
-  }
-
-  if (sents.length >= 2) {
-    const groundedCount = sents.filter(
-      (s) =>
-        isGrounded(s, plan) ||
-        (workNamed && isSubjectiveReaction(s, groundedForWords)) ||
-        (isSoftEditorialWrap(s) && !!plan.subject && text.includes(plan.subject)),
-    ).length;
-    if (groundedCount < sents.length) {
-      fail("COHERENCE", "COHERENCE", "sentences not coherently about the same work");
-    }
   }
 
   if (/ちゃんとエッチができるんだ|KMPVRが変わる/u.test(text)) {
