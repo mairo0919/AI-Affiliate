@@ -67,7 +67,13 @@ import {
   probeXScheduleCandidates,
   type XSlotLiveOutcome,
 } from "./x-slot-live.js";
-import { listUpcomingXPostSlots, shouldPlanXHorizon } from "./x-post-schedule.js";
+import {
+  countWaitingRecommendedSlots,
+  listUpcomingXPostSlots,
+  shouldPlanXHorizon,
+} from "./x-post-schedule.js";
+import { loadRecommendedDaysByProductKey } from "../stock/approved-stock.js";
+import { normalizeProductKey } from "./blog-product-exclusion.js";
 import { maxNewXCopyCandidatesForRefill, readConfiguredXCopyRefillCap } from "../x/x-copy-artifact.js";
 import { formatXRefillNote } from "../x/x-copy-refill.js";
 import { demandPriorityReason, publicationPriorityClass } from "./demand-signal.js";
@@ -202,7 +208,7 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
       dayCount: 3,
       timeZone: daily.timezone,
     });
-    openFutureSlots = listUpcomingXPostSlots({
+    const upcomingXSlots = listUpcomingXPostSlots({
       now,
       dayCount: 3,
       hours: daily.xPostSlotHoursJst,
@@ -210,7 +216,10 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
       filledSlotKeys,
       extraDayKey: daily.xPostExtraSlotsDayJst,
       extraTimes: daily.xPostExtraSlotTimesJst,
-    }).length;
+    });
+    openFutureSlots =
+      upcomingXSlots.length -
+      countWaitingRecommendedSlots(upcomingXSlots, daily.xRecommendedSlotHourJst, dayKey);
   }
 
   if (
@@ -622,7 +631,10 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
     const usedCids = await loadPostedXCanonicalIds(deps.database.prisma);
     const usedCvs = await loadPostedXContentVersionIds(deps.database.prisma);
 
-    const ranked = listRankedXCandidates({
+    // Today's recommended work (written by the WordPress stock worker) is probed first so its
+    // copy exists for the recommended slot even when demand order would rank it lower.
+    const recommendedDays = await loadRecommendedDaysByProductKey(deps.database.prisma, dayKey);
+    const rankedByDemand = listRankedXCandidates({
       pool: deps.smokeCanonicalId
         ? pool.filter((c) => c.canonicalId.toLowerCase() === deps.smokeCanonicalId!.toLowerCase())
         : pool,
@@ -646,6 +658,14 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
       excludeCanonicalIds: usedCids,
       blogCanonicalId: plan.blog.selection.selected?.canonicalId ?? null,
     });
+    const recommendedFirst = deps.smokeCanonicalId ? [] : pool.filter((c) => {
+      const key = normalizeProductKey(c.canonicalId);
+      return key != null && recommendedDays.has(key) && !usedCids.has(c.canonicalId.trim().toLowerCase());
+    });
+    const ranked = [
+      ...recommendedFirst,
+      ...rankedByDemand.filter((c) => !recommendedFirst.some((r) => r.canonicalId === c.canonicalId)),
+    ];
 
     // X copy Writer prefers API LLM (same as WP). Fallback to createLLMProvider (mock/synthesize).
     let xCopyLlm;
@@ -675,7 +695,10 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
       ),
       llm: xCopyLlm,
     });
-    const probes = probed.probes;
+    const probes = probed.probes.map((probe) => ({
+      ...probe,
+      recommendedForDay: recommendedDays.get(normalizeProductKey(probe.canonicalId) ?? "") ?? null,
+    }));
     const refillNote = formatXRefillNote(probed.metrics);
     deps.logger.info(refillNote);
 
@@ -696,6 +719,7 @@ export async function runDailyMultiChannelLive(deps: DailyLiveDeps): Promise<Dai
       dayCount: 3,
       extraDayKey: daily.xPostExtraSlotsDayJst,
       extraTimes: daily.xPostExtraSlotTimesJst,
+      recommendedHour: daily.xRecommendedSlotHourJst,
     }).filter((a) => a.status === "ASSIGNED");
 
     const rankedByCid = new Map(

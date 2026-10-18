@@ -108,6 +108,10 @@ async function main(): Promise<void> {
         )
         .join(";") || "none";
       const stockGenerated = stockGen.skipped ? 0 : stockGen.generated;
+      const recommendedSlot =
+        "recommended" in result.stockGeneration && result.stockGeneration.recommended
+          ? `${result.stockGeneration.recommended.status}:${result.stockGeneration.recommended.canonicalId ?? "-"}`
+          : "-";
       if (!stockGen.skipped && stockGenerated === 0) {
         logger.warn("stock generation produced 0 articles this tick");
       }
@@ -138,7 +142,7 @@ async function main(): Promise<void> {
           "skipped" in result.analysis && result.analysis.skipped
         } contentSkipped=${"skipped" in result.content && result.content.skipped} stockResearchSkipped=${
           "skipped" in result.stockResearch && result.stockResearch.skipped
-        } stockResearchReason=${stockResearchReason ?? "-"} stockSkipped=${stockGen.skipped} stockGenerated=${
+        } stockResearchReason=${stockResearchReason ?? "-"} stockSkipped=${stockGen.skipped} stockSkipReason=${stockGen.skipped ? (stockGen.reason ?? "-") : "-"} recommendedSlot=${recommendedSlot} stockGenerated=${
           stockGenerated
         } unusedApproved=${stockGen.skipped ? "-" : stockGen.unusedAfter} publishSlotsSkipped=${
           publish.skipped

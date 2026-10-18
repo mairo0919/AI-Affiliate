@@ -1,6 +1,8 @@
 /**
  * Fixed X posting schedule (JST):
  * - Regular: max DAILY_X_POSTS (default 3) — 12:00 / 18:00 SECONDARY + 23:00 MAIN
+ * - The recommended hour (default 22:00, active only when it is one of the slots) only takes
+ *   the work written for that day's recommended slot; other days' recommended slots stay open
  * - Optional date-scoped EXTRA HH:MM slots with a separate quota
  * - Hard cap = regular + extra (default 4 when extras present)
  * - Fill open future slots in wall-clock order (earliest future slot first)
@@ -11,6 +13,7 @@
 
 export const DEFAULT_X_POST_SLOT_HOURS_JST = [12, 18, 23] as const;
 export const DEFAULT_X_MAIN_POST_SLOT_HOUR_JST = 23;
+export const DEFAULT_X_RECOMMENDED_SLOT_HOUR_JST = 22;
 export const DEFAULT_X_POSTS_PER_DAY = 3;
 
 export type XPostSlotRole = "MAIN" | "SECONDARY";
@@ -34,7 +37,24 @@ export type XScheduleCandidate = {
   skipReason?: string | null;
   /** Lower is better (optional). */
   rank?: number;
+  /** JST day whose recommended slot this work was written for. */
+  recommendedForDay?: string | null;
 };
+
+/**
+ * Open future recommended slots on later days. They wait for that day's work, so
+ * generating copy for them now would only produce copy that cannot be placed.
+ */
+export function countWaitingRecommendedSlots(
+  slots: readonly Pick<XPostTimeSlot, "hour" | "kind" | "slotKey">[],
+  recommendedHour: number | null | undefined,
+  todayKey: string,
+): number {
+  if (recommendedHour == null) return 0;
+  return slots.filter(
+    (s) => s.hour === recommendedHour && (s.kind ?? "STANDARD") === "STANDARD" && s.slotKey.slice(0, 10) !== todayKey,
+  ).length;
+}
 
 export type XSlotAssignmentStatus = "ASSIGNED" | "EMPTY" | "SKIP_SLOT";
 
@@ -231,6 +251,10 @@ export function allocateXPostSlots(input: {
   filledSlotKeys?: ReadonlySet<string> | Iterable<string>;
   usedCanonicalIds?: Iterable<string>;
   usedContentVersionIds?: Iterable<string>;
+  /** JST day these slots belong to; required for the recommended slot rule. */
+  dayKey?: string;
+  /** Hour reserved for the day's recommended work (null = no recommended slot). */
+  recommendedHour?: number | null;
 }): XSlotAssignment[] {
   const maxStandard = Math.max(
     0,
@@ -314,7 +338,13 @@ export function allocateXPostSlots(input: {
       continue;
     }
     const allowed = canAssign(kind);
-    const cand = allowed ? queue.shift() ?? null : null;
+    const recommendedSlot =
+      input.recommendedHour != null && input.dayKey != null && kind === "STANDARD" && slot.hour === input.recommendedHour;
+    // The recommended slot takes only the day's recommended work; other slots never take it.
+    const index = queue.findIndex((c) =>
+      recommendedSlot ? c.recommendedForDay === input.dayKey : !(input.dayKey && c.recommendedForDay === input.dayKey),
+    );
+    const cand = allowed && index >= 0 ? queue.splice(index, 1)[0] ?? null : null;
     if (cand) {
       markAssigned(kind);
       push({
@@ -341,7 +371,9 @@ export function allocateXPostSlots(input: {
         scheduledAt: slot.at,
         status: "EMPTY",
         candidate: null,
-        reason: pass.length === 0
+        reason: recommendedSlot && allowed
+          ? "recommended_not_ready"
+          : pass.length === 0
           ? "no_pass_candidates"
           : !allowed
             ? budgetExhaustedReason(kind)
@@ -528,6 +560,7 @@ export function planXPostScheduleHorizon(input: {
   usedContentVersionIds?: Iterable<string>;
   extraDayKey?: string | null;
   extraTimes?: readonly XPostExtraSlotTime[];
+  recommendedHour?: number | null;
 }): XHorizonAssignment[] {
   const filled = new Set(
     input.filledSlotKeys instanceof Set
@@ -600,6 +633,8 @@ export function planXPostScheduleHorizon(input: {
       hardCapPerDay: remaining,
       usedCanonicalIds: usedCid,
       usedContentVersionIds: usedCv,
+      dayKey,
+      recommendedHour: input.recommendedHour,
     });
 
     for (const a of dayPlan) {

@@ -742,6 +742,7 @@ export function planXHorizonFromProbes(input: {
   dayCount?: number;
   extraDayKey?: string | null;
   extraTimes?: readonly XPostExtraSlotTime[];
+  recommendedHour?: number | null;
 }): XHorizonAssignment[] {
   return planXPostScheduleHorizon({
     now: input.now,
@@ -758,5 +759,6 @@ export function planXHorizonFromProbes(input: {
     dayCount: input.dayCount ?? 3,
     extraDayKey: input.extraDayKey,
     extraTimes: input.extraTimes,
+    recommendedHour: input.recommendedHour,
   });
 }

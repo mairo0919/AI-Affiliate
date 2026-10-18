@@ -8,6 +8,7 @@ import { DEFAULT_RELEASE_AGE_THRESHOLDS } from "./release-age.js";
 import type { ChannelDuplicateConfig } from "./channel-duplicate.js";
 import {
   DEFAULT_X_MAIN_POST_SLOT_HOUR_JST,
+  DEFAULT_X_RECOMMENDED_SLOT_HOUR_JST,
   DEFAULT_X_POSTS_PER_DAY,
   DEFAULT_X_POST_SLOT_HOURS_JST,
   parseXPostExtraSlotTimesJst,
@@ -24,6 +25,8 @@ export interface DailyMultiChannelConfig {
   xPostSlotHoursJst: number[];
   /** MAIN X slot hour JST (default 23). Other standard hours are SECONDARY. */
   xMainPostSlotHourJst: number;
+  /** Hour reserved for the day's recommended work (X_RECOMMENDED_SLOT_HOUR_JST). */
+  xRecommendedSlotHourJst: number;
   /**
    * One calendar day only (YYYY-MM-DD JST). Extra HH:MM slots apply solely on this day
    * and never leak into later days' schedule calculation.
@@ -104,6 +107,10 @@ export function loadDailyMultiChannelConfig(
     env.X_MAIN_POST_SLOT_HOUR_JST,
     DEFAULT_X_MAIN_POST_SLOT_HOUR_JST,
   );
+  const xRecommendedSlotHourJst = parsePositiveInt(
+    env.X_RECOMMENDED_SLOT_HOUR_JST,
+    DEFAULT_X_RECOMMENDED_SLOT_HOUR_JST,
+  );
   const xPostExtraSlotsDayJst = parseXPostExtraSlotsDayJst(env.X_POST_EXTRA_SLOTS_DAY_JST);
   const xPostExtraSlotTimesJst = parseXPostExtraSlotTimesJst(env.X_POST_EXTRA_SLOTS_TIMES_JST);
   // Regular daily X budget capped by standard slot count (start: max 2).
@@ -129,6 +136,7 @@ export function loadDailyMultiChannelConfig(
     xPostsPerDay,
     xPostSlotHoursJst,
     xMainPostSlotHourJst,
+    xRecommendedSlotHourJst,
     xPostExtraSlotsDayJst,
     xPostExtraSlotTimesJst,
     xExtraPostsBudget,

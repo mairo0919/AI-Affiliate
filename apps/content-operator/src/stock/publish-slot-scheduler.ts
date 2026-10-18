@@ -1,6 +1,8 @@
 /**
  * WordPress future publish scheduler — separate from generation.
- * Slots: 12:00 / 21:00 / 23:00 JST (max 3/day).
+ * Slots: WP_PUBLISH_SLOTS_JST (default 21:00 / 22:00 / 23:00 JST, max 3/day).
+ * The recommended hour (WP_RECOMMENDED_SLOT_HOUR_JST) only takes the version written for
+ * that day's recommended slot; it is never filled from normal stock or booked ahead.
  * Skip PUBLIC-blocked articles and continue to next eligible.
  * Never touches protected posts 43/46 except scheduling when PUBLIC-eligible.
  */
@@ -23,6 +25,9 @@ import {
   evaluatePublicEligibilityFromStructured,
   extractProductKeyFromStructured,
   extractProviderHint,
+  isHeldForRecommendedSlot,
+  loadWordPressPostedProductKeys,
+  readPublicationRole,
   type ApprovedStockRow,
 } from "./approved-stock.js";
 import { computeFutureReserveBudget, loadStockRuntimeConfig } from "./stock-config.js";
@@ -85,6 +90,21 @@ export function futureSlotsStillOpen<T extends { year: number; month: number; da
   return slots.filter(
     (slot) => !reservedKeys.has(slotKey(slot.year, slot.month, slot.day, slot.hour)),
   );
+}
+
+function slotDay(slot: { year: number; month: number; day: number }): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${slot.year}-${p(slot.month)}-${p(slot.day)}`;
+}
+
+/** Which queue may fill a slot: the day's recommended version, normal stock, or nothing yet. */
+export function slotQueueKind(
+  slot: { year: number; month: number; day: number; hour: number },
+  input: { recommendedHour: number; todayJst: string },
+): "recommended" | "normal" | "wait" {
+  if (slot.hour !== input.recommendedHour) return "normal";
+  // Recommended works are written on the day they post; later days stay open until then.
+  return slotDay(slot) === input.todayJst ? "recommended" : "wait";
 }
 
 function slotKey(year: number, month: number, day: number, hour: number): string {
@@ -260,9 +280,32 @@ export async function runPublishSlotScheduler(deps: {
     queue.push(row);
   }
   const demandRanks = productDemandRanks(await loadLatestDemandSnapshot(deps.database.prisma));
+  const todayJst = slotDay(
+    listUpcomingPublishSlots({
+      now,
+      timeZone: deps.config.publicationTimezone || "Asia/Tokyo",
+      hours: [0],
+      days: 1,
+      includePastToday: true,
+    })[0]!,
+  );
+  const posted = await loadWordPressPostedProductKeys(deps.database.prisma);
+  const otherSkipped: PublishSlotScheduleResult["otherSkipped"] = [];
   const ordered = orderStockByPublicationPriority(queue, demandRanks);
   queue.length = 0;
-  queue.push(...ordered);
+  const recommendedQueue: typeof queue = [];
+  for (const row of ordered) {
+    if (row.productKey && posted.has(row.productKey)) {
+      // Re-generated versions of products already on WordPress can never be scheduled.
+      otherSkipped.push({ contentVersionId: row.contentVersionId, reason: "DUPLICATE_POSTED_PRODUCT" });
+      continue;
+    }
+    if (isHeldForRecommendedSlot(row, todayJst)) {
+      if (row.recommendedForDay === todayJst) recommendedQueue.push(row);
+      continue;
+    }
+    queue.push(row);
+  }
 
   // Existing WP inventory (#43/#46): keep DRAFT until PUBLIC-eligible, then promote to future.
   const protectedIds = runtime.protectedWpPostIds.map(String);
@@ -303,6 +346,7 @@ export async function runPublishSlotScheduler(deps: {
       hasWordPressTarget: true,
       publicEligible: pub.eligible,
       publicBlockReasons: pub.eligible ? [] : pub.evaluation.failureCodes,
+      ...readPublicationRole(version.structuredContent),
       updateExistingDraft: true,
     };
     if (!row.publicEligible) {
@@ -319,8 +363,6 @@ export async function runPublishSlotScheduler(deps: {
 
   const publisher = createWordPressPublisherFromConfig(deps.config);
   const reserved: PublishSlotScheduleResult["reserved"] = [];
-  const otherSkipped: PublishSlotScheduleResult["otherSkipped"] = [];
-  let queueIdx = 0;
   const reservedLoad = await loadReservedSlotKeys({
     prisma: deps.database.prisma,
     config: deps.config,
@@ -355,7 +397,7 @@ export async function runPublishSlotScheduler(deps: {
     futureTargetPosts: runtime.futureTargetPosts,
     scheduleMaxPerTick: runtime.scheduleMaxPerTick,
   });
-  if (!inventoryBudget.allow) {
+  if (!inventoryBudget.allow && recommendedQueue.length === 0) {
     return {
       skipped: true,
       skipReason: inventoryBudget.reason ?? "FUTURE_AT_OR_ABOVE_TARGET",
@@ -377,22 +419,26 @@ export async function runPublishSlotScheduler(deps: {
       otherSkipped: [],
     };
   }
-  const maxPerTick = inventoryBudget.budget;
+  // The recommended slot is outside the future-inventory budget: it must post every day.
+  const maxPerTick = inventoryBudget.allow ? inventoryBudget.budget : 0;
   let openSlotsBeforeReserve = 0;
   for (const slot of slots) {
     const key = slotKey(slot.year, slot.month, slot.day, slot.hour);
     if (!reservedKeys.has(key)) openSlotsBeforeReserve += 1;
   }
 
+  const cursors = { normal: 0, recommended: 0 };
+  let normalReserved = 0;
   for (const slot of futureSlotsStillOpen(slots, reservedKeys)) {
-    if (reserved.length >= maxPerTick) {
-      break;
-    }
+    const kind = slotQueueKind(slot, { recommendedHour: runtime.recommendedSlotHourJst, todayJst });
+    if (kind === "wait") continue;
+    if (kind === "normal" && normalReserved >= maxPerTick) continue;
+    const slotQueue = kind === "recommended" ? recommendedQueue : queue;
     const key = slotKey(slot.year, slot.month, slot.day, slot.hour);
 
     let placed = false;
-    while (queueIdx < queue.length && !placed) {
-      const candidate = queue[queueIdx++]!;
+    while (cursors[kind] < slotQueue.length && !placed) {
+      const candidate = slotQueue[cursors[kind]++]!;
       let result: WordPressPublishOneResult;
       try {
         result = await publishContentVersionToWordPress(
@@ -453,6 +499,7 @@ export async function runPublishSlotScheduler(deps: {
         });
         reservedKeys.add(key);
         placed = true;
+        if (kind === "normal") normalReserved += 1;
       } else if (result.ok && result.skipped) {
         if (result.reason === "IMAGE_PUBLIC_ELIGIBILITY") {
           publicBlocked.push({

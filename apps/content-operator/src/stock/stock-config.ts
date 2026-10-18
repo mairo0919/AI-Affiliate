@@ -5,9 +5,20 @@
  */
 
 export const DEFAULT_STOCK_GENERATION_BATCH = 3;
-/** Soft daily LLM generation cap (not a near-zero stop). */
+/** Safety cap on normal stock generations per JST day. Refill rules decide whether to generate at all. */
 export const DEFAULT_STOCK_MAX_GENERATIONS_PER_DAY = 48;
 export const DEFAULT_PUBLISH_SLOT_HOURS_JST = [12, 21, 23] as const;
+/**
+ * The daily slot that must carry today's top unpublished popular work, written the same day.
+ * Active only when this hour is one of the publish slots (production: WP_PUBLISH_SLOTS_JST=21,22,23).
+ */
+export const DEFAULT_RECOMMENDED_SLOT_HOUR_JST = 22;
+/** Writer attempts per JST day for the recommended slot before it is left empty. */
+export const DEFAULT_RECOMMENDED_MAX_ATTEMPTS_PER_DAY = 3;
+/** Normal stock is generated only when usable stock drops below this... */
+export const DEFAULT_STOCK_REFILL_BELOW = 9;
+/** ...and then refilled up to this (one week of normal slots). */
+export const DEFAULT_STOCK_REFILL_TARGET = 21;
 /** Future reservation horizon (days including today). */
 export const DEFAULT_WORDPRESS_SCHEDULE_HORIZON_DAYS = 90;
 /**
@@ -33,6 +44,10 @@ export function loadStockRuntimeConfig(env: NodeJS.ProcessEnv = process.env): {
   generationBatch: number;
   maxGenerationsPerDay: number;
   publishSlotHoursJst: number[];
+  recommendedSlotHourJst: number;
+  recommendedMaxAttemptsPerDay: number;
+  stockRefillBelow: number;
+  stockRefillTarget: number;
   scheduleHorizonDays: number;
   scheduleMaxPerTick: number;
   futureTargetPosts: number;
@@ -51,11 +66,15 @@ export function loadStockRuntimeConfig(env: NodeJS.ProcessEnv = process.env): {
     const n = Number(raw);
     return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
   };
+  const parseHour = (raw: string | undefined, fallback: number) => {
+    const n = Number(raw);
+    return raw != null && raw.trim() !== "" && Number.isInteger(n) && n >= 0 && n <= 23 ? n : fallback;
+  };
   const parseBool = (raw: string | undefined, fallback: boolean) => {
     if (raw == null || raw.trim() === "") return fallback;
     return ["1", "true", "yes", "on"].includes(raw.trim().toLowerCase());
   };
-  const slots = (env.WP_PUBLISH_SLOTS_JST ?? "12,21,23")
+  const slots = (env.WP_PUBLISH_SLOTS_JST ?? DEFAULT_PUBLISH_SLOT_HOURS_JST.join(","))
     .split(",")
     .map((s) => Number(s.trim()))
     .filter((n) => Number.isFinite(n) && n >= 0 && n <= 23);
@@ -83,6 +102,13 @@ export function loadStockRuntimeConfig(env: NodeJS.ProcessEnv = process.env): {
       DEFAULT_STOCK_MAX_GENERATIONS_PER_DAY,
     ),
     publishSlotHoursJst: slots.length > 0 ? slots : [...DEFAULT_PUBLISH_SLOT_HOURS_JST],
+    recommendedSlotHourJst: parseHour(env.WP_RECOMMENDED_SLOT_HOUR_JST, DEFAULT_RECOMMENDED_SLOT_HOUR_JST),
+    recommendedMaxAttemptsPerDay: parsePositive(
+      env.RECOMMENDED_MAX_ATTEMPTS_PER_DAY,
+      DEFAULT_RECOMMENDED_MAX_ATTEMPTS_PER_DAY,
+    ),
+    stockRefillBelow: parsePositive(env.STOCK_REFILL_BELOW, DEFAULT_STOCK_REFILL_BELOW),
+    stockRefillTarget: parsePositive(env.STOCK_REFILL_TARGET, DEFAULT_STOCK_REFILL_TARGET),
     scheduleHorizonDays: parsePositive(
       env.WORDPRESS_SCHEDULE_HORIZON_DAYS,
       DEFAULT_WORDPRESS_SCHEDULE_HORIZON_DAYS,
@@ -133,4 +159,21 @@ export function computeFutureReserveBudget(input: {
   // Below min → replenish; between min and target → climb to target. Same budget math.
   void min;
   return { allow: true, budget, reason: null };
+}
+
+/**
+ * How many normal stock articles to generate now. Generation starts only when usable
+ * stock is below `refillBelow`; once a refill has started today it continues up to
+ * `refillTarget`, so stock is topped up in one go instead of one article per dip.
+ */
+export function computeStockRefillNeed(input: {
+  usableStock: number;
+  refillBelow: number;
+  refillTarget: number;
+  normalGeneratedToday: number;
+}): number {
+  const target = Math.max(input.refillBelow, input.refillTarget);
+  const refilling = input.usableStock < input.refillBelow || input.normalGeneratedToday > 0;
+  if (!refilling) return 0;
+  return Math.max(0, target - input.usableStock);
 }

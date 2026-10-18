@@ -24,7 +24,13 @@ export type ApprovedStockRow = {
   hasWordPressTarget: boolean;
   publicEligible: boolean;
   publicBlockReasons: string[];
+  /** "RECOMMENDED" when written for a day's recommended slot. */
+  publicationRole: string | null;
+  /** JST day (YYYY-MM-DD) whose recommended slot this version was written for. */
+  recommendedForDay: string | null;
 };
+
+export const RECOMMENDED_PUBLICATION_ROLE = "RECOMMENDED";
 
 function asRecord(v: unknown): Record<string, unknown> {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
@@ -147,9 +153,80 @@ export async function listApprovedStock(
       hasWordPressTarget,
       publicEligible: pub.eligible,
       publicBlockReasons: pub.eligible ? [] : pub.evaluation.failureCodes,
+      ...readPublicationRole(v.structuredContent),
     });
   }
   return rows;
+}
+
+export function readPublicationRole(structured: unknown): {
+  publicationRole: string | null;
+  recommendedForDay: string | null;
+} {
+  const sc = asRecord(structured);
+  return {
+    publicationRole: typeof sc.publicationRole === "string" ? sc.publicationRole : null,
+    recommendedForDay: typeof sc.recommendedForDay === "string" ? sc.recommendedForDay : null,
+  };
+}
+
+/** A recommended version stays reserved for its own day; after that day it is ordinary stock. */
+export function isHeldForRecommendedSlot(
+  row: Pick<ApprovedStockRow, "publicationRole" | "recommendedForDay">,
+  todayJst: string,
+): boolean {
+  return (
+    row.publicationRole === RECOMMENDED_PUBLICATION_ROLE &&
+    row.recommendedForDay != null &&
+    row.recommendedForDay >= todayJst
+  );
+}
+
+/**
+ * Product keys that already have a WordPress post (published, draft or future) through any version.
+ * An APPROVED re-generation of such a product can never be scheduled (duplicate gate), so it is not stock.
+ */
+export async function loadWordPressPostedProductKeys(
+  prisma: DatabaseClient["prisma"],
+): Promise<Set<string>> {
+  const targets = await prisma.publicationTarget.findMany({
+    where: {
+      platform: "WORDPRESS",
+      status: { in: ["PUBLISHED", "DRAFT", "SCHEDULED"] },
+      publishedExternalId: { not: null },
+    },
+    select: { platformMetadata: true },
+    take: 2000,
+  });
+  const keys = new Set<string>();
+  for (const t of targets) {
+    const meta = asRecord(t.platformMetadata);
+    const raw =
+      (typeof meta.productCanonicalId === "string" && meta.productCanonicalId) ||
+      (typeof meta.canonicalId === "string" && meta.canonicalId) ||
+      (typeof meta.productKey === "string" && meta.productKey) ||
+      null;
+    const key = normalizeProductKey(raw);
+    if (key) keys.add(key);
+  }
+  return keys;
+}
+
+/** Unused stock that the slot scheduler could actually place in a normal slot today. */
+export async function listUsableNormalStock(
+  prisma: DatabaseClient["prisma"],
+  todayJst: string,
+): Promise<ApprovedStockRow[]> {
+  const [rows, posted] = await Promise.all([
+    listApprovedStock(prisma, { unusedOnly: true, limit: 500 }),
+    loadWordPressPostedProductKeys(prisma),
+  ]);
+  return rows.filter(
+    (row) =>
+      row.publicEligible &&
+      !(row.productKey && posted.has(row.productKey)) &&
+      !isHeldForRecommendedSlot(row, todayJst),
+  );
 }
 
 export async function countUnusedApprovedStock(
@@ -285,4 +362,32 @@ export async function loadWordPressLiveProductKeys(config: AppConfig): Promise<{
       error: e instanceof Error ? e.message.slice(0, 160) : String(e).slice(0, 160),
     };
   }
+}
+
+/**
+ * Approved recommended works for today or later, keyed by product key → JST day.
+ * X uses this so its recommended slot carries the same work as WordPress.
+ */
+export async function loadRecommendedDaysByProductKey(
+  prisma: DatabaseClient["prisma"],
+  todayJst: string,
+): Promise<Map<string, string>> {
+  const versions = await prisma.contentVersion.findMany({
+    where: {
+      status: "APPROVED",
+      structuredContent: { path: ["publicationRole"], equals: RECOMMENDED_PUBLICATION_ROLE },
+    },
+    select: { structuredContent: true },
+    orderBy: { createdAt: "desc" },
+    take: 50,
+  });
+  const out = new Map<string, string>();
+  for (const v of versions) {
+    const role = readPublicationRole(v.structuredContent);
+    const key = extractProductKeyFromStructured(v.structuredContent);
+    if (key && role.recommendedForDay && role.recommendedForDay >= todayJst && !out.has(key)) {
+      out.set(key, role.recommendedForDay);
+    }
+  }
+  return out;
 }

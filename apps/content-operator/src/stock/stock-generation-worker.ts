@@ -30,9 +30,12 @@ import { buildFanzaCanonicalProductUrl } from "../adapters/affiliate/fanza-affil
 import { normalizeProductKey } from "../daily-ops/blog-product-exclusion.js";
 import {
   countUnusedApprovedStock,
+  listUsableNormalStock,
   loadArticledProductKeys,
+  RECOMMENDED_PUBLICATION_ROLE,
 } from "./approved-stock.js";
-import { loadStockRuntimeConfig } from "./stock-config.js";
+import { computeStockRefillNeed, loadStockRuntimeConfig } from "./stock-config.js";
+import type { DailyCandidateScore } from "../daily-blog/selection.js";
 import {
   buildRawDataAfterStockFailure,
   buildRawDataAfterStockSuccess,
@@ -75,6 +78,61 @@ async function countStockGenerationsOnTokyoDay(
   });
 }
 
+async function countRecommendedVersionsForDay(
+  prisma: DatabaseClient["prisma"],
+  dayKey: string,
+  status?: "APPROVED",
+): Promise<number> {
+  return prisma.contentVersion.count({
+    where: {
+      ...(status ? { status } : {}),
+      AND: [
+        { structuredContent: { path: ["publicationRole"], equals: RECOMMENDED_PUBLICATION_ROLE } },
+        { structuredContent: { path: ["recommendedForDay"], equals: dayKey } },
+      ],
+    },
+  });
+}
+
+/**
+ * Today's recommended slot needs an article when the slot is still ahead, nothing is
+ * booked into it, no approved recommended version waits for it, and attempts remain.
+ */
+async function recommendedSlotNeedsArticle(input: {
+  prisma: DatabaseClient["prisma"];
+  dayKey: string;
+  now: Date;
+  hour: number;
+  maxAttempts: number;
+}): Promise<{ needed: boolean; reason: string }> {
+  const slotKey = `${input.dayKey}T${String(input.hour).padStart(2, "0")}:00:00+09:00`;
+  if (input.now.getTime() >= new Date(slotKey).getTime()) return { needed: false, reason: "SLOT_PASSED" };
+  const booked = await input.prisma.publicationTarget.count({
+    where: {
+      platform: "WORDPRESS",
+      status: { in: ["SCHEDULED", "PUBLISHED", "DRAFT"] },
+      platformMetadata: { path: ["publishSlotKey"], equals: slotKey },
+    },
+  });
+  if (booked > 0) return { needed: false, reason: "SLOT_BOOKED" };
+  if ((await countRecommendedVersionsForDay(input.prisma, input.dayKey, "APPROVED")) > 0) {
+    return { needed: false, reason: "APPROVED_WAITING" };
+  }
+  const attempts = await countRecommendedVersionsForDay(input.prisma, input.dayKey);
+  if (attempts >= input.maxAttempts) return { needed: false, reason: "ATTEMPTS_EXHAUSTED" };
+  return { needed: true, reason: "OPEN" };
+}
+
+/** Highest-ranked FANZA API popular works first; works without a popular rank are not candidates. */
+export function rankRecommendedCandidates<T extends Pick<DailyCandidateScore, "popularRank">>(
+  pool: readonly T[],
+): T[] {
+  return pool
+    .filter((c) => typeof c.popularRank === "number" && c.popularRank > 0)
+    .slice()
+    .sort((a, b) => (a.popularRank as number) - (b.popularRank as number));
+}
+
 export type StockGenerationResult = {
   skipped: boolean;
   skipReason: string | null;
@@ -90,6 +148,8 @@ export type StockGenerationResult = {
   excludedAsDuplicate: number;
   held: Array<{ canonicalId: string; reason: string }>;
   approvedVersionIds: string[];
+  /** Today's recommended slot: what this run did about it. */
+  recommended?: { status: string; canonicalId: string | null };
 };
 
 export async function runStockGenerationBatch(deps: {
@@ -123,42 +183,44 @@ export async function runStockGenerationBatch(deps: {
     };
   }
 
-  const generatedToday = await countStockGenerationsOnTokyoDay(
-    deps.database.prisma,
-    tokyoDateString(now, daily.timezone),
-  );
-  if (generatedToday >= runtime.maxGenerationsPerDay) {
-    return {
-      skipped: true,
-      skipReason: "STOCK_MAX_GENERATIONS_PER_DAY",
-      unusedApprovedBefore: unusedBefore,
-      unusedApprovedAfter: unusedBefore,
-      minStock: runtime.minApprovedStock,
-      batchLimit: runtime.generationBatch,
-      analysisOk: false,
-      analysisExecuted: false,
-      analysisCandidates: 0,
-      generated: 0,
-      reviewPassed: 0,
-      excludedAsDuplicate: 0,
-      held: [],
-      approvedVersionIds: [],
-    };
-  }
+  const dayKey = tokyoDateString(now, daily.timezone);
+  const generatedToday = await countStockGenerationsOnTokyoDay(deps.database.prisma, dayKey);
+  const recommendedToday = await countRecommendedVersionsForDay(deps.database.prisma, dayKey);
+  const normalGeneratedToday = Math.max(0, generatedToday - recommendedToday);
+  const usableStock = (await listUsableNormalStock(deps.database.prisma, dayKey)).length;
+  const recommendedSlot = await recommendedSlotNeedsArticle({
+    prisma: deps.database.prisma,
+    dayKey,
+    now,
+    hour: runtime.recommendedSlotHourJst,
+    maxAttempts: runtime.recommendedMaxAttemptsPerDay,
+  });
 
-  const remainingDaily = Math.max(0, runtime.maxGenerationsPerDay - generatedToday);
-  const requested =
-    deps.forceBatch != null && Number.isFinite(deps.forceBatch)
-      ? Math.max(0, Math.floor(deps.forceBatch))
-      : runtime.generationBatch;
-  const toGenerate = Math.min(requested, remainingDaily);
+  // Normal stock is generated only to refill; the daily cap is a safety net on top.
+  const remainingDaily = Math.max(0, runtime.maxGenerationsPerDay - normalGeneratedToday);
+  const refillNeed = computeStockRefillNeed({
+    usableStock,
+    refillBelow: runtime.stockRefillBelow,
+    refillTarget: runtime.stockRefillTarget,
+    normalGeneratedToday,
+  });
+  const forced = deps.forceBatch != null && Number.isFinite(deps.forceBatch);
+  const toGenerate = forced
+    ? Math.min(Math.max(0, Math.floor(deps.forceBatch as number)), remainingDaily)
+    : Math.min(runtime.generationBatch, remainingDaily, refillNeed);
   // toGenerate is this tick's generation capacity. Demand order covers the
   // whole pool; later ticks consume the rest. X slots stay separate.
 
-  if (toGenerate <= 0) {
+  if (toGenerate <= 0 && !recommendedSlot.needed) {
+    const skipReason =
+      !forced && refillNeed <= 0
+        ? `STOCK_ABOVE_REFILL_THRESHOLD:usable=${usableStock}`
+        : remainingDaily <= 0
+          ? "STOCK_MAX_GENERATIONS_PER_DAY"
+          : "EMPTY_GENERATION_BUDGET";
     return {
       skipped: true,
-      skipReason: "EMPTY_GENERATION_BUDGET",
+      skipReason: skipReason,
       unusedApprovedBefore: unusedBefore,
       unusedApprovedAfter: unusedBefore,
       minStock: runtime.minApprovedStock,
@@ -171,6 +233,7 @@ export async function runStockGenerationBatch(deps: {
       excludedAsDuplicate: 0,
       held: [],
       approvedVersionIds: [],
+      recommended: { status: recommendedSlot.reason, canonicalId: null },
     };
   }
 
@@ -232,7 +295,6 @@ export async function runStockGenerationBatch(deps: {
   const channelHistory = await loadChannelPublicationHistory(deps.database.prisma);
   const recentMix = await loadRecentMixHistory(deps.database.prisma);
   const blogRecentActressKeys = await loadRecentBlogActressKeys(deps.database.prisma);
-  const dayKey = tokyoDateString(now, daily.timezone);
 
   const held: Array<{ canonicalId: string; reason: string }> = [];
   const approvedVersionIds: string[] = [];
@@ -259,6 +321,180 @@ export async function runStockGenerationBatch(deps: {
     new P6Repository(deps.database.prisma),
   );
   const logger = createLogger("info");
+
+  /** Runs one candidate through the canonical pipeline. True when a version was produced. */
+  const generateOne = async (
+    selected: DailyCandidateScore,
+    productKey: string,
+    stamp?: Record<string, unknown>,
+  ): Promise<boolean> => {
+    let produced = false;
+    const ctaUrl =
+      selected.affiliateUrl?.trim() ||
+      buildFanzaCanonicalProductUrl(selected.canonicalId);
+    const affiliateCheck = validateFanzaAffiliateUrl(ctaUrl);
+    if (!affiliateCheck.ok) {
+      held.push({ canonicalId: selected.canonicalId, reason: "AFFILIATE_URL_INVALID" });
+      return false;
+    }
+
+    try {
+      const item = await deps.database.prisma.researchItem.findUnique({
+        where: { id: selected.researchItemId },
+      });
+      if (!item) {
+        held.push({ canonicalId: selected.canonicalId, reason: "RESEARCH_ITEM_MISSING" });
+        return false;
+      }
+
+      const result = await runCanonicalArticlePipeline({
+        lifecycle: deps.lifecycle,
+        research: researchRepo,
+        generation,
+        contentReview,
+        config: deps.config,
+        logger,
+        researchItemId: item.id,
+        productTitle: item.title,
+        productCanonicalId: selected.canonicalId,
+        // Evidence ingest must use official product page URL (never affiliate wrapper).
+        productUrl: buildFanzaCanonicalProductUrl(selected.canonicalId),
+        rawData: item.rawData,
+        ctaUrl,
+        route: "STOCK_GENERATION",
+        objective: "stock_blog_option_b",
+        demandMatchKeywords: selected.matchedDemandKeywords,
+        autoApprove: true,
+        approveActor: "stock-auto-review",
+        auxiliarySafetyOk: ({ title, structuredContent }) =>
+          evaluateStockArticleQualityGate({
+            productTitle: item.title,
+            rawData: item.rawData,
+            structuredContent: {
+              ...structuredContent,
+              title,
+            },
+            writerTitle: title,
+          }),
+      });
+
+      if (stamp && result.contentVersionId) {
+        // Stamped even on review failure so the day's recommended attempts are counted.
+        const stamped = await deps.database.prisma.contentVersion.findUnique({
+          where: { id: result.contentVersionId },
+          select: { structuredContent: true },
+        });
+        await deps.lifecycle.updateContentVersionStructuredContent(result.contentVersionId, {
+          ...((stamped?.structuredContent ?? {}) as Record<string, unknown>),
+          ...stamp,
+        });
+      }
+
+      if (!result.ok) {
+        const reason = result.reason;
+        held.push({ canonicalId: selected.canonicalId, reason });
+        const failed = buildRawDataAfterStockFailure({
+          rawData: item.rawData,
+          reason,
+          now,
+          maxAttempts: runtime.stockMaxAttemptsBeforeDefer,
+        });
+        await deps.database.prisma.researchItem.update({
+          where: { id: item.id },
+          data: { rawData: asStoredJson(failed.rawData) },
+        });
+        ledgerByResearchId.set(item.id, failed.ledger);
+        return false;
+      }
+
+      generated += 1;
+      articled.add(productKey);
+      produced = true;
+
+      // Stamp analysis run id (canonical pipeline already set stockRoute / enrichment).
+      if (result.contentVersionId && analysisRunId) {
+        const cv = await deps.database.prisma.contentVersion.findUnique({
+          where: { id: result.contentVersionId },
+          select: { structuredContent: true },
+        });
+        const sc = (cv?.structuredContent ?? {}) as Record<string, unknown>;
+        await deps.lifecycle.updateContentVersionStructuredContent(result.contentVersionId, {
+          ...sc,
+          sourceProvider: "research",
+          analysisRunId,
+        });
+      }
+
+      const success = buildRawDataAfterStockSuccess({ rawData: item.rawData, now });
+      await deps.database.prisma.researchItem.update({
+        where: { id: item.id },
+        data: { rawData: asStoredJson(success.rawData) },
+      });
+      ledgerByResearchId.set(item.id, success.ledger);
+
+      if (result.approved) {
+        reviewPassed += 1;
+        approvedVersionIds.push(result.contentVersionId);
+      } else {
+        held.push({
+          canonicalId: selected.canonicalId,
+          reason: "CANONICAL_GENERATED_NOT_APPROVED",
+        });
+      }
+    } catch (e) {
+      const reason = e instanceof Error ? e.message.slice(0, 160) : String(e);
+      held.push({ canonicalId: selected.canonicalId, reason });
+      try {
+        const item = await deps.database.prisma.researchItem.findUnique({
+          where: { id: selected.researchItemId },
+          select: { id: true, rawData: true },
+        });
+        if (item) {
+          const failed = buildRawDataAfterStockFailure({
+            rawData: item.rawData,
+            reason,
+            now,
+            maxAttempts: runtime.stockMaxAttemptsBeforeDefer,
+          });
+          await deps.database.prisma.researchItem.update({
+            where: { id: item.id },
+            data: { rawData: asStoredJson(failed.rawData) },
+          });
+          ledgerByResearchId.set(item.id, failed.ledger);
+        }
+      } catch {
+        // Ledger update must never cause ResearchItem deletion or abort the batch.
+      }
+    }
+    return produced;
+  };
+
+  // Today's recommended slot: the top unpublished FANZA API popular work, written today.
+  let recommendedStatus = recommendedSlot.reason;
+  let recommendedCid: string | null = null;
+  if (recommendedSlot.needed) {
+    const pick = rankRecommendedCandidates(retryEligiblePool).find((c) => {
+      const key = normalizeProductKey(c.canonicalId);
+      return !key || !usedThisBatch.has(key);
+    });
+    if (!pick) {
+      recommendedStatus = "NO_POPULAR_CANDIDATE";
+    } else {
+      const productKey = normalizeProductKey(pick.canonicalId) ?? pick.canonicalId;
+      usedThisBatch.add(productKey);
+      recommendedCid = pick.canonicalId;
+      logger.info(
+        `recommended_slot channel=WP day=${dayKey} cid=${pick.canonicalId} popularRank=${pick.popularRank}`,
+      );
+      const approvedBefore = approvedVersionIds.length;
+      await generateOne(pick, productKey, {
+        publicationRole: RECOMMENDED_PUBLICATION_ROLE,
+        recommendedForDay: dayKey,
+        recommendedPopularRank: pick.popularRank ?? null,
+      });
+      recommendedStatus = approvedVersionIds.length > approvedBefore ? "APPROVED" : "NOT_APPROVED";
+    }
+  }
 
   for (let i = 0; i < toGenerate; i++) {
     let produced = false;
@@ -302,131 +538,7 @@ export async function runStockGenerationBatch(deps: {
         `publication_priority channel=WP cid=${selected.canonicalId} recommended=${publicationPriorityClass(selected) === "RECOMMENDED" ? "YES" : "NO"} class=${publicationPriorityClass(selected)} sources=${demandPriorityReason(selected)} selected=WP skip=-`,
       );
 
-      const ctaUrl =
-        selected.affiliateUrl?.trim() ||
-        buildFanzaCanonicalProductUrl(selected.canonicalId);
-      const affiliateCheck = validateFanzaAffiliateUrl(ctaUrl);
-      if (!affiliateCheck.ok) {
-        held.push({ canonicalId: selected.canonicalId, reason: "AFFILIATE_URL_INVALID" });
-        continue;
-      }
-
-      try {
-        const item = await deps.database.prisma.researchItem.findUnique({
-          where: { id: selected.researchItemId },
-        });
-        if (!item) {
-          held.push({ canonicalId: selected.canonicalId, reason: "RESEARCH_ITEM_MISSING" });
-          continue;
-        }
-
-        const result = await runCanonicalArticlePipeline({
-          lifecycle: deps.lifecycle,
-          research: researchRepo,
-          generation,
-          contentReview,
-          config: deps.config,
-          logger,
-          researchItemId: item.id,
-          productTitle: item.title,
-          productCanonicalId: selected.canonicalId,
-          // Evidence ingest must use official product page URL (never affiliate wrapper).
-          productUrl: buildFanzaCanonicalProductUrl(selected.canonicalId),
-          rawData: item.rawData,
-          ctaUrl,
-          route: "STOCK_GENERATION",
-          objective: "stock_blog_option_b",
-          demandMatchKeywords: selected.matchedDemandKeywords,
-          autoApprove: true,
-          approveActor: "stock-auto-review",
-          auxiliarySafetyOk: ({ title, structuredContent }) =>
-            evaluateStockArticleQualityGate({
-              productTitle: item.title,
-              rawData: item.rawData,
-              structuredContent: {
-                ...structuredContent,
-                title,
-              },
-              writerTitle: title,
-            }),
-        });
-
-        if (!result.ok) {
-          const reason = result.reason;
-          held.push({ canonicalId: selected.canonicalId, reason });
-          const failed = buildRawDataAfterStockFailure({
-            rawData: item.rawData,
-            reason,
-            now,
-            maxAttempts: runtime.stockMaxAttemptsBeforeDefer,
-          });
-          await deps.database.prisma.researchItem.update({
-            where: { id: item.id },
-            data: { rawData: asStoredJson(failed.rawData) },
-          });
-          ledgerByResearchId.set(item.id, failed.ledger);
-          continue;
-        }
-
-        generated += 1;
-        articled.add(productKey);
-        produced = true;
-
-        // Stamp analysis run id (canonical pipeline already set stockRoute / enrichment).
-        if (result.contentVersionId && analysisRunId) {
-          const cv = await deps.database.prisma.contentVersion.findUnique({
-            where: { id: result.contentVersionId },
-            select: { structuredContent: true },
-          });
-          const sc = (cv?.structuredContent ?? {}) as Record<string, unknown>;
-          await deps.lifecycle.updateContentVersionStructuredContent(result.contentVersionId, {
-            ...sc,
-            sourceProvider: "research",
-            analysisRunId,
-          });
-        }
-
-        const success = buildRawDataAfterStockSuccess({ rawData: item.rawData, now });
-        await deps.database.prisma.researchItem.update({
-          where: { id: item.id },
-          data: { rawData: asStoredJson(success.rawData) },
-        });
-        ledgerByResearchId.set(item.id, success.ledger);
-
-        if (result.approved) {
-          reviewPassed += 1;
-          approvedVersionIds.push(result.contentVersionId);
-        } else {
-          held.push({
-            canonicalId: selected.canonicalId,
-            reason: "CANONICAL_GENERATED_NOT_APPROVED",
-          });
-        }
-      } catch (e) {
-        const reason = e instanceof Error ? e.message.slice(0, 160) : String(e);
-        held.push({ canonicalId: selected.canonicalId, reason });
-        try {
-          const item = await deps.database.prisma.researchItem.findUnique({
-            where: { id: selected.researchItemId },
-            select: { id: true, rawData: true },
-          });
-          if (item) {
-            const failed = buildRawDataAfterStockFailure({
-              rawData: item.rawData,
-              reason,
-              now,
-              maxAttempts: runtime.stockMaxAttemptsBeforeDefer,
-            });
-            await deps.database.prisma.researchItem.update({
-              where: { id: item.id },
-              data: { rawData: asStoredJson(failed.rawData) },
-            });
-            ledgerByResearchId.set(item.id, failed.ledger);
-          }
-        } catch {
-          // Ledger update must never cause ResearchItem deletion or abort the batch.
-        }
-      }
+      produced = await generateOne(selected, productKey);
     }
   }
 
@@ -456,5 +568,6 @@ export async function runStockGenerationBatch(deps: {
     excludedAsDuplicate,
     held,
     approvedVersionIds,
+    recommended: { status: recommendedStatus, canonicalId: recommendedCid },
   };
 }
