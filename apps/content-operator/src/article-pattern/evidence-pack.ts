@@ -28,6 +28,7 @@ import {
   isWriterCatalogConfirmation,
   isOfficialPerformerLabelQuotationClause,
   isWriterEligibleEvidenceType,
+  normalizeOfficialDescriptionForWriter,
 } from "./writer-evidence-filter.js";
 import {
   isReaderInvitationOnlyClause,
@@ -1084,9 +1085,14 @@ export function collectWriterSafeFactsFromPack(pack: EvidencePack): string[] {
 }
 
 /**
- * r94 — Writer officialDescription: individual safe facts only (not raw page prose).
+ * Writer officialDescription: the official blurb as prose, so the writer can paraphrase it
+ * in context instead of gluing fact fragments with particles (JAPANESE_QUALITY.md).
+ * A play-by-play synopsis is cut to its opening by the normalizer. Facts are the fallback
+ * only when the page has no description.
  */
-function composeWriterOfficialDescriptionFromPack(pack: EvidencePack): string[] | null {
+function composeWriterOfficialDescriptionFromPack(pack: EvidencePack): string | string[] | null {
+  const prose = normalizeOfficialDescriptionForWriter(pack.sourceOfficialDescription);
+  if (prose) return prose;
   const facts = collectWriterSafeFactsFromPack(pack);
   return facts.length > 0 ? facts : null;
 }

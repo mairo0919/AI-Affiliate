@@ -41,7 +41,7 @@ describe("r95 context-preserving Writer projection", () => {
     expect(clause).not.toBe("ピストン");
   });
 
-  it("keeps sourceOfficialDescription raw; Writer gets clause facts not full prose dump", () => {
+  it("keeps sourceOfficialDescription raw; Writer gets the blurb as prose, not fact fragments", () => {
     const pack = buildEvidencePack({
       productTitle: "ssis00700",
       claims: [{ id: "c1", statement: "ssis00700", status: "SUPPORTED" }],
@@ -52,14 +52,10 @@ describe("r95 context-preserving Writer projection", () => {
     });
     expect(pack.sourceOfficialDescription).toBe(SSIS_DESC);
     const writer = toOptionBWriterSourceMaterialFromPack(pack);
-    expect(Array.isArray(writer.officialDescription)).toBe(true);
-    const facts = writer.officialDescription as string[];
-    expect(facts.join(" ")).not.toBe(SSIS_DESC);
-    expect(facts.some((f) => f.includes("小島みなみ") && f.includes("ピストン"))).toBe(true);
-    expect(
-      facts.some((f) => /120\s*分/.test(f)) ||
-        pack.concreteEvidence.some((e) => /120\s*分/.test(e.fact)),
-    ).toBe(true);
+    expect(typeof writer.officialDescription).toBe("string");
+    const prose = writer.officialDescription as string;
+    expect(prose).toContain("小島みなみ");
+    expect(prose).toContain("120分");
   });
 
   it("keeps ofje00230 work facets in Writer-safe pool (promo-only not required)", () => {
@@ -84,7 +80,7 @@ describe("r95 context-preserving Writer projection", () => {
     expect(supported.every((c) => c.id !== "title::full")).toBe(true);
   });
 
-  it("strips invitation from parathd03128 but keeps setting/subject clauses", () => {
+  it("passes parathd03128 as prose; the fact projection still drops the invitation", () => {
     const pack = buildEvidencePack({
       productTitle: PARA_TITLE,
       claims: [{ id: "c1", statement: PARA_TITLE, status: "SUPPORTED" }],
@@ -94,12 +90,9 @@ describe("r95 context-preserving Writer projection", () => {
       },
     });
     const writer = toOptionBWriterSourceMaterialFromPack(pack);
-    const facts = (writer.officialDescription as string[]) ?? [];
+    expect(writer.officialDescription).toContain("コインランドリーでナンパした女子大生のマン毛");
+    const facts = collectWriterSafeFactsFromPack(pack);
     expect(facts.join(" ")).not.toMatch(/鑑賞しましょう|愛でられたら幸いでございます/);
-    expect(facts.some((f) => /コインランドリーでナンパした女子大生のマン毛/.test(f))).toBe(
-      true,
-    );
-    expect(facts.some((f) => /優梨まいな|マン毛|回春エステ|学芸員/.test(f))).toBe(true);
     expect(
       projectWriterSafeFact(
         "鑑賞後はマン毛の奥の秘部も一緒に愛でられたら幸いでございます",

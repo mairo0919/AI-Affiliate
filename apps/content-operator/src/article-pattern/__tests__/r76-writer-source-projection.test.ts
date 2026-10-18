@@ -39,7 +39,7 @@ describe("r76 Writer source projection", () => {
     expect(normalized!.length).toBeLessThan(HALT_DESC.length / 2);
   });
 
-  it("FromPack uses Writer-safe fact array, not raw prose or atom-join", () => {
+  it("FromPack passes the normalized blurb as prose, not an atom-join", () => {
     const pack = buildEvidencePack({
       productTitle: MIZD_TITLE,
       claims: [
@@ -57,11 +57,11 @@ describe("r76 Writer source projection", () => {
     });
     expect(pack.sourceOfficialDescription).toBe(MIZD_DESC);
     const writer = toOptionBWriterSourceMaterialFromPack(pack);
-    expect(Array.isArray(writer.officialDescription)).toBe(true);
-    const facts = writer.officialDescription as string[];
-    expect(facts.join(",")).not.toMatch(/魅力が詰まった|キュートでエッチ/);
-    expect(facts.some((f) => /松本いちか|10作品|8時間|デカ尻|激ピス|痴女/.test(f))).toBe(true);
-    expect(facts.join(" ")).not.toMatch(/^10作品！8時間！ベスト！/);
+    // The writer paraphrases the official blurb itself instead of gluing fragments.
+    expect(typeof writer.officialDescription).toBe("string");
+    expect(writer.officialDescription as string).toContain("キュートでエッチ");
+    expect(writer.officialDescription as string).toContain("MOODYZベスト第2弾");
+    expect(writer.officialDescription as string).not.toMatch(/^10作品！8時間！ベスト！/);
     const claims = writer.supportedClaims as Array<{ statement: string }>;
     expect(claims.every((c) => !/公式ページで確認できる/.test(c.statement))).toBe(true);
   });
