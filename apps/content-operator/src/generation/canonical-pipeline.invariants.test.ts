@@ -72,7 +72,9 @@ describe("canonical pipeline invariants — source structure", () => {
     const reviewAt = canonical.indexOf("input.generation.runQualityReviews(");
     expect(auxAt).toBeGreaterThan(-1);
     expect(reviewAt).toBeGreaterThan(auxAt);
-    expect(canonical).toMatch(/runQualityReviews\(generated\.version\.id,\s*\{\s*stopOnFirstFailure:\s*true/);
+    expect(canonical).toMatch(/runQualityReviews\(finalVersion\.id,\s*\{\s*stopOnFirstFailure:\s*true/);
+    // A failed review is fixed once with its findings before the work is given up.
+    expect(canonical).toMatch(/reviseContentVersion\(\{[\s\S]*?mode:\s*"partial_revision"[\s\S]*?rationale/);
     // An auxiliary rejection must count toward the same-cid cap instead of staying REVIEWING.
     expect(canonical).toMatch(/updateContentVersionStatus\(generated\.version\.id,\s*"REVISION_REQUIRED"\)/);
 

@@ -2040,6 +2040,12 @@ export class ContentGenerationService {
           article,
           brainProvenance,
           brainGenerationContract: brainGenerationPromptContract,
+          // Review reads this to settle the writer run; it used to live only on the ModelRun.
+          llmSafety: {
+            cid: input.productCanonicalId ?? null,
+            contentIdentity: articleIdentity,
+            runs: wpSafetyRuns,
+          },
           images: articleImages,
           imageMeta: {
             productId: imageResolution.productId,
@@ -2952,11 +2958,19 @@ export class ContentGenerationService {
 
     await this.budget.assertCanSpend(1);
     const prompt = await this.prompts.getPrompt("revision.partial", "v1");
+    const evidence = reviewEvidenceFromStructuredContent(source.structuredContent);
     const rendered = this.prompts.render(prompt, {
       title: source.title,
       body: source.body,
       rationale: input.rationale,
     });
+    const revisionUserPrompt = [
+      rendered.userPrompt,
+      "Fix only what the review findings name. Keep everything else. Return the whole article in the same JSON shape.",
+      evidence ?? "",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
     const modelRun = await this.repo.createModelRun({
       provider: this.llm.providerKey,
       model: this.models.revision,
@@ -2967,12 +2981,15 @@ export class ContentGenerationService {
       inputRef: source.id,
     });
     const sourceSafety = readLlmSafety(source.structuredContent);
+    const rewriteAttempt =
+      (sourceSafety.runs.filter((run) => run.operation === "WP_WRITER" || run.operation === "WP_REWRITE").length || 0) + 1;
     const llm = await this.llm.executeTask({
       taskType: "REVISION",
       promptIdentifier: prompt.identifier,
       promptVersion: prompt.version,
       systemInstruction: rendered.systemInstruction,
-      userPrompt: rendered.userPrompt,
+      userPrompt: revisionUserPrompt,
+      outputSchema: getBloggerArticleLlmJsonSchema(),
       model: this.models.revision,
       safety: wpLlmSafety({
         cid: sourceSafety.cid,
@@ -2980,7 +2997,7 @@ export class ContentGenerationService {
         promptVersion: prompt.version,
         contentIdentity: sourceSafety.contentIdentity || source.id,
         contentVersionId: source.id,
-        logicalAttempt: (sourceSafety.runs.filter((run) => run.operation === "WP_WRITER" || run.operation === "WP_REWRITE").length || 0) + 1,
+        logicalAttempt: rewriteAttempt,
         regenerateReason: "partial-revision",
       }),
       input: {
@@ -3029,11 +3046,24 @@ export class ContentGenerationService {
       summary: article.summary,
       body,
       structuredContent: {
+        // Keep the writer contract (evidence for review) and the run ledger from the source.
+        ...sourceStructured,
         channel: "BLOGGER",
         article,
         images: priorImages,
         imageMeta: sourceStructured.imageMeta ?? null,
         disclosure: true,
+        revisedFromVersionId: source.id,
+        llmSafety: {
+          cid: sourceSafety.cid,
+          contentIdentity: sourceSafety.contentIdentity || source.id,
+          runs: [
+            ...sourceSafety.runs,
+            ...(executionRunId(llm)
+              ? [{ id: executionRunId(llm)!, operation: "WP_REWRITE" as const, logicalAttempt: rewriteAttempt }]
+              : []),
+          ],
+        },
         seo: preserveSeoSearchIntentFields(
           sourceStructured.seo && typeof sourceStructured.seo === "object"
             ? (sourceStructured.seo as Record<string, unknown>)

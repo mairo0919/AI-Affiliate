@@ -273,23 +273,53 @@ export async function runCanonicalArticlePipeline(
 
   let review: Awaited<ReturnType<ContentGenerationService["runQualityReviews"]>>;
   let approved = false;
+  let finalVersion = generated.version;
   try {
-    review = await input.generation.runQualityReviews(generated.version.id, {
+    review = await input.generation.runQualityReviews(finalVersion.id, {
       stopOnFirstFailure: true,
     });
+    if (review.overall === "failed") {
+      // Fix the article with the reviewers' findings once, instead of discarding it.
+      const rationale = reviewFindingsRationale(review.reviews);
+      const revised = await input.generation.reviseContentVersion({
+        contentVersionId: finalVersion.id,
+        mode: "partial_revision",
+        rationale,
+        productTitle: input.productTitle,
+        ctaUrl: input.ctaUrl,
+      });
+      finalVersion = revised.version;
+      const revisedSc = (finalVersion.structuredContent ?? {}) as Record<string, unknown>;
+      const aux = input.auxiliarySafetyOk?.({
+        title: finalVersion.title,
+        structuredContent: { ...revisedSc, title: finalVersion.title, bodyHtml: finalVersion.body },
+      });
+      if (aux && !aux.ok) {
+        await input.lifecycle.updateContentVersionStatus(finalVersion.id, "REVISION_REQUIRED");
+        return {
+          ok: false,
+          reason: `AUXILIARY_SAFETY:${aux.reason}`,
+          enrichment,
+          contentVersionId: finalVersion.id,
+        };
+      }
+      review = await input.generation.runQualityReviews(finalVersion.id, {
+        stopOnFirstFailure: true,
+      });
+    }
     if (review.overall === "failed") {
       return {
         ok: false,
         reason: "CANONICAL_REVIEW_FAILED",
         enrichment,
-        contentVersionId: generated.version.id,
+        contentVersionId: finalVersion.id,
         reviewOverall: review.overall,
       };
     }
     if (input.autoApprove) {
       // ContentReviewService enforces: reviews executed + no FAILED.
       await input.contentReview.decide({
-        contentVersionId: generated.version.id,
+        contentVersionId: finalVersion.id,
         decision: "approve",
         actor: input.approveActor,
         reason: `Canonical pipeline Review ${review.overall}`,
@@ -302,7 +332,7 @@ export async function runCanonicalArticlePipeline(
     // it is archived (not counted as a rejection); any other error counts as one.
     const message = error instanceof Error ? error.message : String(error);
     await input.lifecycle.updateContentVersionStatus(
-      generated.version.id,
+      finalVersion.id,
       isSystemStopReason(message) ? "ARCHIVED" : "REVISION_REQUIRED",
     );
     throw error;
@@ -310,11 +340,33 @@ export async function runCanonicalArticlePipeline(
 
   return {
     ok: true,
-    contentVersionId: generated.version.id,
+    contentVersionId: finalVersion.id,
     contentId: generated.content.id,
     approved,
     reviewOverall: review.overall,
     enrichment,
-    title: generated.version.title,
+    title: finalVersion.title,
   };
+}
+
+/** The failed reviews' findings, as the rationale for one partial revision. */
+export function reviewFindingsRationale(
+  reviews: ReadonlyArray<{ reviewType: string; result: string; findings: unknown }>,
+): string {
+  const lines: string[] = [];
+  for (const review of reviews) {
+    if (review.result !== "FAILED") continue;
+    const findings = Array.isArray(review.findings) ? review.findings : [review.findings];
+    for (const finding of findings) {
+      if (finding == null) continue;
+      const text =
+        typeof finding === "string"
+          ? finding
+          : typeof (finding as Record<string, unknown>).message === "string"
+            ? String((finding as Record<string, unknown>).message)
+            : JSON.stringify(finding);
+      lines.push(`- [${review.reviewType}] ${text.slice(0, 300)}`);
+    }
+  }
+  return lines.length ? `Review findings to fix:\n${lines.slice(0, 12).join("\n")}` : "Review failed without findings.";
 }
