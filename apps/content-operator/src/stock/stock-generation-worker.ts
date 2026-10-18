@@ -103,8 +103,11 @@ async function recommendedSlotNeedsArticle(input: {
   dayKey: string;
   now: Date;
   hour: number;
+  slotHours: readonly number[];
   maxAttempts: number;
 }): Promise<{ needed: boolean; reason: string }> {
+  // No publish slot at that hour means nothing could ever post the article.
+  if (!input.slotHours.includes(input.hour)) return { needed: false, reason: "NOT_A_PUBLISH_SLOT" };
   const slotKey = `${input.dayKey}T${String(input.hour).padStart(2, "0")}:00:00+09:00`;
   if (input.now.getTime() >= new Date(slotKey).getTime()) return { needed: false, reason: "SLOT_PASSED" };
   const booked = await input.prisma.publicationTarget.count({
@@ -193,6 +196,7 @@ export async function runStockGenerationBatch(deps: {
     dayKey,
     now,
     hour: runtime.recommendedSlotHourJst,
+    slotHours: runtime.publishSlotHoursJst,
     maxAttempts: runtime.recommendedMaxAttemptsPerDay,
   });
 
