@@ -682,29 +682,11 @@ export function buildSeoReviewPrompt(input: {
   return { system, user };
 }
 
-function countOccurrences(haystack: string, needle: string): number {
-  const n = needle.trim();
-  if (n.length < 2) return 0;
-  let count = 0;
-  let from = 0;
-  while (from <= haystack.length) {
-    const at = haystack.indexOf(n, from);
-    if (at < 0) break;
-    count += 1;
-    from = at + n.length;
-  }
-  return count;
-}
-
-function looksLikeKeywordListTitle(title: string): boolean {
-  const text = title.replace(/[|｜]\s*オトナセレクト$/u, "").trim();
-  if (!text || /[をにでへはが]/.test(text)) return false;
-  const parts = tokens(text);
-  return parts.length >= 3 && parts.every((part) => part.length <= 12);
-}
-
 /**
- * Hard SEO failures that must not be overridden by a generous LLM PASS.
+ * Hard SEO failures that must not be overridden by a generous LLM PASS: only claims the
+ * evidence does not support. Keyword stuffing and list-like titles are left to the LLM
+ * review; the old count rule (primaryQuery 4+ times) failed every article that named its
+ * own product, which the Writer is required to do (all 71 review failures, 2026-10).
  * Missing intent on older ContentVersions is not a failure.
  */
 export function evaluateSeoIntentReview(input: {
@@ -724,13 +706,6 @@ export function evaluateSeoIntentReview(input: {
     findings.push("SEO_UNSUPPORTED_CLAIM");
   } else if (seoCopyAddsUngroundedClaim(`${seoTitle}\n${meta}`, allowed)) {
     findings.push("SEO_UNSUPPORTED_CLAIM");
-  }
-  if (looksLikeKeywordListTitle(input.title) || looksLikeKeywordListTitle(seoTitle)) {
-    findings.push("SEO_KEYWORD_LIST");
-  }
-  const primary = input.intent?.primaryQuery?.trim() ?? "";
-  if (primary && countOccurrences(input.body, primary) >= 4) {
-    findings.push("SEO_KEYWORD_STUFFING");
   }
   return { hardFail: findings.length > 0, findings };
 }

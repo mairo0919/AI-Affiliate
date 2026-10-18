@@ -205,6 +205,24 @@ describe("llm execution gate", () => {
     expect(again.blockReason).toBe("BLOCKED_REJECTED_FINGERPRINT");
   });
 
+  it("lets a work past its call limit be tried again once the window has passed", async () => {
+    const store = new MemoryLlmRunStore();
+    const windowed = { ...limits, logicalCallLimit: 1, logicalCallWindowMs: 60 * 60 * 1000 };
+    await base(store, async () => okResult(), { limits: windowed });
+    const within = await base(store, async () => okResult(), {
+      limits: windowed,
+      now: new Date(now.getTime() + 30 * 60 * 1000),
+      safety: { channel: "X", artifactFingerprint: "fp-1", tickId: "w-1", newGenerationBudget: 4 },
+    });
+    expect(within.blockReason).toBe("BLOCKED_CALL_LIMIT");
+    const after = await base(store, async () => okResult(), {
+      limits: windowed,
+      now: new Date(now.getTime() + 2 * 60 * 60 * 1000),
+      safety: { channel: "X", artifactFingerprint: "fp-1", tickId: "w-2", newGenerationBudget: 4 },
+    });
+    expect(after.blocked).toBe(false);
+  });
+
   it("enforces per-artifact and per-tick ceilings", async () => {
     const store = new MemoryLlmRunStore();
     await base(store, async () => okResult(), { limits: { ...limits, logicalCallLimit: 1 } });

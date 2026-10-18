@@ -165,6 +165,11 @@ import {
 } from "../article-pattern/skeleton-feasibility.js";
 
 export interface GenerateBloggerInput {
+  /**
+   * Set by routes that decide on their own to write a work again after an earlier
+   * rejection; the LLM gate otherwise refuses a fingerprint whose output was discarded.
+   */
+  regenerateReason?: string | null;
   topicId: string;
   strategyId: string;
   contentId?: string;
@@ -1365,7 +1370,8 @@ export class ContentGenerationService {
               promptVersion: prompt.version,
               contentIdentity: articleIdentity,
               logicalAttempt: generationAttempt,
-              regenerateReason: generationAttempt > 1 ? "plan-execution-retry" : null,
+              regenerateReason:
+                generationAttempt > 1 ? "plan-execution-retry" : (input.regenerateReason ?? null),
             }),
             input: {
               productTitle: input.productTitle,

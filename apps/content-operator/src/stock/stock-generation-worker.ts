@@ -40,6 +40,7 @@ import {
   buildRawDataAfterStockFailure,
   buildRawDataAfterStockSuccess,
   isStockAttemptEligibleNow,
+  isSystemStopReason,
   readStockAttemptLedger,
 } from "./stock-attempt-ledger.js";
 import { confirmFanzaAffiliateImageTerms } from "./confirm-fanza-image-terms.js";
@@ -153,6 +154,8 @@ export type StockGenerationResult = {
   approvedVersionIds: string[];
   /** Today's recommended slot: what this run did about it. */
   recommended?: { status: string; canonicalId: string | null };
+  /** Set when generation stopped for a system reason; no candidate was charged for it. */
+  systemStop?: string | null;
 };
 
 export async function runStockGenerationBatch(deps: {
@@ -326,6 +329,10 @@ export async function runStockGenerationBatch(deps: {
   );
   const logger = createLogger("info");
 
+  // A system stop (LLM gate, budget, quota, network) ends this tick's generation and is
+  // not recorded against the candidate, which stays eligible for the next tick.
+  let systemStop: string | null = null;
+
   /** Runs one candidate through the canonical pipeline. True when a version was produced. */
   const generateOne = async (
     selected: DailyCandidateScore,
@@ -397,6 +404,10 @@ export async function runStockGenerationBatch(deps: {
       if (!result.ok) {
         const reason = result.reason;
         held.push({ canonicalId: selected.canonicalId, reason });
+        if (isSystemStopReason(reason)) {
+          systemStop = reason;
+          return false;
+        }
         const failed = buildRawDataAfterStockFailure({
           rawData: item.rawData,
           reason,
@@ -448,6 +459,10 @@ export async function runStockGenerationBatch(deps: {
     } catch (e) {
       const reason = e instanceof Error ? e.message.slice(0, 160) : String(e);
       held.push({ canonicalId: selected.canonicalId, reason });
+      if (isSystemStopReason(reason)) {
+        systemStop = reason;
+        return false;
+      }
       try {
         const item = await deps.database.prisma.researchItem.findUnique({
           where: { id: selected.researchItemId },
@@ -496,13 +511,17 @@ export async function runStockGenerationBatch(deps: {
         recommendedForDay: dayKey,
         recommendedPopularRank: pick.popularRank ?? null,
       });
-      recommendedStatus = approvedVersionIds.length > approvedBefore ? "APPROVED" : "NOT_APPROVED";
+      recommendedStatus = systemStop
+        ? "SYSTEM_STOP"
+        : approvedVersionIds.length > approvedBefore
+          ? "APPROVED"
+          : "NOT_APPROVED";
     }
   }
 
-  for (let i = 0; i < toGenerate; i++) {
+  for (let i = 0; i < toGenerate && !systemStop; i++) {
     let produced = false;
-    for (let attempt = 0; attempt < 8 && !produced; attempt++) {
+    for (let attempt = 0; attempt < 8 && !produced && !systemStop; attempt++) {
       const remaining = retryEligiblePool.filter((c) => {
         const key = normalizeProductKey(c.canonicalId);
         return !key || !usedThisBatch.has(key);
@@ -573,5 +592,6 @@ export async function runStockGenerationBatch(deps: {
     held,
     approvedVersionIds,
     recommended: { status: recommendedStatus, canonicalId: recommendedCid },
+    systemStop,
   };
 }

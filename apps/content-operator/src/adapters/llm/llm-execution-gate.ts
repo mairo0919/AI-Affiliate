@@ -635,11 +635,15 @@ async function blockingReason(input: {
     );
     if (rejected && !input.safety.regenerateReason) return "BLOCKED_REJECTED_FINGERPRINT";
     if (input.attemptKind === "creative") {
+      const windowStart = input.limits.logicalCallWindowMs
+        ? input.now.getTime() - input.limits.logicalCallWindowMs
+        : Number.NEGATIVE_INFINITY;
       const creative = input.runs.filter(
         (run) =>
           run.artifactFingerprint === input.fingerprint &&
           run.attemptKind === "creative" &&
           ceilingFamily(run.operation) === family &&
+          run.createdAt.getTime() >= windowStart &&
           (run.executionStatus === "SUCCEEDED" || run.executionStatus === "FAILED"),
       ).length;
       if (creative >= input.limits.logicalCallLimit) return "BLOCKED_CALL_LIMIT";

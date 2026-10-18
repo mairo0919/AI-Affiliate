@@ -4,7 +4,7 @@
  * for historical duplicate / mix awareness during transition.
  */
 
-import type { DatabaseClient } from "@ai-affiliate/database";
+import type { DatabaseClient, XPublicationStatus } from "@ai-affiliate/database";
 import { tokyoDateString } from "../daily-blog/idempotency.js";
 import { normalizeProductKey } from "./blog-product-exclusion.js";
 import type { ChannelPublicationRecord } from "./channel-duplicate.js";
@@ -239,29 +239,46 @@ export async function loadFilledXSlotHoursForDay(
   return hours;
 }
 
-/** CIDs already used on X (any terminal/active status) — hard duplicate ban.
- * Includes FAILED so retry does not create a second reservation as a "new" post.
+/** A FAILED or BLOCKED X publication stops being a duplicate ban after this long. */
+export const X_FAILED_PUBLICATION_RETRY_AFTER_MS = 3 * 24 * 60 * 60 * 1000;
+
+/**
+ * Posted, scheduled and in-flight rows always count. FAILED and BLOCKED count only while
+ * recent or still awaiting a publish retry, so a work blocked by a daily limit, an
+ * expired reservation or an API error can be posted later instead of being banned for good.
  */
+function xPublicationUsedWhere(now: Date) {
+  const since = new Date(now.getTime() - X_FAILED_PUBLICATION_RETRY_AFTER_MS);
+  return {
+    OR: [
+      {
+        status: {
+          in: [
+            "PUBLISHED",
+            "PARTIALLY_PUBLISHED",
+            "PUBLISHED_UNVERIFIED",
+            "SCHEDULED",
+            "DRAFT",
+            "PUBLISHING",
+          ] as XPublicationStatus[],
+        },
+      },
+      {
+        status: { in: ["FAILED", "BLOCKED"] as XPublicationStatus[] },
+        OR: [{ updatedAt: { gte: since } }, { nextRetryAt: { not: null } }],
+      },
+    ],
+  };
+}
+
+/** CIDs already used on X — duplicate ban (see xPublicationUsedWhere for FAILED/BLOCKED). */
 export async function loadPostedXCanonicalIds(
   prisma: DatabaseClient["prisma"],
-  options?: { limit?: number },
+  options?: { limit?: number; now?: Date },
 ): Promise<Set<string>> {
   const limit = Math.max(1, Math.min(options?.limit ?? 500, 2000));
   const rows = await prisma.xPublication.findMany({
-    where: {
-      status: {
-        in: [
-          "PUBLISHED",
-          "PARTIALLY_PUBLISHED",
-          "PUBLISHED_UNVERIFIED",
-          "SCHEDULED",
-          "DRAFT",
-          "PUBLISHING",
-          "FAILED",
-          "BLOCKED",
-        ],
-      },
-    },
+    where: xPublicationUsedWhere(options?.now ?? new Date()),
     orderBy: { createdAt: "desc" },
     take: limit,
     select: { researchItem: { select: { externalId: true } } },
@@ -273,27 +290,14 @@ export async function loadPostedXCanonicalIds(
   );
 }
 
-/** ContentVersion ids already referenced by X publications (hard ban). */
+/** ContentVersion ids already referenced by X publications (same rule as the CID ban). */
 export async function loadPostedXContentVersionIds(
   prisma: DatabaseClient["prisma"],
-  options?: { limit?: number },
+  options?: { limit?: number; now?: Date },
 ): Promise<Set<string>> {
   const limit = Math.max(1, Math.min(options?.limit ?? 500, 2000));
   const rows = await prisma.xPublication.findMany({
-    where: {
-      status: {
-        in: [
-          "PUBLISHED",
-          "PARTIALLY_PUBLISHED",
-          "PUBLISHED_UNVERIFIED",
-          "SCHEDULED",
-          "DRAFT",
-          "PUBLISHING",
-          "FAILED",
-          "BLOCKED",
-        ],
-      },
-    },
+    where: xPublicationUsedWhere(options?.now ?? new Date()),
     orderBy: { createdAt: "desc" },
     take: limit,
     select: {

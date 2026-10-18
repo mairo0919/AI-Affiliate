@@ -268,7 +268,7 @@ describe("SEO search intent on the production article path", () => {
     }
   });
 
-  it("fails keyword lists and unsupported SEO claims without requiring the query to be repeated", () => {
+  it("fails unsupported SEO claims, and not an article that names its own product", () => {
     const intent = decideSeoSearchIntent({
       productTitle: "禁断の夜",
       contentId: "mizd00400",
@@ -292,9 +292,18 @@ describe("SEO search intent on the production article path", () => {
       metaDescription: "検索ボリュームの高い作品です。",
     });
     expect(stuffed.hardFail).toBe(true);
-    expect(stuffed.findings).toEqual(
-      expect.arrayContaining(["SEO_UNSUPPORTED_CLAIM", "SEO_KEYWORD_LIST", "SEO_KEYWORD_STUFFING"]),
-    );
+    expect(stuffed.findings).toEqual(["SEO_UNSUPPORTED_CLAIM"]);
+
+    // Naming the product several times is normal for an article about it.
+    const named = evaluateSeoIntentReview({
+      intent,
+      title: "逢沢みゆ 巨乳 ドラマ",
+      body: `${intent.primaryQuery}の設定。${intent.primaryQuery}の出演者。${intent.primaryQuery}の見どころ。${intent.primaryQuery}の収録内容。`,
+      seoTitle: "逢沢みゆの禁断の夜｜オトナセレクト",
+      metaDescription: "確認できる設定を短くまとめた記事です。",
+      allowedText: "禁断の夜 逢沢みゆ",
+    });
+    expect(named.hardFail).toBe(false);
   });
 
   it("replaces an invented meta description with a factual sentence", () => {

@@ -5,6 +5,11 @@ export type LlmSafetyLimits = {
   gpt41DailyUsd: number;
   xWriterDailyUsd: number;
   logicalCallLimit: number;
+  /**
+   * Window for logicalCallLimit. Older calls no longer count, so a work that hit the limit
+   * can be tried again later instead of being blocked forever. Budgets still cap spend.
+   */
+  logicalCallWindowMs?: number;
   httpRetryLimit: number;
   absoluteTickCap: number;
   /** New WP articles per tick. Normal batch is 3, plus a small retry buffer. Not the X cap. */
@@ -29,6 +34,7 @@ export function loadLlmSafetyLimits(env: NodeJS.ProcessEnv = process.env): LlmSa
     gpt41DailyUsd: positive(env.GPT41_DAILY_BUDGET_USD, 0.2),
     xWriterDailyUsd: positive(env.X_WRITER_DAILY_BUDGET_USD, 0.2),
     logicalCallLimit: positive(env.LLM_LOGICAL_CALL_LIMIT, 5),
+    logicalCallWindowMs: positive(env.LLM_LOGICAL_CALL_WINDOW_MS, 3 * 24 * 60 * 60 * 1000),
     httpRetryLimit: positive(env.LLM_HTTP_RETRY_LIMIT, 2),
     absoluteTickCap: positive(env.LLM_ABSOLUTE_TICK_CAP, 12),
     wpArticleTickCap: positive(env.WP_ARTICLE_TICK_CAP, 5),

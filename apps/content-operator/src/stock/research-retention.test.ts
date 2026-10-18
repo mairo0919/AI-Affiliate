@@ -5,6 +5,7 @@ import {
   buildRawDataAfterStockFailure,
   buildRawDataAfterStockSuccess,
   isStockAttemptEligibleNow,
+  isSystemStopReason,
   readStockAttemptLedger,
   STOCK_ATTEMPT_RAW_KEY,
 } from "./stock-attempt-ledger.js";
@@ -84,7 +85,7 @@ describe("ResearchItem retention policy", () => {
     expect(ledger.status).not.toBe("COMPLETED");
   });
 
-  it("does not delete on duplicate / policy block — marks MANUAL_REVIEW_REQUIRED after max", () => {
+  it("does not delete on duplicate / policy block — defers and retries after max", () => {
     let raw: unknown = { keep: 1 };
     for (let i = 0; i < 5; i++) {
       const next = buildRawDataAfterStockFailure({
@@ -98,8 +99,32 @@ describe("ResearchItem retention policy", () => {
     }
     const ledger = readStockAttemptLedger(raw);
     expect(ledger.attemptCount).toBe(5);
-    expect(ledger.status).toBe("MANUAL_REVIEW_REQUIRED");
-    expect(isStockAttemptEligibleNow(ledger)).toBe(false);
+    expect(ledger.status).toBe("RETRY_DEFERRED");
+    expect(isStockAttemptEligibleNow(ledger, new Date("2026-09-12T04:30:00.000Z"))).toBe(false);
+    expect(isStockAttemptEligibleNow(ledger, new Date("2026-09-12T08:00:00.000Z"))).toBe(true);
+    expect(ledger.history.map((h) => h.code)).toEqual(Array(5).fill("POLICY_BLOCK"));
+  });
+
+  it("tells system stops apart from the candidate's own failures", () => {
+    for (const reason of [
+      "CIRCUIT_OPEN:MODEL:gpt-4.1-mini",
+      "BLOCKED_MONTHLY_BUDGET",
+      "BLOCKED_TICK_LIMIT",
+      "Budget stop threshold reached for daily spend",
+      "LLM rate limited",
+      "insufficient_quota",
+      "request timeout after 60000ms",
+    ]) {
+      expect(isSystemStopReason(reason)).toBe(true);
+    }
+    for (const reason of [
+      "CANONICAL_REVIEW_FAILED",
+      "NEEDS_ENRICHMENT:official_page_evidence_required",
+      "AUXILIARY_SAFETY:THIN_ARTICLE",
+      "BLOCKED_CALL_LIMIT",
+    ]) {
+      expect(isSystemStopReason(reason)).toBe(false);
+    }
   });
 
   it("never deletes ResearchItem after retry ceiling — uses NEEDS_ENRICHMENT / RETRY_DEFERRED", () => {

@@ -19,7 +19,14 @@ export type StockAttemptLedger = {
   lastFailureDetail: string | null;
   nextRetryAt: string | null;
   status: StockAttemptStatus;
+  /** Recent failures, newest last, so later attempts can see more than the last reason. */
+  history: StockAttemptFailure[];
 };
+
+export type StockAttemptFailure = { at: string; code: string; detail: string };
+
+/** Failures kept on the item. Older entries drop off. */
+export const STOCK_ATTEMPT_HISTORY_LIMIT = 10;
 
 export const DEFAULT_STOCK_MAX_ATTEMPTS_BEFORE_DEFER = 5;
 export const DEFAULT_STOCK_RETRY_BACKOFF_MS = 30 * 60_000;
@@ -56,7 +63,23 @@ export function readStockAttemptLedger(rawData: unknown): StockAttemptLedger {
       typeof ledger.lastFailureDetail === "string" ? ledger.lastFailureDetail : null,
     nextRetryAt: typeof ledger.nextRetryAt === "string" ? ledger.nextRetryAt : null,
     status,
+    history: Array.isArray(ledger.history)
+      ? ledger.history.filter(
+          (h): h is StockAttemptFailure =>
+            !!h && typeof h === "object" && typeof (h as StockAttemptFailure).code === "string",
+        )
+      : [],
   };
+}
+
+/**
+ * Stops that come from the system, not from the work: the LLM gate, budgets, quota,
+ * rate limits and network trouble. They must not count against the candidate.
+ */
+export function isSystemStopReason(reason: string): boolean {
+  return /CIRCUIT_OPEN|BLOCKED_(?:BUDGET|MONTHLY_BUDGET|TICK_LIMIT)|BUDGET STOP THRESHOLD|INSUFFICIENT_QUOTA|QUOTA|RATE.?LIMIT|\b429\b|TIMEOUT|TIMED OUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ETIMEDOUT|SERVER_ERROR|HTTP[_ ]?5\d\d|STATUS 5\d\d/.test(
+    reason.toUpperCase(),
+  );
 }
 
 export function classifyStockFailureCode(reason: string): {
@@ -78,7 +101,8 @@ export function classifyStockFailureCode(reason: string): {
     return { code: "REVIEW_OR_WRITER", statusAfterMax: "RETRY_DEFERRED", retryable: true };
   }
   if (/AFFILIATE_URL_INVALID|BLOG_BLOCKED|DUPLICATE/.test(r)) {
-    return { code: "POLICY_BLOCK", statusAfterMax: "MANUAL_REVIEW_REQUIRED", retryable: false };
+    // Retried after the backoff like any other failure; a candidate is never parked for good.
+    return { code: "POLICY_BLOCK", statusAfterMax: "RETRY_DEFERRED", retryable: true };
   }
   return { code: "GENERATION_FAILED", statusAfterMax: "RETRY_DEFERRED", retryable: true };
 }
@@ -88,7 +112,8 @@ export function isStockAttemptEligibleNow(
   ledger: StockAttemptLedger,
   now: Date = new Date(),
 ): boolean {
-  if (ledger.status === "COMPLETED" || ledger.status === "MANUAL_REVIEW_REQUIRED") {
+  // MANUAL_REVIEW_REQUIRED is no longer written; older rows retry like any deferred item.
+  if (ledger.status === "COMPLETED") {
     return false;
   }
   if (ledger.status === "NEEDS_ENRICHMENT") {
@@ -136,6 +161,10 @@ export function buildRawDataAfterStockFailure(input: {
     lastFailureDetail: sanitizeDetail(input.reason),
     nextRetryAt,
     status,
+    history: [
+      ...prev.history,
+      { at: now.toISOString(), code: classified.code, detail: sanitizeDetail(input.reason) },
+    ].slice(-STOCK_ATTEMPT_HISTORY_LIMIT),
   };
   const root = asRecord(input.rawData);
   return {
@@ -157,6 +186,7 @@ export function buildRawDataAfterStockSuccess(input: {
     lastFailureDetail: null,
     nextRetryAt: null,
     status: "COMPLETED",
+    history: prev.history,
   };
   const root = asRecord(input.rawData);
   return {

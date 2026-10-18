@@ -33,3 +33,34 @@ describe("productKeysBlockedByExistingVersions", () => {
     expect(keys.has("eee00005")).toBe(false);
   });
 });
+
+describe("productKeysBlockedByExistingVersions over time", () => {
+  const now = new Date("2026-10-18T12:00:00Z");
+  const hoursAgo = (h: number) => new Date(now.getTime() - h * 3_600_000);
+  const dated = (status: string, cid: string, at: Date) => ({
+    status,
+    structuredContent: { productCanonicalId: cid },
+    createdAt: at,
+    updatedAt: at,
+  });
+
+  it("releases a cid whose version was abandoned mid-review", () => {
+    const fresh = productKeysBlockedByExistingVersions([dated("REVIEWING", "fff00006", hoursAgo(1))], now);
+    const stale = productKeysBlockedByExistingVersions([dated("REVIEWING", "fff00006", hoursAgo(7))], now);
+    expect(fresh.has("fff00006")).toBe(true);
+    expect(stale.has("fff00006")).toBe(false);
+  });
+
+  it("retries a twice-rejected cid once its latest rejection is past the cooldown", () => {
+    const recent = productKeysBlockedByExistingVersions(
+      [dated("REVISION_REQUIRED", "ggg00007", hoursAgo(100)), dated("REVISION_REQUIRED", "ggg00007", hoursAgo(10))],
+      now,
+    );
+    const old = productKeysBlockedByExistingVersions(
+      [dated("REVISION_REQUIRED", "ggg00007", hoursAgo(200)), dated("REVISION_REQUIRED", "ggg00007", hoursAgo(80))],
+      now,
+    );
+    expect(recent.has("ggg00007")).toBe(true);
+    expect(old.has("ggg00007")).toBe(false);
+  });
+});

@@ -36,32 +36,49 @@ function asRecord(v: unknown): Record<string, unknown> {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 }
 
-/** Full regenerations allowed after review rejection before the cid is blocked. */
+/** Full regenerations allowed after review rejection before the cid waits out a cooldown. */
 export const MAX_REVISION_REQUIRED_GENERATIONS = 2;
+/** After the rejection cap, the cid is tried again once its latest rejection is this old. */
+export const REVISION_REQUIRED_COOLDOWN_MS = 3 * 24 * 60 * 60 * 1000;
+/** A version still REVIEWING after this long was abandoned mid-review (crash, LLM stop). */
+export const STALE_REVIEWING_MS = 6 * 60 * 60 * 1000;
 
 /**
- * APPROVED and REVIEWING always block another full generation.
- * REVISION_REQUIRED blocks only after the cap, so one review failure can be retried
- * and further same-cid writer runs are not started.
+ * APPROVED always blocks another full generation; REVIEWING blocks until it goes stale.
+ * REVISION_REQUIRED blocks only after the cap, and only until the cooldown passes, so a
+ * work that keeps failing is retried later instead of being dropped for good.
+ * Versions without a date are treated as recent.
  */
 export function productKeysBlockedByExistingVersions(
-  versions: Array<{ status: string; structuredContent: unknown }>,
+  versions: Array<{ status: string; structuredContent: unknown; createdAt?: Date; updatedAt?: Date }>,
+  now: Date = new Date(),
 ): Set<string> {
   const keys = new Set<string>();
-  const revisionCounts = new Map<string, number>();
+  const revisions = new Map<string, { count: number; latest: number }>();
+  const ageMs = (date: Date | undefined) => (date ? now.getTime() - date.getTime() : 0);
   for (const version of versions) {
     const key = extractProductKeyFromStructured(version.structuredContent);
     if (!key) continue;
-    if (version.status === "APPROVED" || version.status === "REVIEWING") {
+    if (version.status === "APPROVED") {
       keys.add(key);
       continue;
     }
+    if (version.status === "REVIEWING") {
+      if (ageMs(version.updatedAt ?? version.createdAt) < STALE_REVIEWING_MS) keys.add(key);
+      continue;
+    }
     if (version.status === "REVISION_REQUIRED") {
-      revisionCounts.set(key, (revisionCounts.get(key) ?? 0) + 1);
+      const prev = revisions.get(key) ?? { count: 0, latest: Number.POSITIVE_INFINITY };
+      revisions.set(key, {
+        count: prev.count + 1,
+        latest: Math.min(prev.latest, ageMs(version.createdAt)),
+      });
     }
   }
-  for (const [key, count] of revisionCounts) {
-    if (count >= MAX_REVISION_REQUIRED_GENERATIONS) keys.add(key);
+  for (const [key, { count, latest }] of revisions) {
+    if (count >= MAX_REVISION_REQUIRED_GENERATIONS && latest < REVISION_REQUIRED_COOLDOWN_MS) {
+      keys.add(key);
+    }
   }
   return keys;
 }
@@ -268,7 +285,7 @@ export async function loadArticledProductKeys(
 
   const versions = await prisma.contentVersion.findMany({
     where: { status: { in: ["APPROVED", "REVIEWING", "REVISION_REQUIRED"] } },
-    select: { status: true, structuredContent: true },
+    select: { status: true, structuredContent: true, createdAt: true, updatedAt: true },
     orderBy: { createdAt: "desc" },
     take: 2000,
   });

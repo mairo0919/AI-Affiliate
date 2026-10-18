@@ -14,6 +14,7 @@ import { claimStatementsFromPageEvidence } from "../article-pattern/evidence-pac
 import type { PageEvidenceMetaShape } from "../article-pattern/official-page-evidence-atoms.js";
 import type { ContentGenerationService } from "../generation/content-generation-service.js";
 import { readLlmSafety, settleWpRuns } from "../adapters/llm/wp-article-safety.js";
+import { isSystemStopReason } from "../stock/stock-attempt-ledger.js";
 import {
   ensureOfficialEnrichmentForStockItem,
   isUsableOfficialPageEvidence,
@@ -222,6 +223,8 @@ export async function runCanonicalArticlePipeline(
     productCanonicalId: input.productCanonicalId,
     claimIds: boot.claimIds,
     demandMatchKeywords: input.demandMatchKeywords,
+    // The stock route's own exclusion rules decide when a work may be written again.
+    regenerateReason: "canonical-regeneration",
   });
 
   const sc = (generated.version.structuredContent ?? {}) as Record<string, unknown>;
@@ -268,30 +271,41 @@ export async function runCanonicalArticlePipeline(
     }
   }
 
-  const review = await input.generation.runQualityReviews(generated.version.id, {
-    stopOnFirstFailure: true,
-  });
-  if (review.overall === "failed") {
-    return {
-      ok: false,
-      reason: "CANONICAL_REVIEW_FAILED",
-      enrichment,
-      contentVersionId: generated.version.id,
-      reviewOverall: review.overall,
-    };
-  }
-
+  let review: Awaited<ReturnType<ContentGenerationService["runQualityReviews"]>>;
   let approved = false;
-  if (input.autoApprove) {
-    // ContentReviewService enforces: reviews executed + no FAILED.
-    await input.contentReview.decide({
-      contentVersionId: generated.version.id,
-      decision: "approve",
-      actor: input.approveActor,
-      reason: `Canonical pipeline Review ${review.overall}`,
-      approvalPolicy: "auto",
+  try {
+    review = await input.generation.runQualityReviews(generated.version.id, {
+      stopOnFirstFailure: true,
     });
-    approved = true;
+    if (review.overall === "failed") {
+      return {
+        ok: false,
+        reason: "CANONICAL_REVIEW_FAILED",
+        enrichment,
+        contentVersionId: generated.version.id,
+        reviewOverall: review.overall,
+      };
+    }
+    if (input.autoApprove) {
+      // ContentReviewService enforces: reviews executed + no FAILED.
+      await input.contentReview.decide({
+        contentVersionId: generated.version.id,
+        decision: "approve",
+        actor: input.approveActor,
+        reason: `Canonical pipeline Review ${review.overall}`,
+        approvalPolicy: "auto",
+      });
+      approved = true;
+    }
+  } catch (error) {
+    // A version left REVIEWING blocks its work. A system stop is not the article's fault, so
+    // it is archived (not counted as a rejection); any other error counts as one.
+    const message = error instanceof Error ? error.message : String(error);
+    await input.lifecycle.updateContentVersionStatus(
+      generated.version.id,
+      isSystemStopReason(message) ? "ARCHIVED" : "REVISION_REQUIRED",
+    );
+    throw error;
   }
 
   return {
