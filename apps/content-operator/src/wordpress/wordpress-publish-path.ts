@@ -709,15 +709,24 @@ export async function publishContentVersionToWordPress(
   const existingQuality = publicationMetadata
     ? evaluatePublicationMetadataQuality(publicationMetadata, evidence)
     : null;
+  let metadataLlmAttemptedAt =
+    typeof structuredForHtml.publicationMetadataLlmAttemptedAt === "string"
+      ? structuredForHtml.publicationMetadataLlmAttemptedAt
+      : null;
   if (!publicationMetadata || !existingQuality?.pass) {
-    try {
-      const prisma = deps.prisma as unknown as DatabaseClient["prisma"];
-      if (typeof prisma.$transaction === "function") {
-        bindLlmExecutionStore(createPrismaLlmRunStore(prisma));
+    if (shouldCallMetadataLlm({ existing: publicationMetadata, existingQuality, metadataLlmAttemptedAt, now: new Date() })) {
+      metadataLlmAttemptedAt = new Date().toISOString();
+      try {
+        const prisma = deps.prisma as unknown as DatabaseClient["prisma"];
+        if (typeof prisma.$transaction === "function") {
+          bindLlmExecutionStore(createPrismaLlmRunStore(prisma));
+        }
+        const llm = createLLMProvider(deps.config);
+        publicationMetadata = await generatePublicationMetadata({ evidence, llm });
+      } catch {
+        publicationMetadata = await generatePublicationMetadata({ evidence, llm: null });
       }
-      const llm = createLLMProvider(deps.config);
-      publicationMetadata = await generatePublicationMetadata({ evidence, llm });
-    } catch {
+    } else {
       publicationMetadata = await generatePublicationMetadata({ evidence, llm: null });
     }
     structuredForHtml.publicationMetadata = publicationMetadata;
@@ -739,6 +748,7 @@ export async function publishContentVersionToWordPress(
       await deps.lifecycle.updateContentVersionStructuredContent(version.id, {
         ...structuredWithImages,
         publicationMetadata,
+        publicationMetadataLlmAttemptedAt: metadataLlmAttemptedAt,
         seo: structuredForHtml.seo,
       });
     }
@@ -1563,4 +1573,24 @@ async function resolveSeoTermIds(
     }
   }
   return { tagIds, categoryIds, performerIds, seriesIds };
+}
+
+const METADATA_LLM_RETRY_AFTER_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The metadata model only writes seoTitle and metaDescription. A failure in tags, performers,
+ * categories, or the title cannot be fixed by calling it again, and one attempt a day is enough.
+ */
+export function shouldCallMetadataLlm(input: {
+  existing: PublicationMetadata | null;
+  existingQuality: { failures: string[] } | null;
+  metadataLlmAttemptedAt: string | null;
+  now: Date;
+}): boolean {
+  if (input.metadataLlmAttemptedAt) {
+    const at = Date.parse(input.metadataLlmAttemptedAt);
+    if (Number.isFinite(at) && input.now.getTime() - at < METADATA_LLM_RETRY_AFTER_MS) return false;
+  }
+  if (!input.existing) return true;
+  return (input.existingQuality?.failures ?? []).some((code) => /^(?:SEO_TITLE|META_DESC)_/.test(code));
 }
