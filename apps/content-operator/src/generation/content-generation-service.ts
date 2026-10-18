@@ -2670,6 +2670,14 @@ export class ContentGenerationService {
         title: version.title,
         body: version.body,
       });
+      // Fact reviewers judge against the same official material the writer was given.
+      const officialEvidence =
+        reviewType === "claim-consistency" || reviewType === "factual-consistency"
+          ? reviewEvidenceFromStructuredContent(version.structuredContent)
+          : null;
+      const reviewUserPrompt = officialEvidence
+        ? `${rendered.userPrompt}\n\n${officialEvidence}`
+        : rendered.userPrompt;
       const structuredSeo =
         version.structuredContent &&
         typeof version.structuredContent === "object" &&
@@ -2723,7 +2731,7 @@ export class ContentGenerationService {
         promptIdentifier: prompt.identifier,
         promptVersion: prompt.version,
         systemInstruction: seoReview?.system ?? rendered.systemInstruction,
-        userPrompt: seoReview?.user ?? rendered.userPrompt,
+        userPrompt: seoReview?.user ?? reviewUserPrompt,
         model: this.models.review,
         input: { title: version.title, body: version.body, reviewType },
         safety: wpLlmSafety({
@@ -3093,4 +3101,39 @@ function mergeReviewOverall(
   if (result === "MANUAL_REVIEW_REQUIRED" && current !== "failed") return "manual_review_required";
   if (result === "WARNING" && current === "passed") return "warning";
   return current;
+}
+
+/**
+ * The official material the writer was given, for the claim and factual reviewers.
+ * Without it they judge product facts with nothing to compare against.
+ */
+export function reviewEvidenceFromStructuredContent(structuredContent: unknown): string | null {
+  if (!structuredContent || typeof structuredContent !== "object") return null;
+  const contract = (structuredContent as Record<string, unknown>).brainGenerationContract;
+  if (!contract || typeof contract !== "object") return null;
+  const record = contract as Record<string, unknown>;
+  const layers = record.layers as Record<string, unknown> | undefined;
+  const pack = (layers?.EVIDENCE_PACK ?? record.evidencePack) as Record<string, unknown> | undefined;
+  if (!pack || typeof pack !== "object") return null;
+  const claims = Array.isArray(pack.supportedClaims)
+    ? (pack.supportedClaims as Array<{ statement?: unknown }>)
+        .map((c) => (typeof c?.statement === "string" ? c.statement.trim() : ""))
+        .filter(Boolean)
+    : [];
+  const description = Array.isArray(pack.officialDescription)
+    ? (pack.officialDescription as unknown[]).filter((v): v is string => typeof v === "string").join("\n")
+    : typeof pack.officialDescription === "string"
+      ? pack.officialDescription
+      : "";
+  const title = typeof pack.productTitle === "string" ? pack.productTitle : "";
+  if (!title && claims.length === 0 && !description.trim()) return null;
+  return [
+    "OFFICIAL_EVIDENCE — the only source of product facts (cast, series, label, runtime, content, setting).",
+    "Fail a product fact that this evidence does not support. The writer's own impressions and recommendations are opinions, not product facts.",
+    title ? `productTitle: ${title}` : "",
+    claims.length ? `supportedClaims:\n- ${claims.join("\n- ")}` : "",
+    description.trim() ? `officialDescription:\n${description.trim()}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
