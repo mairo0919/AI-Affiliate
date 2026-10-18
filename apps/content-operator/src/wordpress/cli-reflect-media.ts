@@ -241,7 +241,7 @@ export async function runWpReflectMediaCli(argv: string[]): Promise<void> {
               changed: (categories as { changed?: number })?.changed,
             }
           : null,
-        themeVersion: theme?.version ?? null,
+        themeVersion: (theme as { version?: string } | null)?.version ?? null,
         note: "Age Gate SSOT is the PHP plugin; header template-part must not contain JS/CSS age gate.",
       },
       null,

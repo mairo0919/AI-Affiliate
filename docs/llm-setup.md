@@ -20,7 +20,6 @@
 | 変数 | 既定 | 説明 |
 | --- | --- | --- |
 | `LLM_MODE` | `mock` | `mock` \| `api` |
-| `LLM_PROVIDER` | `openai-compatible` | Provider key（コアはベンダー非依存） |
 | `LLM_MODEL_GENERATION` | `gpt-4.1-mini` | 記事／X 生成 |
 | `LLM_MODEL_REVIEW` | `gpt-4.1-mini` | レビュー |
 | `LLM_MODEL_REVISION` | `gpt-4.1-mini` | 部分修正 |

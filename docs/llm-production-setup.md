@@ -12,7 +12,6 @@ LLM_MODEL_REVIEW=gpt-4.1-mini
 LLM_MODEL_REVISION=gpt-4.1-mini
 LLM_MODEL_STRATEGY=gpt-4.1-mini
 LLM_TIMEOUT_MS=60000
-LLM_TEMPERATURE=0.4
 ```
 
 Without allow-external or key → Mock（テスト維持）。

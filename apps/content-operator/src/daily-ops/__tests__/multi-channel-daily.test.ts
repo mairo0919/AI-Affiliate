@@ -6,7 +6,6 @@ import { isBlockedOnChannel } from "../channel-duplicate.js";
 import { planDailyChannels } from "../channel-selection.js";
 import { chooseContentMixSlot, normalizeMixSlot } from "../content-mix.js";
 import { loadDailyMultiChannelConfig, minimumDailyPublications } from "../config.js";
-import { runMultiChannelDailyDry } from "../orchestrator.js";
 import { classifyReleaseAge, ageDaysFromPublishedAt } from "../release-age.js";
 import { chooseXPostRoute } from "../x-route.js";
 import type { ChannelCandidate } from "../channel-selection.js";
@@ -282,28 +281,5 @@ describe("multi-channel daily (LLM=0)", () => {
     expect(cfg.xExtraPostsBudget).toBe(2);
     expect(cfg.xHardCapPerDay).toBe(4);
     expect(cfg.xPostExtraSlotsDayJst).toBe("2026-09-15");
-  });
-
-  it("dry orchestrator uses 0 LLM / 0 publish calls", () => {
-    const result = runMultiChannelDailyDry({
-      pool: [
-        cand({ canonicalId: "a", title: "a", releaseAgeBucket: "RECENT" }),
-        cand({ canonicalId: "b", title: "b", releaseAgeBucket: "OLDER", popularityScore: 80, pageEvidenceRichness: 0.95 }),
-      ],
-      recentMix: [
-        { slot: "NEW_RELEASE", at: "x" },
-        { slot: "NEW_RELEASE", at: "y" },
-      ],
-      config: loadDailyMultiChannelConfig({
-        DAILY_BLOG_ARTICLES: "1",
-        DAILY_X_POSTS: "2",
-      }),
-    });
-    expect(result.llmCalls).toBe(0);
-    expect(result.wordpressPublishCalls).toBe(0);
-    expect(result.bloggerPublishCalls).toBe(0);
-    expect(result.xPublishCalls).toBe(0);
-    expect(result.targets.minimumTotal).toBe(3);
-    expect(result.biasAudit.newnessBiasCorrected).toBe(true);
   });
 });

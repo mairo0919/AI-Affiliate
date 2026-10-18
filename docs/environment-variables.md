@@ -11,7 +11,7 @@ See `.env.example` for the complete list. Production-critical:
 | `LLM_ALLOW_EXTERNAL_REQUESTS` | must be true for real LLM |
 | `LLM_API_KEY` | secret — never log |
 | `LLM_MODEL_GENERATION` / `_REVIEW` / `_REVISION` / `_STRATEGY` | model ids |
-| `LLM_TIMEOUT_MS` / `LLM_TEMPERATURE` / `LLM_DAILY_TOKEN_BUDGET` | budgets & knobs |
+| `LLM_TIMEOUT_MS` | request timeout |
 | `BLOGGER_MODE` | mock / api |
 | `BLOGGER_ALLOW_EXTERNAL_REQUESTS` | must be true for real Blogger |
 | `BLOGGER_CLIENT_ID` / `_SECRET` / `_REFRESH_TOKEN` / `_BLOG_ID` | OAuth |

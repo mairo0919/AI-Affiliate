@@ -97,7 +97,6 @@ export interface AppConfig {
   contentGenerationProvider: string;
   contentGenerationModel: string;
   contentGenerationTimeoutMs: number;
-  contentGenerationMaxAttempts: number;
   contentDefaultReviewer: string;
   contentXMaxLength: number;
   contentBlogMinLength: number;
@@ -121,7 +120,6 @@ export interface AppConfig {
   xApiClientId: string | undefined;
   xApiClientSecret: string | undefined;
   xApiAccessToken: string | undefined;
-  xApiRefreshToken: string | undefined;
   xApiAccountId: string | undefined;
   /**
    * Temporary one-shot live smoke allowlist (single CID). Empty = disabled.
@@ -133,8 +131,6 @@ export interface AppConfig {
   xApiMaxAttempts: number;
   xApiUserAgent: string;
   xMaxWeightedLength: number;
-  xTargetWeightedLength: number;
-  xReservedWeightedLength: number;
   xMaxHashtags: number;
   xMaxPostsPerPublication: number;
   xAutoMaxPostsPerPublication: number;
@@ -144,7 +140,6 @@ export interface AppConfig {
   xStrategyMinSampleSize: number;
   xStrategyEvaluationWindowHours: number;
   xStrategyAutoOptimizationEnabled: boolean;
-  xStrategyEnabledTypes: string[];
   xStrategyAutoEnabledTypes: string[];
   xAutoPublicationEnabled: boolean;
   /**
@@ -186,7 +181,6 @@ export interface AppConfig {
   xOptimizationMaxMissingRate: number;
   xOptimizationLookbackDays: number;
   xOptimizationEvaluationWindowHours: number;
-  xOptimizationExplorationRate: number;
   xOptimizationRecommendationTtlDays: number;
   xOptimizationMaxActiveRecommendations: number;
   xOptimizationMaxConcurrentExperimentsPerDimension: number;
@@ -221,8 +215,6 @@ export interface AppConfig {
   xProductReservationTtlMinutes: number;
   /** Grace after scheduledAt before unused reservation may expire (also TTL floor). */
   xProductReservationPublishGraceMinutes: number;
-  xAllowDuplicateProductExperiments: boolean;
-  xDuplicateProductMinIntervalHours: number;
   xReleaseMode: "DISABLED" | "DRY_RUN" | "ALLOWLIST" | "LIMITED" | "FULL";
   xReleaseAllowedAccountIds: string[];
   xReleaseAllowedStrategies: string[];
@@ -233,8 +225,6 @@ export interface AppConfig {
   xReleaseAllowedEndHourJst: number;
   xGlobalKillSwitch: boolean;
   xPostBodyDuplicateLookbackDays: number;
-  xPostBodyNearDuplicateThreshold: number;
-  xPostBodyNearDuplicateBlocking: boolean;
   xNotifyPublicationBlocked: boolean;
   xNotifyProductCooldownBlocked: boolean;
   xNotifyPublicationLimitReached: boolean;
@@ -282,7 +272,6 @@ export interface AppConfig {
   publicationPauseWhenNoQualified: boolean;
   /** mock | api — production LLM requires explicit api + allow flag */
   llmMode: "mock" | "api";
-  llmProvider: string;
   llmModelGeneration: string;
   /** Article Writer / Article Rewrite / X Social Writer+Rewrite. Default gpt-4.1 — never aliases GENERATION/mini. */
   llmModelWriter: string;
@@ -294,9 +283,7 @@ export interface AppConfig {
   llmTimeoutMs: number;
   llmMaxAttempts: number;
   llmAllowExternalRequests: boolean;
-  llmTemperature: number;
   llmCurrency: string;
-  llmDailyTokenBudget: number | null;
   /** Estimated JPY per 1K tokens when provider omits cost */
   llmEstimatedYenPer1kInputTokens: number;
   llmEstimatedYenPer1kOutputTokens: number;
@@ -345,7 +332,6 @@ export interface AppConfig {
   publicationActiveHoursEnd: number;
   publicationTimezone: string;
   publicationMinimumQualityScore: number;
-  publicationMinimumClaimConfidence: number;
   adminRateLimitPerMinute: number;
   adminLoginMaxAttempts: number;
   adminLoginWindowMinutes: number;
@@ -707,10 +693,6 @@ export function loadConfig(options?: { requireDatabaseUrl?: boolean }): AppConfi
       process.env.CONTENT_GENERATION_TIMEOUT_MS,
       30_000,
     ),
-    contentGenerationMaxAttempts: parsePositiveInt(
-      process.env.CONTENT_GENERATION_MAX_ATTEMPTS,
-      2,
-    ),
     contentDefaultReviewer: process.env.CONTENT_DEFAULT_REVIEWER?.trim() || "admin",
     contentXMaxLength: parsePositiveInt(process.env.CONTENT_X_MAX_LENGTH, 140),
     contentBlogMinLength: parsePositiveInt(process.env.CONTENT_BLOG_MIN_LENGTH, 800),
@@ -760,7 +742,6 @@ export function loadConfig(options?: { requireDatabaseUrl?: boolean }): AppConfi
     xApiClientId: process.env.X_API_CLIENT_ID?.trim() || undefined,
     xApiClientSecret: process.env.X_API_CLIENT_SECRET?.trim() || undefined,
     xApiAccessToken: process.env.X_API_ACCESS_TOKEN?.trim() || undefined,
-    xApiRefreshToken: process.env.X_API_REFRESH_TOKEN?.trim() || undefined,
     xApiAccountId: process.env.X_API_ACCOUNT_ID?.trim() || undefined,
     xOneShotLiveSmokeCid: process.env.X_ONESHOT_LIVE_SMOKE_CID?.trim().toLowerCase() || undefined,
     xApiBaseUrl: process.env.X_API_BASE_URL?.trim() || "https://api.x.com",
@@ -769,8 +750,6 @@ export function loadConfig(options?: { requireDatabaseUrl?: boolean }): AppConfi
     xApiUserAgent:
       process.env.X_API_USER_AGENT?.trim() || "AI-Affiliate-Factory/1.0",
     xMaxWeightedLength: parsePositiveInt(process.env.X_MAX_WEIGHTED_LENGTH, 280),
-    xTargetWeightedLength: parsePositiveInt(process.env.X_TARGET_WEIGHTED_LENGTH, 250),
-    xReservedWeightedLength: parsePositiveInt(process.env.X_RESERVED_WEIGHTED_LENGTH, 20),
     xMaxHashtags: parsePositiveInt(process.env.X_MAX_HASHTAGS, 2),
     xMaxPostsPerPublication: parsePositiveInt(process.env.X_MAX_POSTS_PER_PUBLICATION, 3),
     xAutoMaxPostsPerPublication: parsePositiveInt(
@@ -798,14 +777,6 @@ export function loadConfig(options?: { requireDatabaseUrl?: boolean }): AppConfi
       process.env.X_STRATEGY_AUTO_OPTIMIZATION_ENABLED,
       false,
     ),
-    xStrategyEnabledTypes: parseCsvList(process.env.X_STRATEGY_ENABLED_TYPES, [
-      "single-post",
-      "root-with-reply",
-      "related-post-link",
-      "thread",
-      "hub-post",
-      "control",
-    ]),
     xStrategyAutoEnabledTypes: parseCsvList(process.env.X_STRATEGY_AUTO_ENABLED_TYPES, [
       "single-post",
       "root-with-reply",
@@ -870,10 +841,6 @@ export function loadConfig(options?: { requireDatabaseUrl?: boolean }): AppConfi
     xOptimizationEvaluationWindowHours: parsePositiveInt(
       process.env.X_OPTIMIZATION_EVALUATION_WINDOW_HOURS,
       72,
-    ),
-    xOptimizationExplorationRate: Math.max(
-      0.05,
-      parseUnitInterval(process.env.X_OPTIMIZATION_EXPLORATION_RATE, 0.2),
     ),
     xOptimizationRecommendationTtlDays: parsePositiveInt(
       process.env.X_OPTIMIZATION_RECOMMENDATION_TTL_DAYS,
@@ -951,14 +918,6 @@ export function loadConfig(options?: { requireDatabaseUrl?: boolean }): AppConfi
       process.env.X_PRODUCT_RESERVATION_PUBLISH_GRACE_MINUTES,
       180,
     ),
-    xAllowDuplicateProductExperiments: parseBooleanEnv(
-      process.env.X_ALLOW_DUPLICATE_PRODUCT_EXPERIMENTS,
-      false,
-    ),
-    xDuplicateProductMinIntervalHours: parsePositiveInt(
-      process.env.X_DUPLICATE_PRODUCT_MIN_INTERVAL_HOURS,
-      72,
-    ),
     xReleaseMode: parseReleaseMode(process.env.X_RELEASE_MODE),
     xReleaseAllowedAccountIds: parseCsvListPreserveCase(
       process.env.X_RELEASE_ALLOWED_ACCOUNT_IDS,
@@ -980,14 +939,6 @@ export function loadConfig(options?: { requireDatabaseUrl?: boolean }): AppConfi
     xPostBodyDuplicateLookbackDays: parsePositiveInt(
       process.env.X_POST_BODY_DUPLICATE_LOOKBACK_DAYS,
       30,
-    ),
-    xPostBodyNearDuplicateThreshold: parseUnitInterval(
-      process.env.X_POST_BODY_NEAR_DUPLICATE_THRESHOLD,
-      0.92,
-    ),
-    xPostBodyNearDuplicateBlocking: parseBooleanEnv(
-      process.env.X_POST_BODY_NEAR_DUPLICATE_BLOCKING,
-      true,
     ),
     xNotifyPublicationBlocked: parseBooleanEnv(
       process.env.X_NOTIFY_PUBLICATION_BLOCKED,
@@ -1082,7 +1033,6 @@ export function loadConfig(options?: { requireDatabaseUrl?: boolean }): AppConfi
       true,
     ),
     llmMode: (process.env.LLM_MODE ?? "mock").trim().toLowerCase() === "api" ? "api" : "mock",
-    llmProvider: (process.env.LLM_PROVIDER ?? "openai-compatible").trim() || "openai-compatible",
     llmModelGeneration: process.env.LLM_MODEL_GENERATION ?? "gpt-4.1-mini",
     llmModelWriter: process.env.LLM_MODEL_WRITER ?? "gpt-4.1",
     llmModelReview: process.env.LLM_MODEL_REVIEW ?? "gpt-4.1-mini",
@@ -1093,9 +1043,7 @@ export function loadConfig(options?: { requireDatabaseUrl?: boolean }): AppConfi
     llmTimeoutMs: parsePositiveInt(process.env.LLM_TIMEOUT_MS, 60_000),
     llmMaxAttempts: parsePositiveInt(process.env.LLM_MAX_ATTEMPTS, 2),
     llmAllowExternalRequests: parseBooleanEnv(process.env.LLM_ALLOW_EXTERNAL_REQUESTS, false),
-    llmTemperature: parseSignedFloat(process.env.LLM_TEMPERATURE, 0.4),
     llmCurrency: process.env.LLM_CURRENCY ?? "JPY",
-    llmDailyTokenBudget: parseOptionalFloat(process.env.LLM_DAILY_TOKEN_BUDGET),
     llmEstimatedYenPer1kInputTokens: parseSignedFloat(
       process.env.LLM_ESTIMATED_YEN_PER_1K_INPUT_TOKENS,
       0.15,
@@ -1174,10 +1122,6 @@ export function loadConfig(options?: { requireDatabaseUrl?: boolean }): AppConfi
     publicationMinimumQualityScore: parseSignedFloat(
       process.env.PUBLICATION_MINIMUM_QUALITY_SCORE,
       0.55,
-    ),
-    publicationMinimumClaimConfidence: parseSignedFloat(
-      process.env.PUBLICATION_MINIMUM_CLAIM_CONFIDENCE,
-      0.5,
     ),
     adminRateLimitPerMinute: parsePositiveInt(process.env.ADMIN_RATE_LIMIT_PER_MINUTE, 120),
     adminLoginMaxAttempts: parsePositiveInt(process.env.ADMIN_LOGIN_MAX_ATTEMPTS, 10),
