@@ -92,6 +92,10 @@ export function buildOptionBBloggerGeneratorPrompt(input: {
   planViolationNote?: string | null;
   /** r79 — section cardinality bound into embedded + returned schema */
   articleOutputContract?: ArticleOutputContract | null;
+  /** Official blurb, so the writer understands how the planned facts relate. */
+  officialDescription?: string | null;
+  /** Findings from this work's earlier rejected versions. */
+  priorReviewFindings?: string[] | null;
 }): { systemInstruction: string; userPrompt: string; outputSchema: Record<string, unknown> } {
   const baseSchema = getOptionBBloggerArticleLlmJsonSchema();
   const outputSchema = applyArticleOutputContractToLlmSchema(
@@ -182,6 +186,18 @@ export function buildOptionBBloggerGeneratorPrompt(input: {
     `outputChannel=BLOGGER articleFormat=${JSON.stringify(input.articleFormat)}`,
     "ARTICLE_PLAN (factual boundary — weave into prose; do not dump as taxonomy):",
     JSON.stringify(plan),
+    input.officialDescription?.trim()
+      ? [
+          "OFFICIAL_DESCRIPTION (context only — read it to understand how the planned facts relate, then write in your own words. Do not copy its sentences. Concrete facts still come from ARTICLE_PLAN):",
+          input.officialDescription.trim(),
+        ].join("\n")
+      : "",
+    input.priorReviewFindings?.length
+      ? [
+          "PRIOR_REVIEW_FINDINGS (an earlier article for this work was rejected for these; do not repeat them):",
+          ...input.priorReviewFindings.map((line) => `- ${line}`),
+        ].join("\n")
+      : "",
     seoBlock,
     execution
       ? [

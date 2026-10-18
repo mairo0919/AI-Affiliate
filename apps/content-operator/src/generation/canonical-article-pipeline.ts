@@ -15,6 +15,8 @@ import type { PageEvidenceMetaShape } from "../article-pattern/official-page-evi
 import type { ContentGenerationService } from "../generation/content-generation-service.js";
 import { readLlmSafety, settleWpRuns } from "../adapters/llm/wp-article-safety.js";
 import { isSystemStopReason } from "../stock/stock-attempt-ledger.js";
+import { extractProductKeyFromStructured } from "../stock/approved-stock.js";
+import { normalizeProductKey } from "../daily-ops/blog-product-exclusion.js";
 import {
   ensureOfficialEnrichmentForStockItem,
   isUsableOfficialPageEvidence,
@@ -215,6 +217,9 @@ export async function runCanonicalArticlePipeline(
     return { ok: false, reason: boot.error, enrichment };
   }
 
+  const priorReviewFindings = await loadPriorReviewFindings(input.lifecycle, input.productCanonicalId).catch(
+    () => [] as string[],
+  );
   const generated = await input.generation.generateBloggerArticle({
     topicId: boot.topicId,
     strategyId: boot.strategyId,
@@ -225,6 +230,7 @@ export async function runCanonicalArticlePipeline(
     demandMatchKeywords: input.demandMatchKeywords,
     // The stock route's own exclusion rules decide when a work may be written again.
     regenerateReason: "canonical-regeneration",
+    priorReviewFindings,
   });
 
   const sc = (generated.version.structuredContent ?? {}) as Record<string, unknown>;
@@ -349,10 +355,9 @@ export async function runCanonicalArticlePipeline(
   };
 }
 
-/** The failed reviews' findings, as the rationale for one partial revision. */
-export function reviewFindingsRationale(
-  reviews: ReadonlyArray<{ reviewType: string; result: string; findings: unknown }>,
-): string {
+type ReviewLike = { reviewType: string; result: string; findings: unknown };
+
+function reviewFindingLines(reviews: ReadonlyArray<ReviewLike>): string[] {
   const lines: string[] = [];
   for (const review of reviews) {
     if (review.result !== "FAILED") continue;
@@ -365,8 +370,52 @@ export function reviewFindingsRationale(
           : typeof (finding as Record<string, unknown>).message === "string"
             ? String((finding as Record<string, unknown>).message)
             : JSON.stringify(finding);
-      lines.push(`- [${review.reviewType}] ${text.slice(0, 300)}`);
+      lines.push(`[${review.reviewType}] ${text.slice(0, 300)}`);
     }
   }
-  return lines.length ? `Review findings to fix:\n${lines.slice(0, 12).join("\n")}` : "Review failed without findings.";
+  return lines;
+}
+
+/** The failed reviews' findings, as the rationale for one partial revision. */
+export function reviewFindingsRationale(reviews: ReadonlyArray<ReviewLike>): string {
+  const lines = reviewFindingLines(reviews);
+  return lines.length
+    ? `Review findings to fix:\n${lines.slice(0, 12).map((line) => `- ${line}`).join("\n")}`
+    : "Review failed without findings.";
+}
+
+type PriorFindingsDb = {
+  contentVersion: {
+    findMany(args: unknown): Promise<Array<{ id: string; structuredContent: unknown }>>;
+  };
+  qualityReviewRecord: {
+    findMany(args: unknown): Promise<ReviewLike[]>;
+  };
+};
+
+/** Findings from this work's most recent rejected versions, so the writer does not repeat them. */
+export async function loadPriorReviewFindings(
+  lifecycle: unknown,
+  productCanonicalId: string,
+  maxVersions = 3,
+): Promise<string[]> {
+  const db = (lifecycle as { prisma?: PriorFindingsDb }).prisma;
+  const key = normalizeProductKey(productCanonicalId);
+  if (!db || !key) return [];
+  const rejected = await db.contentVersion.findMany({
+    where: { status: "REVISION_REQUIRED" },
+    select: { id: true, structuredContent: true },
+    orderBy: { createdAt: "desc" },
+    take: 500,
+  });
+  const ids = rejected
+    .filter((version) => extractProductKeyFromStructured(version.structuredContent) === key)
+    .slice(0, maxVersions)
+    .map((version) => version.id);
+  if (ids.length === 0) return [];
+  const reviews = await db.qualityReviewRecord.findMany({
+    where: { contentVersionId: { in: ids }, result: "FAILED" },
+    select: { reviewType: true, result: true, findings: true },
+  });
+  return [...new Set(reviewFindingLines(reviews))].slice(0, 8);
 }

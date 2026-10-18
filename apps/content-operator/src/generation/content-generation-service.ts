@@ -170,6 +170,8 @@ export interface GenerateBloggerInput {
    * rejection; the LLM gate otherwise refuses a fingerprint whose output was discarded.
    */
   regenerateReason?: string | null;
+  /** Findings from this work's earlier rejected versions, shown to the writer. */
+  priorReviewFindings?: string[] | null;
   topicId: string;
   strategyId: string;
   contentId?: string;
@@ -1337,6 +1339,11 @@ export class ContentGenerationService {
           planViolationNote: planViolationFeedback
             ? buildPlanViolationRegenNote(planViolationFeedback)
             : null,
+          officialDescription:
+            typeof evidencePackPrompt.officialDescription === "string"
+              ? evidencePackPrompt.officialDescription
+              : null,
+          priorReviewFindings: input.priorReviewFindings ?? null,
         });
         const systemInstruction = slim.systemInstruction;
         const userPrompt = slim.userPrompt;
