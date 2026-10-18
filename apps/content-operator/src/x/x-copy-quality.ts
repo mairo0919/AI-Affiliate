@@ -292,3 +292,30 @@ export function hasQuotedTitleFragment(text: string): boolean {
   }
   return false;
 }
+
+/**
+ * Length of the longest run of the official title pasted verbatim into the post,
+ * ignoring names (performer, series) that a post may repeat as they are.
+ */
+export function longestTitleSliceInPost(body: string, title: string, names: readonly string[] = []): number {
+  const strip = (text: string) => {
+    let next = text.normalize("NFKC").replace(/[\s「」『』【】]/gu, "");
+    for (const name of names) {
+      const key = name.normalize("NFKC").replace(/\s/gu, "");
+      if (key.length >= 2) next = next.split(key).join("|");
+    }
+    return next;
+  };
+  const post = strip(body);
+  const source = strip(title);
+  let best = 0;
+  for (let i = 0; i < source.length; i += 1) {
+    for (let j = i + best + 1; j <= source.length; j += 1) {
+      const slice = source.slice(i, j);
+      if (slice.includes("|")) break;
+      if (!post.includes(slice)) break;
+      best = slice.length;
+    }
+  }
+  return best;
+}

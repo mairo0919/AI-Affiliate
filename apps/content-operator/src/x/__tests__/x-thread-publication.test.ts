@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { replayWriter } from "./replay-writer.js";
 import {
   composeXThreadPublication,
   extractThreadPostIds,
@@ -201,6 +202,7 @@ describe("adaptation wires strategy without Writer inventing nav replies", () =>
       canonicalTitle: "ROCKET18周年記念 主観ホラー 九井スナオ",
       productTitle: "ROCKET18周年記念ユーザーリクエスト祭り 完全主観ホラー 九井スナオ",
       cid: "1rctd00763",
+      llm: replayWriter("九井スナオの主観ホラー、気になってた。"),
       performerNames: ["九井スナオ"],
       claimStatements: [
         { statement: "ROCKET18周年記念のユーザーリクエスト企画" },
@@ -234,6 +236,7 @@ describe("adaptation wires strategy without Writer inventing nav replies", () =>
       canonicalTitle: "ROCKET18周年記念 主観ホラー 九井スナオ",
       productTitle: "ROCKET18周年記念ユーザーリクエスト祭り 完全主観ホラー 九井スナオ",
       cid: "1rctd00763",
+      llm: replayWriter("九井スナオの主観ホラー、気になってた。"),
       performerNames: ["九井スナオ"],
       claimStatements: [
         { statement: "ROCKET18周年記念のユーザーリクエスト企画" },

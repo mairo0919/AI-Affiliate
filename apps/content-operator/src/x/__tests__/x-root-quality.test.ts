@@ -182,7 +182,8 @@ describe("review blocks the published 1rctd00763 root", () => {
       "九井スナオのROCKET18周年記念ユーザーリクエスト祭りは、完全主観ホラーの作品として収録されている。",
       plan,
     );
-    expect(natural.ok).toBe(true);
+    // 2026-10-19: the template intro pasted long title runs; published posts of this shape were judged bad. It must fail now.
+    expect(natural.findings.map((f) => f.code)).toContain("TITLE_SLICE_COPY");
     const exists = reviewXSocialCopy("SCOOP的モニタリングAVは、神回SPで、6.5時間がある。", plan);
     expect(exists.ok).toBe(false);
     expect(exists.findings.map((f) => f.code)).toContain("TEMPLATE_EXPLAINER");
@@ -209,7 +210,8 @@ describe("planner viability uses a primary fact, not a spec readout", () => {
     expect(horrorBody).toBe(
       "九井スナオは、完全主観ホラーのROCKET18周年記念ユーザーリクエスト祭りに出演している。",
     );
-    expect(reviewXSocialCopy(horrorBody, horror.plan).ok).toBe(true);
+    // 2026-10-19: the template intro pasted long title runs; published posts of this shape were judged bad. It must fail now.
+    expect(reviewXSocialCopy(horrorBody, horror.plan).findings.map((f) => f.code)).toContain("TITLE_SLICE_COPY");
 
     const scoop = planTitle("SCOOP的モニタリングAV ウブな女子大生が初めての風俗チャレンジ約6.5時間 神回SP");
     expect(scoop.ok).toBe(true);
@@ -221,7 +223,8 @@ describe("planner viability uses a primary fact, not a spec readout", () => {
     const scoopBody = composeGroundedIntro(scoop.plan) ?? "";
     expect(scoopBody).toContain("風俗チャレンジ");
     expect(scoopBody).not.toMatch(/神回SP/);
-    expect(reviewXSocialCopy(scoopBody, scoop.plan).ok).toBe(true);
+    // 2026-10-19: the template intro pasted long title runs; published posts of this shape were judged bad. It must fail now.
+    expect(reviewXSocialCopy(scoopBody, scoop.plan).ok).toBe(false);
     expect(
       reviewXSocialCopy("ウブな女子大生が初めての風俗チャレンジを描くSCOOP的モニタリングAV、約6.5時間。", scoop.plan).ok,
     ).toBe(false);
@@ -239,7 +242,8 @@ describe("planner viability uses a primary fact, not a spec readout", () => {
     expect(audition.plan.viability).toBe("X_POSTABLE");
     const auditionBody = composeGroundedIntro(audition.plan) ?? "";
     expect(auditionBody).toContain("ガチ参加");
-    expect(reviewXSocialCopy(auditionBody, audition.plan).ok).toBe(true);
+    // 2026-10-19: the template intro pasted long title runs; published posts of this shape were judged bad. It must fail now.
+    expect(reviewXSocialCopy(auditionBody, audition.plan).ok).toBe(false);
   });
 
   it("marks runtime, BEST, and an uncertain short phrase as insufficient", () => {
@@ -284,7 +288,8 @@ describe("planner viability uses a primary fact, not a spec readout", () => {
     expect(personBody).toContain("学生");
     expect(personBody).toContain("ナチュポケ");
     expect(personBody).not.toMatch(/ありのまま|ハメ撮り/);
-    expect(reviewXSocialCopy(personBody, person.plan).ok).toBe(true);
+    // 2026-10-19: the template intro pasted long title runs; published posts of this shape were judged bad. It must fail now.
+    expect(reviewXSocialCopy(personBody, person.plan).ok).toBe(false);
 
     const puff = planTitle("ギュっと！上戸まり2タイトル4時間", ["上戸まり"]);
     expect(puff.ok).toBe(true);
@@ -311,7 +316,8 @@ describe("planner viability uses a primary fact, not a spec readout", () => {
     expect(pairedBody).toBe(
       "一色さらは、ROCKET18周年記念ユーザーリクエスト祭りの無個性ゼンタイ人間化に出演している。",
     );
-    expect(reviewXSocialCopy(pairedBody, paired.plan).ok).toBe(true);
+    // 2026-10-19: the template intro pasted long title runs; published posts of this shape were judged bad. It must fail now.
+    expect(reviewXSocialCopy(pairedBody, paired.plan).findings.map((f) => f.code)).toContain("TITLE_SLICE_COPY");
 
     const vr = planTitle("【VR】響蓮に沼る", ["響蓮"]);
     expect(vr.ok).toBe(true);
@@ -388,7 +394,8 @@ describe("planner viability uses a primary fact, not a spec readout", () => {
     expect(grounded).toContain(premise);
     expect(grounded).not.toMatch(/に出演している/);
     const review = reviewXSocialCopy(grounded, planned.plan);
-    expect(review.ok).toBe(true);
+    // 2026-10-19: the template intro pasted long title runs; published posts of this shape were judged bad. It must fail now.
+    expect(review.ok).toBe(false);
     expect(review.findings.map((finding) => finding.code)).not.toEqual(
       expect.arrayContaining(["UNSUPPORTED_FACT", "FOCUS_NOT_SPECIFIC"]),
     );
@@ -418,7 +425,8 @@ describe("planner viability uses a primary fact, not a spec readout", () => {
     );
     const grounded = composeGroundedIntro(planned.plan) ?? "";
     const passed = reviewXSocialCopy(grounded, planned.plan);
-    expect(passed.ok).toBe(true);
+    // 2026-10-19: the template intro pasted long title runs; published posts of this shape were judged bad. It must fail now.
+    expect(passed.ok).toBe(false);
     expect(passed.dimensions.PROSE_QUALITY).toBe("PASS");
     expect(passed.findings.map((finding) => finding.code)).not.toEqual(
       expect.arrayContaining([

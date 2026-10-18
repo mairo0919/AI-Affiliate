@@ -28,6 +28,10 @@ import {
 } from "./x-copy-voice.js";
 import { detectXAdultExpressions } from "./x-social-content-policy.js";
 import { XCharacterCounter } from "./character-counter.js";
+import { longestTitleSliceInPost } from "./x-copy-quality.js";
+
+/** Characters of the official title a post may carry verbatim, names excluded. */
+const X_TITLE_SLICE_LIMIT = 10;
 import { X_SOCIAL_BODY_MAX_WEIGHTED } from "./social-write.js";
 import type { XSocialPlan } from "./social-plan.js";
 import { writeXSocialCopy, synthesizeXSocialFromPlan } from "./social-write.js";
@@ -302,6 +306,17 @@ export function reviewXSocialCopy(
     );
   }
 
+  // A long verbatim run of the title or the official blurb used as a noun
+  // ("〇〇は、<pasted run>を収録している") reads as a catalog paste, not a post.
+  const nameKeys = [plan.subject ?? "", plan.canonicalContext.seriesName ?? "", ...plan.canonicalContext.performers];
+  const pastedRun = Math.max(
+    plan.productTitle ? longestTitleSliceInPost(text, plan.productTitle, nameKeys) : 0,
+    opts?.officialDescription ? longestTitleSliceInPost(text, opts.officialDescription, nameKeys) : 0,
+  );
+  if (pastedRun >= X_TITLE_SLICE_LIMIT) {
+    fail("NATURAL_JAPANESE", "TITLE_SLICE_COPY", "long verbatim run of the official title or blurb pasted into the post");
+  }
+
   if (hasQuotedTitleFragment(text)) {
     fail(
       "NATURAL_JAPANESE",
@@ -527,6 +542,7 @@ export function reviewXSocialCopy(
     "PACKAGE_FRAGMENT_GLUE",
     "BROKEN_PHRASE",
     "TITLE_FRAGMENT_GLUE",
+    "TITLE_SLICE_COPY",
     "TEMPLATE_EXPLAINER",
     "ARTICLE_SUMMARY_STYLE",
     "CATALOG_DESCRIPTION_STYLE",
@@ -706,6 +722,7 @@ function findingsToHints(findings: SocialReviewFinding[]): string[] {
     codes.has("BROKEN_JAPANESE") ||
     codes.has("BROKEN_PHRASE") ||
     codes.has("TITLE_FRAGMENT_GLUE") ||
+    codes.has("TITLE_SLICE_COPY") ||
     codes.has("TEMPLATE_EXPLAINER") ||
     codes.has("PACKAGE_FRAGMENT_GLUE")
   ) {
@@ -733,6 +750,11 @@ function findingsToHints(findings: SocialReviewFinding[]): string[] {
   if (codes.has("UNGROUNDED") || codes.has("COHERENCE")) {
     hints.push(
       "Stay inside ANGLE / WORK_UNDERSTANDING / EXPRESSION_SAFE_FACTS. Do not invent cast history, jobs, or scenes absent from the plan.",
+    );
+  }
+  if (codes.has("TITLE_SLICE_COPY")) {
+    hints.push(
+      "Do not paste a long piece of the official title. Refer to the work by the performer, the series, or a short phrase, and say something about it in your own words.",
     );
   }
   if (codes.has("TOO_LONG")) {
@@ -782,6 +804,7 @@ export async function rewriteXSocialCopyOnce(
     const anchorOnPrevious =
       !codes.has("TEMPLATE_EXPLAINER") &&
       !codes.has("TITLE_FRAGMENT_GLUE") &&
+      !codes.has("TITLE_SLICE_COPY") &&
       !codes.has("GENERIC_PUFFERY") &&
       !codes.has("ARTICLE_SUMMARY_STYLE") &&
       !codes.has("CATALOG_DESCRIPTION_STYLE") &&

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { replayWriter } from "./replay-writer.js";
 import {
   evaluateXBacklogEligibility,
   isWordPressPublicForXTraffic,
@@ -199,6 +200,7 @@ describe("wp traffic CTA + permalink", () => {
       canonicalTitle: "ROCKET18周年記念ユーザーリクエスト祭り 完全主観ホラー",
       productTitle: "ROCKET18周年記念ユーザーリクエスト祭り 完全主観ホラー",
       cid: "dvaj00760",
+      llm: replayWriter("九井スナオの完全主観ホラー、気になってた。"),
       articlePlanFacts: [
         {
           text: "おしゃぶり大好き美女たちの顔がスケベすぎる",
@@ -513,6 +515,7 @@ describe("x-social-adaptation", () => {
       productTitle:
         "【VR】MadonnaVR史上初！！専属美熟女10人大集合！！町内会の合宿で人妻たちが集う温泉企画 8KVR",
       cid: "juvr00281",
+      llm: replayWriter("風間ゆみと椎名ゆなの温泉企画、町内会の合宿って設定が気になる。"),
       performerNames: ["風間ゆみ", "椎名ゆな"],
       articlePlanFacts: planFacts,
       taxonomyTags: ["人妻・主婦", "熟女"],
