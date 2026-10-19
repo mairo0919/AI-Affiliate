@@ -4,7 +4,7 @@
  * Only the post body and title change; dates, status, slug, and taxonomies stay as they are.
  */
 
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { loadConfig, type AppConfig } from "@ai-affiliate/config";
 import { LifecycleRepository, createDatabaseClient, type DatabaseClient } from "@ai-affiliate/database";
 import { bindLlmExecutionStore } from "../adapters/llm/llm-execution-binding.js";
@@ -115,6 +115,8 @@ export async function rebuildPublishedPosts(deps: {
   rewriteTitles: boolean;
   externalIds?: string[];
   limit?: number;
+  /** Headlines already proposed by an earlier run (externalId → title), used instead of asking again. */
+  titleMap?: Record<string, string>;
 }): Promise<RebuildRow[]> {
   const prisma = deps.database.prisma;
   const lifecycle = new LifecycleRepository(prisma);
@@ -230,8 +232,10 @@ export async function rebuildPublishedPosts(deps: {
 
       const actors = extractItemListCatalogFacts(item.rawData).actors;
       row.titleCopyRun = longestTitleSliceInPost(version.title, item.title, actors);
-      let newTitle: string | null = null;
-      if (row.titleCopyRun >= WP_TITLE_OFFICIAL_RUN_LIMIT && generation) {
+      let newTitle: string | null = deps.titleMap?.[externalId]?.trim() || null;
+      if (newTitle) {
+        row.titleAfter = newTitle;
+      } else if (row.titleCopyRun >= WP_TITLE_OFFICIAL_RUN_LIMIT && generation) {
         newTitle = await proposeTitle({
           generation,
           lifecycle,
@@ -318,6 +322,7 @@ async function proposeTitle(input: {
  *   wp-rebuild-published --titles             (also asks for new headlines; calls the LLM)
  *   wp-rebuild-published --apply --backup=/path/backup.json
  *   wp-rebuild-published --ids=43,47 --limit=10
+ *   wp-rebuild-published --apply --backup=... --title-map=<earlier --titles output>
  */
 export async function runWpRebuildPublishedCli(argv: string[]): Promise<void> {
   const flag = (name: string) => argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
@@ -330,6 +335,15 @@ export async function runWpRebuildPublishedCli(argv: string[]): Promise<void> {
   }
   const externalIds = flag("ids")?.split(",").map((s) => s.trim()).filter(Boolean);
   const limit = flag("limit") ? Number(flag("limit")) : undefined;
+  // A previous run's output: its proposed headlines are applied as-is.
+  const titleMapPath = flag("title-map");
+  const titleMap = titleMapPath
+    ? Object.fromEntries(
+        (JSON.parse(readFileSync(titleMapPath, "utf8")) as { rows: RebuildRow[] }).rows
+          .filter((r) => r.titleAfter)
+          .map((r) => [r.externalId, r.titleAfter!]),
+      )
+    : undefined;
   const config = loadConfig({ requireDatabaseUrl: true });
   const database = createDatabaseClient();
   await database.connect();
@@ -341,6 +355,7 @@ export async function runWpRebuildPublishedCli(argv: string[]): Promise<void> {
       rewriteTitles: argv.includes("--titles"),
       externalIds,
       limit,
+      titleMap,
     });
     if (backupPath) {
       writeFileSync(
