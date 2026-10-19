@@ -79,7 +79,8 @@ export function restyleLiveBody(html: string, workTitle: string, ctaUrl: string)
 
 /** A body published as unconverted markdown: image syntax and a bare "label: URL" CTA shown as text. */
 export function isUnrenderedMarkdownBody(html: string): boolean {
-  return /<p>!\[[^\]]*\]\(https?:/.test(html) || /<p>詳細を確認: https?:/.test(html);
+  // WordPress stores such a body without <p> tags; the theme adds them when rendering.
+  return /^(?:<p>)?!\[[^\]]*\]\(https?:/m.test(html) || /^(?:<p>)?詳細を確認: https?:/m.test(html);
 }
 
 export type RebuildRow = {

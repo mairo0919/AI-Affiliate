@@ -70,6 +70,7 @@ describe("unrendered markdown posts", () => {
     // Post 214 (2026-10): image syntax and the CTA line were shown to readers as text.
     const broken = "<p>![作品（パッケージ）](https://awsimgsrc.dmm.co.jp/a.jpg)</p>\n<p>詳細を確認: https://al.fanza.co.jp/?x</p>";
     expect(isUnrenderedMarkdownBody(broken)).toBe(true);
+    expect(isUnrenderedMarkdownBody("![作品](https://awsimgsrc.dmm.co.jp/a.jpg)\n\n本文\n\n詳細を確認: https://al.fanza.co.jp/?x")).toBe(true);
     expect(isUnrenderedMarkdownBody(formatBloggerHtml(article as never))).toBe(false);
   });
 });
