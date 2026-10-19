@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { WordPressApiPublisher } from "../adapters/publisher/wordpress-api-publisher.js";
 import { formatBloggerHtml } from "../generation/blogger-formatter.js";
-import { bodyInventory, inventoryLosses, liveCtaUrl } from "./rebuild-published-posts.js";
+import { articleProse, bodyInventory, inventoryLosses, liveCtaUrl, restyleLiveBody } from "./rebuild-published-posts.js";
 
 const CTA_URL = "https://al.fanza.co.jp/?lurl=https%3A%2F%2Fvideo.dmm.co.jp%2Fav%2Fcontent%2F%3Fid%3Dymbp00001&af_id=a-990&ch=api";
 const article = {
@@ -29,6 +29,32 @@ describe("rebuild inventory", () => {
     expect(inventoryLosses(before, shorter)[0]).toMatch(/^text /);
     const withTitle = bodyInventory(formatBloggerHtml({ ...article, workTitle: "作品" } as never));
     expect(inventoryLosses(before, withTitle)).toEqual([]);
+  });
+});
+
+describe("keeping live text", () => {
+  // Post 63 (midv00100): its live text and CTA markup predate the stored article.
+  const live = [
+    "<p>公開中の本文です。</p>",
+    '<p class="blog-cta"><a href="https://video.dmm.co.jp/av/content/?id=midv00100">詳細を確認</a></p>',
+    "<p>二段落目。</p>",
+    '<p class="blog-cta"><a href="https://video.dmm.co.jp/av/content/?id=midv00100">詳細を確認</a></p>',
+  ].join("\n");
+
+  it("keeps every paragraph and aligns the CTAs and the work title with new posts", () => {
+    const html = restyleLiveBody(live, "神業ハンドテク", CTA_URL)!;
+    expect(articleProse(html)).toBe(articleProse(live));
+    const fresh = formatBloggerHtml({ ...article, images: [], workTitle: "神業ハンドテク" } as never);
+    const freshCta = fresh.match(/<p class="blog-cta">[\s\S]*?<\/p>/)![0];
+    expect(html.match(/<p class="blog-cta">[\s\S]*?<\/p>/g)).toEqual([freshCta, freshCta]);
+    expect(bodyInventory(html).workTitle).toBe(1);
+    expect(html.indexOf("blog-work-title")).toBeLessThan(html.indexOf("blog-cta"));
+  });
+
+  it("is idempotent, and leaves a post without the standard CTA alone", () => {
+    const once = restyleLiveBody(live, "作品", CTA_URL)!;
+    expect(restyleLiveBody(once, "作品", CTA_URL)).toBe(once);
+    expect(restyleLiveBody("<p>本文</p>", "作品", CTA_URL)).toBeNull();
   });
 });
 

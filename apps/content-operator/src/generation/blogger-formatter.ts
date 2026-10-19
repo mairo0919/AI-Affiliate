@@ -131,7 +131,7 @@ function renderMetaNote(text: string): string {
   return `<p class="${BLOG_META_NOTE_CLASS}" style="${BLOG_META_NOTE_STYLE}">${escapeHtml(text)}</p>`;
 }
 
-function renderCtaBlock(cta: { label: string; url: string | null }): string {
+export function renderCtaBlock(cta: { label: string; url: string | null }): string {
   if (cta.url) {
     return `<p class="${BLOG_CTA_CLASS}"><a href="${escapeAttr(cta.url)}" data-otonaselect-cta="1" data-cta="detail_confirm" data-provider="fanza" rel="noopener noreferrer">${escapeHtml(cta.label)}</a></p>`;
   }

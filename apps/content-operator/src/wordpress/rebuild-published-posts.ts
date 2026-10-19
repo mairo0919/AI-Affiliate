@@ -16,7 +16,7 @@ import {
   type WordPressApiPublisher,
 } from "../adapters/publisher/wordpress-api-publisher.js";
 import { validateFanzaAffiliateUrl } from "../daily-blog/affiliate-url.js";
-import { BLOG_CTA_CLASS } from "../generation/blogger-formatter.js";
+import { BLOG_CTA_CLASS, BLOG_WORK_TITLE_CLASS, renderCtaBlock, renderWorkTitleBlock } from "../generation/blogger-formatter.js";
 import { auxiliaryFindingRationale } from "../generation/canonical-article-pipeline.js";
 import { ContentGenerationService } from "../generation/content-generation-service.js";
 import { extractItemListCatalogFacts } from "../stock/ensure-official-enrichment.js";
@@ -54,6 +54,29 @@ export function liveCtaUrl(html: string): string | null {
   return match ? match[1]!.replaceAll("&#39;", "'").replaceAll("&quot;", '"').replaceAll("&amp;", "&") : null;
 }
 
+/** The article prose (unclassed paragraphs), to tell a layout change from a text change. */
+export function articleProse(html: string): string {
+  return (html.match(/<p>[\s\S]*?<\/p>/g) ?? []).map((p) => p.replace(/<[^>]+>/g, "").trim()).join("\n");
+}
+
+/**
+ * Keep the live text and bring only the layout in line: the standard CTA markup and the
+ * linked official title before the first CTA. Null when the post has no standard CTA.
+ */
+export function restyleLiveBody(html: string, workTitle: string, ctaUrl: string): string | null {
+  const ctaRe = new RegExp(`<p class="${BLOG_CTA_CLASS}">([\\s\\S]*?)<\\/p>`, "g");
+  if (!html.includes(`<p class="${BLOG_CTA_CLASS}">`)) return null;
+  const withoutOldTitle = html.replace(new RegExp(`<p class="${BLOG_WORK_TITLE_CLASS}">[\\s\\S]*?<\\/p>\\n?`, "g"), "");
+  let first = true;
+  return withoutOldTitle.replace(ctaRe, (_whole, inner: string) => {
+    const label = inner.replace(/<[^>]+>/g, "").trim() || "詳細を確認";
+    const cta = renderCtaBlock({ label, url: ctaUrl });
+    if (!first) return cta;
+    first = false;
+    return `${renderWorkTitleBlock(workTitle, ctaUrl)}\n${cta}`;
+  });
+}
+
 export type RebuildRow = {
   externalId: string;
   cid: string | null;
@@ -64,6 +87,9 @@ export type RebuildRow = {
   titleCopyRun?: number;
   ctaBefore?: string | null;
   ctaAfter?: string;
+  /** RENDERED: rebuilt from the stored article. KEPT_TEXT: live text kept, layout aligned. */
+  mode?: "RENDERED" | "KEPT_TEXT";
+  keptTextBecause?: string;
   before?: BodyInventory;
   after?: BodyInventory;
   /** Live body before the change, kept so an update can be undone. */
@@ -164,11 +190,25 @@ export async function rebuildPublishedPosts(deps: {
         ctaUrl,
         workTitle: item.title,
       });
+      // A post whose live text differs from the stored article keeps its text: the rebuild
+      // aligns the layout, it does not swap what readers already see.
+      let html: string | null = null;
       if (!rendered.ok) {
-        row.reason = rendered.reason;
+        row.keptTextBecause = rendered.reason;
+      } else if (articleProse(rendered.html) !== articleProse(live)) {
+        row.keptTextBecause = "LIVE_TEXT_DIFFERS";
+      } else {
+        const losses = inventoryLosses(row.before, bodyInventory(rendered.html));
+        if (losses.length) row.keptTextBecause = `WOULD_LOSE:${losses.join(";")}`;
+        else html = rendered.html;
+      }
+      row.mode = html ? "RENDERED" : "KEPT_TEXT";
+      html ??= restyleLiveBody(live, item.title, ctaUrl);
+      if (!html) {
+        row.reason = "NO_STANDARD_CTA";
         continue;
       }
-      row.after = bodyInventory(rendered.html);
+      row.after = bodyInventory(html);
       const losses = inventoryLosses(row.before, row.after);
       if (losses.length) {
         row.reason = `WOULD_LOSE:${losses.join(";")}`;
@@ -185,14 +225,14 @@ export async function rebuildPublishedPosts(deps: {
           versionId: version.id,
           productTitle: item.title,
           rawData: item.rawData,
-          body: rendered.html,
+          body: html,
           ctaUrl,
           copyRun: row.titleCopyRun,
         });
         if (newTitle) row.titleAfter = newTitle;
       }
 
-      if (rendered.html === live && !newTitle) {
+      if (html === live && !newTitle) {
         row.result = "UNCHANGED";
         continue;
       }
@@ -201,7 +241,7 @@ export async function rebuildPublishedPosts(deps: {
         continue;
       }
       row.backup = live;
-      await publisher.updateBodyAndTitle({ externalId, content: rendered.html, title: newTitle });
+      await publisher.updateBodyAndTitle({ externalId, content: html, title: newTitle });
       if (newTitle) {
         // ContentVersion.title is the post_title source of truth; keep it in step with WordPress.
         await prisma.contentVersion.update({
