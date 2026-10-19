@@ -91,6 +91,8 @@ export type RebuildRow = {
   titleBefore: string;
   titleAfter?: string;
   titleCopyRun?: number;
+  /** Why a copied headline was left as it is. */
+  titleError?: string;
   ctaBefore?: string | null;
   ctaAfter?: string;
   /** RENDERED: rebuilt from the stored article. KEPT_TEXT: live text kept, layout aligned. */
@@ -237,17 +239,24 @@ export async function rebuildPublishedPosts(deps: {
       if (newTitle) {
         row.titleAfter = newTitle;
       } else if (row.titleCopyRun >= WP_TITLE_OFFICIAL_RUN_LIMIT && generation) {
-        newTitle = await proposeTitle({
-          generation,
-          lifecycle,
-          versionId: version.id,
-          productTitle: item.title,
-          rawData: item.rawData,
-          body: html,
-          ctaUrl,
-          copyRun: row.titleCopyRun,
-        });
-        if (newTitle) row.titleAfter = newTitle;
+        // A headline that cannot be written now (budget, missing topic) keeps the old one;
+        // the body is still brought onto the current layout.
+        try {
+          newTitle = await proposeTitle({
+            generation,
+            lifecycle,
+            versionId: version.id,
+            productTitle: item.title,
+            rawData: item.rawData,
+            body: html,
+            ctaUrl,
+            copyRun: row.titleCopyRun,
+          });
+          if (newTitle) row.titleAfter = newTitle;
+          else row.titleError = "PROPOSAL_FAILED_GATE";
+        } catch (error) {
+          row.titleError = error instanceof Error ? error.message.slice(0, 200) : String(error);
+        }
       }
 
       if (html === live && !newTitle) {
