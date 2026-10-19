@@ -77,6 +77,11 @@ export function restyleLiveBody(html: string, workTitle: string, ctaUrl: string)
   });
 }
 
+/** A body published as unconverted markdown: image syntax and a bare "label: URL" CTA shown as text. */
+export function isUnrenderedMarkdownBody(html: string): boolean {
+  return /<p>!\[[^\]]*\]\(https?:/.test(html) || /<p>詳細を確認: https?:/.test(html);
+}
+
 export type RebuildRow = {
   externalId: string;
   cid: string | null;
@@ -90,6 +95,8 @@ export type RebuildRow = {
   /** RENDERED: rebuilt from the stored article. KEPT_TEXT: live text kept, layout aligned. */
   mode?: "RENDERED" | "KEPT_TEXT";
   keptTextBecause?: string;
+  /** The live body was unconverted markdown; the rebuild replaces it whole. */
+  repairsMarkdown?: boolean;
   before?: BodyInventory;
   after?: BodyInventory;
   /** Live body before the change, kept so an update can be undone. */
@@ -193,8 +200,11 @@ export async function rebuildPublishedPosts(deps: {
       // A post whose live text differs from the stored article keeps its text: the rebuild
       // aligns the layout, it does not swap what readers already see.
       let html: string | null = null;
+      row.repairsMarkdown = isUnrenderedMarkdownBody(live);
       if (!rendered.ok) {
         row.keptTextBecause = rendered.reason;
+      } else if (row.repairsMarkdown) {
+        html = rendered.html;
       } else if (articleProse(rendered.html) !== articleProse(live)) {
         row.keptTextBecause = "LIVE_TEXT_DIFFERS";
       } else {
@@ -209,7 +219,10 @@ export async function rebuildPublishedPosts(deps: {
         continue;
       }
       row.after = bodyInventory(html);
-      const losses = inventoryLosses(row.before, row.after);
+      // Markdown junk inflates the live text length, so only images, buttons, and notes count there.
+      const losses = inventoryLosses(row.before, row.after).filter(
+        (loss) => !(row.repairsMarkdown && loss.startsWith("text ")),
+      );
       if (losses.length) {
         row.reason = `WOULD_LOSE:${losses.join(";")}`;
         continue;

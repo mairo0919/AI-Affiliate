@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { WordPressApiPublisher } from "../adapters/publisher/wordpress-api-publisher.js";
 import { formatBloggerHtml } from "../generation/blogger-formatter.js";
-import { articleProse, bodyInventory, inventoryLosses, liveCtaUrl, restyleLiveBody } from "./rebuild-published-posts.js";
+import {
+  articleProse,
+  bodyInventory,
+  inventoryLosses,
+  isUnrenderedMarkdownBody,
+  liveCtaUrl,
+  restyleLiveBody,
+} from "./rebuild-published-posts.js";
 
 const CTA_URL = "https://al.fanza.co.jp/?lurl=https%3A%2F%2Fvideo.dmm.co.jp%2Fav%2Fcontent%2F%3Fid%3Dymbp00001&af_id=a-990&ch=api";
 const article = {
@@ -55,6 +62,15 @@ describe("keeping live text", () => {
     const once = restyleLiveBody(live, "作品", CTA_URL)!;
     expect(restyleLiveBody(once, "作品", CTA_URL)).toBe(once);
     expect(restyleLiveBody("<p>本文</p>", "作品", CTA_URL)).toBeNull();
+  });
+});
+
+describe("unrendered markdown posts", () => {
+  it("recognizes a body published as markdown, and not a normal post", () => {
+    // Post 214 (2026-10): image syntax and the CTA line were shown to readers as text.
+    const broken = "<p>![作品（パッケージ）](https://awsimgsrc.dmm.co.jp/a.jpg)</p>\n<p>詳細を確認: https://al.fanza.co.jp/?x</p>";
+    expect(isUnrenderedMarkdownBody(broken)).toBe(true);
+    expect(isUnrenderedMarkdownBody(formatBloggerHtml(article as never))).toBe(false);
   });
 });
 
