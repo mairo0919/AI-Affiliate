@@ -260,6 +260,35 @@ export class WordPressApiPublisher implements PublisherAdapter {
     };
   }
 
+  /** The stored post body (unrendered), for edits that must keep everything else as-is. */
+  async getRawContent(externalId: string): Promise<string> {
+    this.assertCanCallApi("getStatus");
+    const response = await this.request(`/posts/${externalId}?context=edit&_fields=content`, { method: "GET" });
+    if (!response.ok) {
+      const err = await safeWpError(response);
+      throw new WordPressPublisherError(`WordPress read failed (${response.status}): ${err}`, "UPDATE_FAILED");
+    }
+    const json = (await response.json()) as { content?: { raw?: unknown } };
+    if (typeof json.content?.raw !== "string") {
+      throw new WordPressPublisherError("WordPress read returned no raw content", "UPDATE_FAILED");
+    }
+    return json.content.raw;
+  }
+
+  /** Replace only the post body; title, dates, status, and taxonomies are left unchanged. */
+  async updateContentOnly(input: { externalId: string; content: string }): Promise<void> {
+    this.assertCanCallApi("update");
+    const response = await this.request(`/posts/${input.externalId}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: input.content }),
+    });
+    if (!response.ok) {
+      const err = await safeWpError(response);
+      throw new WordPressPublisherError(`WordPress content update failed (${response.status}): ${err}`, "UPDATE_FAILED");
+    }
+  }
+
   async delete(externalId: string): Promise<{ ok: boolean }> {
     if (this.config.mode === "mock") {
       this.statuses.delete(externalId);
