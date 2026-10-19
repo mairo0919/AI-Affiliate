@@ -161,7 +161,7 @@ import {
 } from "./stock/cli-handlers.js";
 import { runInitialPublishBoostCli } from "./stock/cli-initial-publish-boost.js";
 import { runWpRefreshMetadataCli } from "./wordpress/cli-refresh-metadata.js";
-import { runWpBackfillWorkTitleCli } from "./wordpress/backfill-work-title.js";
+import { runWpRebuildPublishedCli } from "./wordpress/rebuild-published-posts.js";
 import { runWpRefreshAdultTagsCli } from "./wordpress/cli-refresh-adult-tags.js";
 import { runWpUpgradeImageResolutionCli } from "./wordpress/cli-upgrade-image-resolution.js";
 import { runWpRefreshCategoriesCli } from "./wordpress/cli-refresh-categories.js";
@@ -2608,8 +2608,8 @@ async function main(): Promise<void> {
     case "wp-refresh-metadata":
       await runWpRefreshMetadataCli(rest);
       break;
-    case "wp-backfill-work-title":
-      await runWpBackfillWorkTitleCli(rest);
+    case "wp-rebuild-published":
+      await runWpRebuildPublishedCli(rest);
       break;
     case "wp-refresh-adult-tags":
       await runWpRefreshAdultTagsCli(rest);

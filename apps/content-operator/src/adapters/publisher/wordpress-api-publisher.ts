@@ -275,13 +275,15 @@ export class WordPressApiPublisher implements PublisherAdapter {
     return json.content.raw;
   }
 
-  /** Replace only the post body; title, dates, status, and taxonomies are left unchanged. */
-  async updateContentOnly(input: { externalId: string; content: string }): Promise<void> {
+  /** Replace the post body (and title when given); dates, status, and taxonomies are left unchanged. */
+  async updateBodyAndTitle(input: { externalId: string; content: string; title?: string | null }): Promise<void> {
     this.assertCanCallApi("update");
+    const body: Record<string, string> = { content: input.content };
+    if (input.title?.trim()) body.title = input.title.trim();
     const response = await this.request(`/posts/${input.externalId}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ content: input.content }),
+      body: JSON.stringify(body),
     });
     if (!response.ok) {
       const err = await safeWpError(response);

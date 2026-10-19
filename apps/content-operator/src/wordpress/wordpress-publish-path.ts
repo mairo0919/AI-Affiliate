@@ -396,6 +396,48 @@ export function buildWordPressHtmlFromVersion(input: {
   return { title, lead: legacyLead, excerpt, html, article };
 }
 
+/**
+ * The body a post of this version gets today: same image eligibility, formatter, and
+ * sanitizer as a new publish. Used to bring older posts onto the current layout.
+ */
+export async function renderCurrentWordPressBody(input: {
+  deps: WordPressPublishPathDeps;
+  version: { id: string; title: string; summary: string | null; structuredContent: unknown };
+  productCanonicalId: string | null;
+  ctaUrl: string;
+  workTitle: string | null;
+}): Promise<{ ok: true; html: string } | { ok: false; reason: string }> {
+  const structured = (input.version.structuredContent ?? {}) as Record<string, unknown>;
+  const { imagesForEval, structuredWithImages } = await resolveImagesForWordPressPublish({
+    deps: input.deps,
+    contentVersionId: input.version.id,
+    structured,
+    productCanonicalId: input.productCanonicalId,
+    persistResolved: false,
+  });
+  const imageEval = evaluateImagesForWordPressPublication({ images: imagesForEval, mode: "publish" });
+  if (!imageEval.pass) return { ok: false, reason: `IMAGE_PUBLIC_ELIGIBILITY:${imageEval.failureCodes.join(",")}` };
+  const article = (structuredWithImages.article ?? {}) as WordPressStoredArticle;
+  let built: ReturnType<typeof buildWordPressHtmlFromVersion>;
+  try {
+    built = buildWordPressHtmlFromVersion({
+      title: input.version.title,
+      summary: input.version.summary,
+      structuredContent: {
+        ...structuredWithImages,
+        images: imageEval.imagesForHtml,
+        article: { ...article, cta: { label: article.cta?.label || "詳細を確認", url: input.ctaUrl } },
+      },
+      ctaUrl: input.ctaUrl,
+      workTitle: input.workTitle,
+    });
+  } catch (e) {
+    return { ok: false, reason: `FORMATTER_FAIL:${e instanceof Error ? e.message : String(e)}` };
+  }
+  assertPublicBodyClean(built.html);
+  return { ok: true, html: sanitizePublicBody(built.html).body };
+}
+
 export function createDefaultWordPressPublisher(config: AppConfig): PublisherAdapter {
   return createWordPressPublisherFromConfig({
     wordpressMode: config.wordpressMode,
