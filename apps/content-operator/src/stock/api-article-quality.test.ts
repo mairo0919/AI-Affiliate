@@ -90,7 +90,7 @@ describe("stock article quality gate", () => {
     const gate = evaluateStockArticleQualityGate({
       productTitle: "フェラBEST5時間",
       rawData: multiRaw,
-      writerTitle: "フェラBEST5時間の見どころ",
+      writerTitle: "3人のフェラを集めた5時間ベスト",
       structuredContent: { bodyHtml: "<p>短い紹介です。</p>" },
     });
     expect(gate.ok).toBe(false);

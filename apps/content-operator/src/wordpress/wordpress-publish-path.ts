@@ -351,6 +351,7 @@ export function buildWordPressHtmlFromVersion(input: {
   summary: string | null;
   structuredContent: unknown;
   ctaUrl: string;
+  workTitle?: string | null;
 }): {
   title: string;
   lead: string;
@@ -384,6 +385,7 @@ export function buildWordPressHtmlFromVersion(input: {
       label: article.cta?.label || "商品ページを見る",
       url: article.cta?.url || input.ctaUrl,
     },
+    workTitle: input.workTitle,
     images,
   });
   const excerpt =
@@ -779,6 +781,7 @@ export async function publishContentVersionToWordPress(
       summary: version.summary,
       structuredContent: structuredForHtml,
       ctaUrl: ctaCheck.url ?? productUrl ?? "",
+      workTitle: evidencePack.officialTitle,
     });
   } catch (e) {
     return {

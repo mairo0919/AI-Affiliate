@@ -10,6 +10,7 @@ export const BLOG_META_NOTE_STYLE = "font-size:10px;line-height:1.5;";
 export const BLOG_HERO_CLASS = "blog-hero";
 export const BLOG_SAMPLE_CLASS = "blog-sample";
 export const BLOG_CTA_CLASS = "blog-cta";
+export const BLOG_WORK_TITLE_CLASS = "blog-work-title";
 
 /** Spacing so consecutive figures do not look glued together. */
 export const BLOG_FIGURE_STYLE = "margin:1.25em 0;";
@@ -23,6 +24,8 @@ export function formatBloggerHtml(input: {
   lead?: string | null;
   sections: Array<{ heading?: string | null; paragraphs: string[]; lists?: string[] }>;
   cta: { label: string; url: string | null };
+  /** Official work title, printed verbatim so the article title does not have to carry it. */
+  workTitle?: string | null;
   images?: ArticleImage[];
   /** Legacy structure-pattern hint — R62 product layout ignores placement hints. */
   imageLayout?: StructureImageLayout | null;
@@ -52,15 +55,21 @@ export function formatBloggerHtml(input: {
     blocks.push(`<p>${escapeHtml(p)}</p>`);
   }
 
-  // 4. Mid CTA (before sample gallery)
+  // 4. Official work title, linked to the work page
+  const workTitle = input.workTitle?.trim();
+  if (workTitle) {
+    blocks.push(renderWorkTitleBlock(workTitle, input.cta.url));
+  }
+
+  // 5. Mid CTA (before sample gallery)
   blocks.push(renderCtaBlock(input.cta));
 
-  // 5. Sample images (half width); no figcaption unless image has grounded caption SSOT
+  // 6. Sample images (half width); no figcaption unless image has grounded caption SSOT
   for (const image of auxiliaries) {
     blocks.push(renderSampleFigure(image));
   }
 
-  // 6. Bottom CTA
+  // 7. Bottom CTA
   blocks.push(renderCtaBlock(input.cta));
 
   const freshness = input.freshnessDisclaimer ?? FRESHNESS_DISCLAIMER;
@@ -127,6 +136,12 @@ function renderCtaBlock(cta: { label: string; url: string | null }): string {
     return `<p class="${BLOG_CTA_CLASS}"><a href="${escapeAttr(cta.url)}" data-otonaselect-cta="1" data-cta="detail_confirm" data-provider="fanza" rel="noopener noreferrer">${escapeHtml(cta.label)}</a></p>`;
   }
   return `<p class="${BLOG_CTA_CLASS}">${escapeHtml(cta.label)}（リンク準備中）</p>`;
+}
+
+export function renderWorkTitleBlock(title: string, url: string | null): string {
+  const text = escapeHtml(title);
+  if (!url) return `<p class="${BLOG_WORK_TITLE_CLASS}">作品名：${text}</p>`;
+  return `<p class="${BLOG_WORK_TITLE_CLASS}">作品名：<a href="${escapeAttr(url)}" data-otonaselect-cta="1" data-cta="work_title" data-provider="fanza" rel="noopener noreferrer">${text}</a></p>`;
 }
 
 function renderHeroFigure(image: ArticleImage): string {

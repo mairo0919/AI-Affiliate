@@ -75,8 +75,11 @@ describe("canonical pipeline invariants — source structure", () => {
     expect(canonical).toMatch(/runQualityReviews\(finalVersion\.id,\s*\{\s*stopOnFirstFailure:\s*true/);
     // A failed review is fixed once with its findings before the work is given up.
     expect(canonical).toMatch(/reviseContentVersion\(\{[\s\S]*?mode:\s*"partial_revision"[\s\S]*?rationale/);
-    // An auxiliary rejection must count toward the same-cid cap instead of staying REVIEWING.
-    expect(canonical).toMatch(/updateContentVersionStatus\(generated\.version\.id,\s*"REVISION_REQUIRED"\)/);
+    // An auxiliary rejection is fixed once; the superseded draft is archived, and a draft that
+    // still fails counts toward the same-cid cap instead of staying REVIEWING.
+    expect(canonical).toMatch(/auxiliaryFindingRationale\(aux\.reason\)/);
+    expect(canonical).toMatch(/updateContentVersionStatus\(finalVersion\.id,\s*"ARCHIVED"\)/);
+    expect(canonical).toMatch(/updateContentVersionStatus\(finalVersion\.id,\s*"REVISION_REQUIRED"\)/);
 
     const service = readSrc("generation/content-generation-service.ts");
     expect(service).toMatch(/options\?\.stopOnFirstFailure && \(overall === "failed"/);

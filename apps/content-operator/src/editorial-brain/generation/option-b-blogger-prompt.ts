@@ -182,7 +182,7 @@ export function buildOptionBBloggerGeneratorPrompt(input: {
   const userPrompt = [
     correcting
       ? "GROUNDED CORRECTION. Do not freely regenerate. Apply correctionPlan: keep KEEP sentences and mustKeep facts, repair REPAIR sentences from replaceWithFacts only, delete REMOVE sentences. Do not paraphrase an evaluation, recommendation, viewing experience, or editorial frame into another word of the same class. Title content words come only from correctionPlan.title.titleAuthority; if a natural title cannot be formed, use correctionPlan.title.strongest. Do not join keywords with spaces."
-      : `Write ARTICLE_PLAN as a natural Japanese product intro (${required}). productTitle in the plan is identity only — do not paste wholesale as title.`,
+      : `Write ARTICLE_PLAN as a natural Japanese product intro (${required}). productTitle in the plan is identity only — do not reuse 8 or more consecutive characters of productTitle in the title (performer names excepted); the article prints the official title separately.`,
     `outputChannel=BLOGGER articleFormat=${JSON.stringify(input.articleFormat)}`,
     "ARTICLE_PLAN (factual boundary — weave into prose; do not dump as taxonomy):",
     JSON.stringify(plan),
@@ -205,7 +205,7 @@ export function buildOptionBBloggerGeneratorPrompt(input: {
           JSON.stringify(execution),
           correcting
             ? "TITLE CORRECTION: content words only from correctionPlan.title.titleAuthority. Particles and word order may change. Use correctionPlan.title.strongest when a natural title cannot be formed from that authority. Do not add a content word absent from titleAuthority. Do not join keywords with spaces. HARD BAN: 魅せる, が贈る."
-            : "TITLE: Title authority is only performer, official work identity, series, campaign, premise, and a work-specific factual feature in ARTICLE_PLAN. Particles and word order may change. editorialDecision is only a factual cut. Do not assemble/concatenate title.facts. Do not paste productTitle wholesale. Do not add editorial copy that is not in that authority (の世界, 繰り広げられる, 禁断, 濃密, 味わう, おすすめ). HARD BAN in title: 魅せる, が贈る, or 「注目は…｜」. Also forbidden: package-copy rephrase, performer+keyword glue, catalog shells.",
+            : "TITLE: Title authority is only performer, official work identity, series, campaign, premise, and a work-specific factual feature in ARTICLE_PLAN. Particles and word order may change. editorialDecision is only a factual cut. Do not assemble/concatenate title.facts. Do not reuse 8 or more consecutive characters of productTitle in the title (performer names excepted); the article prints the official title separately. Do not add editorial copy that is not in that authority (の世界, 繰り広げられる, 禁断, 濃密, 味わう, おすすめ). HARD BAN in title: 魅せる, が贈る, or 「注目は…｜」. Also forbidden: package-copy rephrase, performer+keyword glue, catalog shells.",
           correcting
             ? "On correction, do not write a new article. Copy KEEP. Restate REPAIR from replaceWithFacts as factual sentences. Delete REMOVE. Realize requiredFacts with coveredBySentence null. Do not drop mustKeep facts. Do not add a content word that is not in those facts."
             : [

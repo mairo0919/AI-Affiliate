@@ -245,8 +245,9 @@ export async function runCanonicalArticlePipeline(
     officialActorCount: enrichment.actorCount,
   });
 
+  let finalVersion = generated.version;
   if (input.auxiliarySafetyOk) {
-    const aux = input.auxiliarySafetyOk({
+    let aux = input.auxiliarySafetyOk({
       title: generated.version.title,
       structuredContent: {
         ...sc,
@@ -255,7 +256,35 @@ export async function runCanonicalArticlePipeline(
       },
     });
     if (!aux.ok) {
-      const writers = readLlmSafety(generated.version.structuredContent).runs.filter(
+      // Fix the named defect once, the same way a failed review is fixed.
+      let revised: Awaited<ReturnType<ContentGenerationService["reviseContentVersion"]>>;
+      try {
+        revised = await input.generation.reviseContentVersion({
+          contentVersionId: finalVersion.id,
+          mode: "partial_revision",
+          rationale: auxiliaryFindingRationale(aux.reason),
+          productTitle: input.productTitle,
+          ctaUrl: input.ctaUrl,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await input.lifecycle.updateContentVersionStatus(
+          finalVersion.id,
+          isSystemStopReason(message) ? "ARCHIVED" : "REVISION_REQUIRED",
+        );
+        throw error;
+      }
+      // The revision supersedes the draft; archived, so it neither blocks the work nor counts as a rejection.
+      await input.lifecycle.updateContentVersionStatus(finalVersion.id, "ARCHIVED");
+      finalVersion = revised.version;
+      const revisedSc = (finalVersion.structuredContent ?? {}) as Record<string, unknown>;
+      aux = input.auxiliarySafetyOk({
+        title: finalVersion.title,
+        structuredContent: { ...revisedSc, title: finalVersion.title, bodyHtml: finalVersion.body },
+      });
+    }
+    if (!aux.ok) {
+      const writers = readLlmSafety(finalVersion.structuredContent).runs.filter(
         (run) => run.operation === "WP_WRITER" || run.operation === "WP_REWRITE",
       );
       const latest = writers.reduce<(typeof writers)[number] | null>(
@@ -263,23 +292,22 @@ export async function runCanonicalArticlePipeline(
         null,
       );
       if (latest) {
-        await settleWpRuns([latest], () => "DISCARDED_POLICY", { contentVersionId: generated.version.id });
+        await settleWpRuns([latest], () => "DISCARDED_POLICY", { contentVersionId: finalVersion.id });
       }
       // REVISION_REQUIRED counts toward the same-cid regeneration cap. Leaving the
       // version in REVIEWING blocked the cid permanently after one attempt.
-      await input.lifecycle.updateContentVersionStatus(generated.version.id, "REVISION_REQUIRED");
+      await input.lifecycle.updateContentVersionStatus(finalVersion.id, "REVISION_REQUIRED");
       return {
         ok: false,
         reason: `AUXILIARY_SAFETY:${aux.reason}`,
         enrichment,
-        contentVersionId: generated.version.id,
+        contentVersionId: finalVersion.id,
       };
     }
   }
 
   let review: Awaited<ReturnType<ContentGenerationService["runQualityReviews"]>>;
   let approved = false;
-  let finalVersion = generated.version;
   try {
     review = await input.generation.runQualityReviews(finalVersion.id, {
       stopOnFirstFailure: true,
@@ -374,6 +402,18 @@ function reviewFindingLines(reviews: ReadonlyArray<ReviewLike>): string[] {
     }
   }
   return lines;
+}
+
+/** The auxiliary gate's reason, as the rationale for one partial revision. */
+export function auxiliaryFindingRationale(reason: string): string {
+  if (reason.startsWith("TITLE_COPIES_OFFICIAL")) {
+    return [
+      `Auxiliary check failed: ${reason}`,
+      "- The title reuses a long run of the official work title verbatim. Rewrite only the title in your own words from the plan facts. Performer names are fine.",
+      "- The article prints the official work title separately, so the title does not need to carry it.",
+    ].join("\n");
+  }
+  return `Auxiliary check failed: ${reason}\n- Fix only what this check names.`;
 }
 
 /** The failed reviews' findings, as the rationale for one partial revision. */

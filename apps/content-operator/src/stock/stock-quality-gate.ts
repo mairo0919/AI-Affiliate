@@ -14,6 +14,10 @@ import {
   isPerformerGenreListTitle,
 } from "./repair-quality-guard.js";
 import { isLowValueArticleHeadline } from "../article-pattern/article-editorial-decision.js";
+import { longestTitleSliceInPost } from "../x/x-copy-quality.js";
+
+/** The article prints the official title itself; the headline must not reuse a run this long. */
+export const WP_TITLE_OFFICIAL_RUN_LIMIT = 8;
 
 function plainTextLength(htmlOrText: unknown): number {
   return String(htmlOrText ?? "")
@@ -79,6 +83,11 @@ export function evaluateStockArticleQualityGate(input: {
         reason: `MULTI_PERFORMER_SINGULAR_TITLE:${castShape}`,
       };
     }
+  }
+
+  const officialRun = longestTitleSliceInPost(title, input.productTitle, actors);
+  if (officialRun >= WP_TITLE_OFFICIAL_RUN_LIMIT) {
+    return { ok: false, reason: `TITLE_COPIES_OFFICIAL:run=${officialRun}` };
   }
 
   if (
