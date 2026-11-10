@@ -75,7 +75,6 @@ export type GroundedCorrectionPlan = {
     action: "KEEP" | "REPAIR";
     current: string;
     titleAuthority: string[];
-    strongest: string;
   };
   requiredFacts: Array<{
     factId: string;

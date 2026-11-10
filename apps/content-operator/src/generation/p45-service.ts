@@ -459,7 +459,7 @@ export async function seedP45Prompts(repo: LifecycleRepository): Promise<void> {
       taskType: "REVISION",
       body: "Partially revise article title={{title}} body={{body}} rationale={{rationale}}",
       systemInstruction:
-        "Return a revised blogger article JSON. Keep claim fidelity. If revising the title: write a fresh editorial headline from ARTICLE_PLAN.editorialDecision — do not assemble title.facts, do not use 「〜が魅せる／が贈る」, do not shorten productTitle.",
+        "Return a revised blogger article JSON. Keep claim fidelity. If revising the title: write a fresh editorial headline from ARTICLE_PLAN.editorialDecision — do not assemble title.facts, do not use 「〜が魅せる／が贈る」, do not shorten productTitle, and do not reuse 8 or more consecutive characters of it (performer names excepted).",
     },
     {
       identifier: "revision.full",

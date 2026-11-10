@@ -18,9 +18,15 @@ import {
 import { validateTitleSurfaceRealization } from "../../article-pattern/title-eligibility.js";
 import {
   blockingSemanticClaims,
-  ungroundedTitleStems,
+  titleEditorialFrames,
 } from "../../article-pattern/article-semantic-claim.js";
 import { classifyArticleHeadlineDefects } from "../../article-pattern/article-editorial-decision.js";
+import {
+  articleSemanticRole,
+  isLikelyPerformerNameToken,
+} from "../../article-pattern/plan-execution-contract.js";
+import { WP_TITLE_OFFICIAL_RUN_LIMIT } from "../../stock/stock-quality-gate.js";
+import { longestTitleSliceInPost } from "../../x/x-copy-quality.js";
 import { splitIntoSentences } from "./text-surface.js";
 import type { RawFailureRouting } from "./raw-failure-routing.js";
 import {
@@ -55,7 +61,8 @@ export type ArticlePlanComplianceCode =
   | "PLAN_UNSUPPORTED_EVAL"
   | "PLAN_TITLE_INVENT"
   | "PLAN_TITLE_SURFACE"
-  | "PLAN_TITLE_EDITORIAL_QUALITY";
+  | "PLAN_TITLE_EDITORIAL_QUALITY"
+  | "PLAN_OFFICIAL_COPY";
 
 export type ArticlePlanComplianceFinding = {
   code: ArticlePlanComplianceCode | string;
@@ -190,13 +197,17 @@ function checkOmissions(
     }
   }
 
+  // Lead/body facts are cut from the official text, dialogue included; a Writer that explains them in
+  // its own words often no longer matches. Blocking on each one rejected every article in the 2026-10
+  // rewrite and pushed the regeneration to paste fragments. Omissions are reported, not blocking;
+  // PLAN_NO_PROGRESSION still rejects a body that develops no planned fact.
   for (const fact of plan.lead?.facts ?? []) {
     if (isWeakPlanFact(fact)) continue;
     if (!factRealizedIn(article.lead ?? "", fact)) {
       findings.push({
         code: "PLAN_FACT_OMISSION",
         message: `lead slot missing plan fact: ${fact.slice(0, 80)}`,
-        severity: "BLOCKING",
+        severity: "WARNING",
         slot: "lead",
       });
     }
@@ -213,7 +224,7 @@ function checkOmissions(
       findings.push({
         code: "PLAN_FACT_OMISSION",
         message: `body missing plan fact: ${fact.slice(0, 80)}`,
-        severity: "BLOCKING",
+        severity: "WARNING",
         slot: "body",
       });
     }
@@ -270,12 +281,12 @@ function checkSlotFidelity(
   return findings;
 }
 
-const TITLE_STRUCTURAL_GLUE_RE =
-  /^(?:作品|ベスト|版|編|出演|収録|記念|特集|コレクション)$/u;
-
 /**
- * Title grounding: Evidence / plan facts / editorialDecision refs — not mandatory assemble list.
- * With editorialDecision, Writer may paraphrase within that grounding boundary.
+ * Title checks: surface defects, unattributed evaluation, and headline defects.
+ * The Writer words the headline itself; it is not limited to words copied from the plan.
+ * 2026-10: requiring every kanji/katakana run to appear verbatim in the plan, and exempting
+ * headlines built only from plan words, made performer + official-title scraps the only
+ * headline that passed (「桃乃木かな終結BEST」).
  */
 function checkTitleAuthority(
   plan: ArticlePlan,
@@ -314,26 +325,21 @@ function checkTitleAuthority(
       slot: "title",
     });
   }
-  const allowed = factGrounding;
-  const allowedBlob = factGrounding.join("\n");
-  const runs = title.match(/[\u4e00-\u9fffァ-ヶーA-Za-z0-9]{2,}/gu) ?? [];
-  for (const run of runs) {
-    if (TITLE_STRUCTURAL_GLUE_RE.test(run)) continue;
-    if (/^\d+$/u.test(run)) continue;
-    const backed = allowed.some(
-      (f) => f.includes(run) || run.includes(f) || allowedBlob.includes(run),
-    );
-    if (!backed) {
-      findings.push({
-        code: "PLAN_TITLE_INVENT",
-        message: `title contains material absent from plan grounding: ${run}`,
-        severity: "BLOCKING",
-        slot: "title",
-      });
-    }
+  // The stock gate rejects this too, but only after Review; catching it here lets the rewrite fix it.
+  // Title facts rarely carry a source type, so a bare name is recognized by its shape too.
+  const performerNames = factGrounding.filter(
+    (f) => articleSemanticRole({ fact: f }) === "WHO" || isLikelyPerformerNameToken(f),
+  );
+  const officialRun = longestTitleSliceInPost(title, plan.productTitle ?? "", performerNames);
+  if (officialRun >= WP_TITLE_OFFICIAL_RUN_LIMIT) {
+    findings.push({
+      code: "PLAN_TITLE_EDITORIAL_QUALITY",
+      message: `title copies ${officialRun} consecutive characters of productTitle: ${title.slice(0, 80)}`,
+      severity: "BLOCKING",
+      slot: "title",
+    });
   }
-  for (const hit of ungroundedTitleStems(title, factGrounding)) {
-    if (findings.some((f) => f.message.includes(hit.span))) continue;
+  for (const hit of titleEditorialFrames(title, factGrounding)) {
     findings.push({
       code: "PLAN_TITLE_INVENT",
       message: `title ${hit.class} absent from title authority: ${hit.span}`,
@@ -341,7 +347,6 @@ function checkTitleAuthority(
       slot: "title",
     });
   }
-
   // Editorial headline quality — only when production title authority is editorial_headline.
   const titleIsEditorialHeadline =
     plan.title.job === "editorial_headline" ||
@@ -353,30 +358,7 @@ function checkTitleAuthority(
       titleFacts: plan.title.facts,
       editorialAngle: ed?.angle ?? null,
     });
-    const contentRuns = runs.filter(
-      (run) => !TITLE_STRUCTURAL_GLUE_RE.test(run) && !/^\d+$/u.test(run),
-    );
-    const groundedHeadline =
-      contentRuns.length > 0 &&
-      contentRuns.every((run) => factGrounding.some((f) => f.includes(run)));
     for (const d of defects) {
-      // A headline built from planned performer / premise / series facts does not
-      // need an evaluative frame, and must not be rejected for overlapping the work name.
-      const genreGlueTail =
-        /(?:巨乳|人妻|NTR|ハメ撮り|中出し|ローション|オイル|キス|接吻)$/u.test(title);
-      const titleIsPlanFact = factGrounding.some(
-        (f) => f === title || f.includes(title),
-      );
-      if (
-        groundedHeadline &&
-        (d === "NO_EDITORIAL_ANGLE" ||
-          d === "LOW_INFORMATION" ||
-          d === "PACKAGE_COPY_REPHRASE" ||
-          ((d === "CATALOG_SHELL" || d === "GENERIC_LABEL") && titleIsPlanFact) ||
-          (d === "FACT_ASSEMBLY" && !genreGlueTail))
-      ) {
-        continue;
-      }
       findings.push({
         code: "PLAN_TITLE_EDITORIAL_QUALITY",
         message: `title editorial defect ${d}: ${title.slice(0, 80)}`,
@@ -393,6 +375,39 @@ function checkTitleAuthority(
  * Progression = body realizes planned body facts that lead did not already realize.
  * Same-fact reuse is allowed; missing new planned information is not.
  */
+/** A clause this long shared with the official description is a pasted sentence, not a reused fact phrase. */
+export const WP_BODY_OFFICIAL_RUN_LIMIT = 20;
+
+/**
+ * 2026-10 trial (post 346): the Writer pasted an official sentence into its own and the result
+ * read 「生粋のロリコン教師は…堪能しまくっていただろう…ことが含まれています」. The prompt already
+ * says not to copy OFFICIAL_DESCRIPTION; this makes the rewrite hear about it when it does.
+ */
+function checkOfficialCopy(
+  plan: ArticlePlan,
+  article: ArticlePlanComplianceArticle,
+  officialDescription: string,
+): ArticlePlanComplianceFinding[] {
+  if (!officialDescription.trim()) return [];
+  const performerNames = articlePlanAllFacts(plan).filter(
+    (f) => articleSemanticRole({ fact: f }) === "WHO" || isLikelyPerformerNameToken(f),
+  );
+  const text = [article.lead ?? "", ...article.sections.flatMap((s) => s.paragraphs)].join("\n");
+  const findings: ArticlePlanComplianceFinding[] = [];
+  for (const sentence of splitIntoSentences(text)) {
+    const run = longestTitleSliceInPost(sentence, officialDescription, performerNames);
+    if (run >= WP_BODY_OFFICIAL_RUN_LIMIT) {
+      findings.push({
+        code: "PLAN_OFFICIAL_COPY",
+        message: `body copies ${run} consecutive characters of the official description: ${sentence.slice(0, 120)}`,
+        severity: "BLOCKING",
+        slot: "body",
+      });
+    }
+  }
+  return findings;
+}
+
 function checkProgression(
   plan: ArticlePlan,
   article: ArticlePlanComplianceArticle,
@@ -549,6 +564,7 @@ function checkPlanAttestationSurplus(
 export function validateArticlePlanCompliance(input: {
   article: ArticlePlanComplianceArticle;
   articlePlan: ArticlePlan;
+  officialDescription?: string | null;
 }): ArticlePlanComplianceResult {
   const findings: ArticlePlanComplianceFinding[] = [
     ...checkOmissions(input.articlePlan, input.article),
@@ -557,6 +573,7 @@ export function validateArticlePlanCompliance(input: {
     ...checkUnplannedConcrete(input.articlePlan, input.article),
     ...checkUnplannedMeaning(input.articlePlan, input.article),
     ...checkPlanAttestationSurplus(input.articlePlan, input.article),
+    ...checkOfficialCopy(input.articlePlan, input.article, input.officialDescription ?? ""),
   ];
 
   const progression = checkProgression(input.articlePlan, input.article);
@@ -904,6 +921,7 @@ const ARTICLE_PLAN_STRUCTURAL_CODES = new Set([
   "PLAN_TITLE_INVENT",
   "PLAN_TITLE_SURFACE",
   "PLAN_TITLE_EDITORIAL_QUALITY",
+  "PLAN_OFFICIAL_COPY",
 ]);
 
 export function routeArticlePlanFailure(input: {

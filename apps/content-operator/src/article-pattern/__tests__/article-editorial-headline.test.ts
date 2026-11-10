@@ -125,7 +125,8 @@ describe("article editorial headline (not fact assembly)", () => {
       },
     });
     expect(built.userPrompt).toMatch(/editorialDecision/);
-    expect(built.userPrompt).toMatch(/do not assemble/i);
+    expect(built.userPrompt).toMatch(/hints, not words to string together/);
+    expect(built.userPrompt).toMatch(/in your own words/);
     expect(built.userPrompt).not.toMatch(/compose one natural Japanese title from title\.facts only/);
   });
 

@@ -139,22 +139,11 @@ export function blockingSemanticClaims(
   return classifyArticleSentence(sentence, planFacts).filter((h) => BLOCKING_CLASS.has(h.class));
 }
 
-const TITLE_PARTICLE_OR_GLUE = new Set([
-  "作品",
-  "ベスト",
-  "収録",
-  "出演",
-  "記念",
-  "特集",
-  "版",
-  "編",
-]);
-
 /**
- * Title stems that are not in the title authority (performer, work identity,
- * series, campaign, premise, factual feature). Particles are not stems.
+ * Editorial frames in a title (禁断, 濃密, 繰り広げ, 味わう, の世界 …) that the title authority
+ * does not contain. Other words are the Writer's own wording and are not checked here.
  */
-export function ungroundedTitleStems(
+export function titleEditorialFrames(
   title: string,
   authorityFacts: readonly string[],
 ): SemanticClaimHit[] {
@@ -162,17 +151,9 @@ export function ungroundedTitleStems(
   const hits: SemanticClaimHit[] = [];
   const runs = title.match(/[\u4e00-\u9fffァ-ヶーA-Za-z0-9]{2,}/gu) ?? [];
   for (const run of runs) {
-    if (TITLE_PARTICLE_OR_GLUE.has(run) || /^\d+$/.test(run)) continue;
     if (authority.includes(run)) continue;
-    const editorial = /世界|物語|禁断|濃密|艶やか|魅惑|究極|多彩|厳選/.test(run);
-    pushHit(
-      hits,
-      editorial ? "EDITORIAL_EMBELLISHMENT" : "UNSUPPORTED_EVALUATION",
-      run,
-      editorial
-        ? "editorial title frame is not in the title authority"
-        : "title stem is not in the title authority",
-    );
+    if (!/世界|物語|禁断|濃密|艶やか|魅惑|究極|多彩|厳選/.test(run)) continue;
+    pushHit(hits, "EDITORIAL_EMBELLISHMENT", run, "editorial title frame is not in the title authority");
   }
   for (const m of title.matchAll(/繰り広げ|味わ[えう]|の世界/gu)) {
     const span = m[0] === "の世界" ? "世界" : m[0];

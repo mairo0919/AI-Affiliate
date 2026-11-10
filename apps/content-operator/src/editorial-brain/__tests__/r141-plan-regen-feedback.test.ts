@@ -81,7 +81,11 @@ describe("R141 plan regen corrective feedback", () => {
       article,
       articlePlan: nnpjPlan,
     });
-    expect(compliance.ok).toBe(false);
+    // A missing fact alone does not reject the article (2026-10); it is still passed to a rewrite.
+    expect(compliance.ok).toBe(true);
+    expect(compliance.findings).toContainEqual(
+      expect.objectContaining({ code: "PLAN_FACT_OMISSION", severity: "WARNING", slot: "body" }),
+    );
 
     const feedback = buildArticlePlanViolationFeedback(1, compliance, null, nnpjPlan);
     expect(feedback.violations).toContainEqual(

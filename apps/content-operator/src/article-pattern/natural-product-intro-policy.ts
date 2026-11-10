@@ -10,6 +10,12 @@
  * appear as reader-facing classification prose.
  */
 
+/** Shared by the first-draft and correction title instructions so they cannot drift apart.
+ * The hook rules answer the 2026-10 trial headlines that ended on product labels (〜を描く作品,
+ * 〜女優ベスト総集編) and overstated the premise (良く思わない → 妨害する). */
+export const WP_HEADLINE_SHAPE =
+  "Headline shape: search words first, then a hook, joined by 「｜」. Before 「｜」: the performer name(s) plus the genre or a short official key phrase under 8 characters (e.g. 宮城りえのNTR社内不倫, 広瀬ゆり初BEST); with no performer, the series or genre. After 「｜」: one short phrase of about 25 characters or fewer that makes a reader want to know more — the concrete situation, tension, or draw from the official premise, in your own words (e.g. 彼氏のミスを口実に迫るパワハラ上司, 元地方局アナのデビューから専属ラストまで全7作). Keep the official meaning and its strength: do not turn 良く思わない into 妨害する. Shorten long official terms naturally (元地方局アナウンサー → 元地方局アナ). End on the situation itself, not on a label for the product (not 〜作品, 〜総集編, 〜を描く, 〜を収録, 〜出演).";
+
 /**
  * Natural product-intro Writer system — short, editorial-first.
  * Keep FACT boundary; avoid mechanical HOW checklists.
@@ -27,7 +33,8 @@ export const OPTION_B_WRITER_SYSTEM = [
   "When planned facts include a recorded situation or project, explain that situation. When planned facts are only short membership tags, treat them as directions/membership — do not invent performed roles, story, atmosphere, psychology, or acting quality from the tag alone.",
   "SOURCE DENSITY (ARTICLE_PLAN.sourceExpansion when present): RICH may explain the situation across paragraphs; THEME_LEVEL prefers a concise natural intro (often ~2 paragraphs); METADATA_ONLY stays short and factual. After planned facts are naturally introduced, you MAY STOP — do not add a review sentence to hit a length quota. No fixed character quotas and no fixed paragraph count.",
   "Article shape (leadless): natural title; body as continuous product explanation (who → situation/project → format/volume). No separate lead field. No fixed paragraph template. No catalog/DB readout voice. No purchase urgency. No viewer impression.",
-  "Title: one Japanese headline from performer, work identity, official premise, series/campaign, or a work-specific factual feature already in ARTICLE_PLAN. editorialDecision is a factual cut only — do NOT assemble, concatenate, or force-include title.facts, and do not paste productTitle wholesale. Do not invent evaluative copy (禁断の快楽, 艶やか, 濃密な快楽, 味わう, 屈辱). Forbidden headline shapes: package-copy rephrase, performer+keyword glue, catalog shells, unfinished clauses (〜を迎え). HARD BAN — never use 魅せる or が贈る or 「注目は…｜」 anywhere in the title.",
+  `Title: one Japanese headline from performer, work identity, official premise, series/campaign, or a work-specific factual feature already in ARTICLE_PLAN. ${WP_HEADLINE_SHAPE} ` +
+    "editorialDecision is a factual cut only — do NOT assemble, concatenate, or force-include title.facts, and never reuse 8 or more consecutive characters of productTitle (performer names excepted) — the article prints productTitle separately as a link to the work. Do not invent evaluative copy (禁断の快楽, 艶やか, 濃密な快楽, 味わう, 屈辱). Forbidden headline shapes: package-copy rephrase, performer+keyword glue, catalog shells, unfinished clauses (〜を迎え). HARD BAN — never use 魅せる or が贈る or 「注目は…｜」 anywhere in the title.",
   "materialDepth=rich with RICH SOURCE: explain independent factual axes — not one-word drops, not empty padding, not a review. scarce or thin SOURCE: stay short.",
 ].join(" ");
 

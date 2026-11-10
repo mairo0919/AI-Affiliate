@@ -225,24 +225,32 @@ export function classifyArticleHeadlineDefects(input: {
   return [...new Set(defects)];
 }
 
+const LOW_VALUE_HEADLINE_DEFECTS: readonly ArticleHeadlineDefectCode[] = [
+  "PACKAGE_COPY_REPHRASE",
+  "FACT_ASSEMBLY",
+  "CATALOG_SHELL",
+  "GENERIC_LABEL",
+  "MECHANICAL_TEMPLATE",
+  "UNNATURAL_RELATION",
+  "LOW_INFORMATION",
+  "NO_EDITORIAL_ANGLE",
+];
+
+/** The defects that make a headline low value; empty when it is fine. */
+export function lowValueHeadlineDefects(input: {
+  title: string;
+  productTitle?: string | null;
+  titleFacts?: string[] | null;
+}): ArticleHeadlineDefectCode[] {
+  return classifyArticleHeadlineDefects(input).filter((c) => LOW_VALUE_HEADLINE_DEFECTS.includes(c));
+}
+
 export function isLowValueArticleHeadline(input: {
   title: string;
   productTitle?: string | null;
   titleFacts?: string[] | null;
 }): boolean {
-  const d = classifyArticleHeadlineDefects(input);
-  return d.some((c) =>
-    [
-      "PACKAGE_COPY_REPHRASE",
-      "FACT_ASSEMBLY",
-      "CATALOG_SHELL",
-      "GENERIC_LABEL",
-      "MECHANICAL_TEMPLATE",
-      "UNNATURAL_RELATION",
-      "LOW_INFORMATION",
-      "NO_EDITORIAL_ANGLE",
-    ].includes(c),
-  );
+  return lowValueHeadlineDefects(input).length > 0;
 }
 
 /** KEEP vs REWRITE for production inventory (structural). */

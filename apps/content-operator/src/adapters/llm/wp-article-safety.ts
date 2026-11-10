@@ -26,6 +26,15 @@ export function wpContentIdentity(input: {
   );
 }
 
+/**
+ * Bump when the article route's code-built instructions change, so works blocked under the
+ * old instructions may be written once more. Prompt rows alone do not cover code-built text.
+ * 2: headlines in the Writer's own words instead of plan-word scraps (2026-10-25).
+ * 3: headline shape 「search words｜hook」 (2026-10-25).
+ * 4: short hook without product-label endings; body may not paste the official description (2026-11-10).
+ */
+export const WP_ARTICLE_ROUTE_VERSION = "4";
+
 export function wpArticleFingerprint(input: {
   cid: string;
   contentIdentity: string;
@@ -36,6 +45,7 @@ export function wpArticleFingerprint(input: {
     input.cid.trim().toLowerCase(),
     input.contentIdentity.trim(),
     input.promptVersion.trim(),
+    WP_ARTICLE_ROUTE_VERSION,
   ].join("|");
   return createHash("sha256").update(material).digest("hex").slice(0, 32);
 }

@@ -12,7 +12,7 @@ import {
 } from "../../generation/structured-article.js";
 import type { ArticleOutputContract } from "../../generation/article-output-contract.js";
 import { applyArticleOutputContractToLlmSchema } from "../../generation/article-output-contract.js";
-import { OPTION_B_WRITER_SYSTEM } from "../../article-pattern/natural-product-intro-policy.js";
+import { OPTION_B_WRITER_SYSTEM, WP_HEADLINE_SHAPE } from "../../article-pattern/natural-product-intro-policy.js";
 import { formatWritingQualityGuidanceForWriter } from "./success-experience.js";
 
 /**
@@ -171,7 +171,7 @@ export function buildOptionBBloggerGeneratorPrompt(input: {
           : [
               "This says what the reader came to confirm. It is not a fact source and not title authority.",
               "Do not repeat primaryQuery mechanically. Do not add a content word absent from ARTICLE_PLAN.",
-              "Use primaryQuery in the title only when every content word is already in title authority.",
+              "Use primaryQuery in the title only when it states a fact already in ARTICLE_PLAN.",
               "seoTitle and metaDescription may differ from the headline, but must not change its meaning. Use planned facts only. Do not add evaluation, おすすめ, a viewing experience, or a scene that is not in the plan.",
             ].join(" "),
         correcting ? "Do not change the locked primaryQuery during correction." : "",
@@ -181,7 +181,7 @@ export function buildOptionBBloggerGeneratorPrompt(input: {
     : "";
   const userPrompt = [
     correcting
-      ? "GROUNDED CORRECTION. Do not freely regenerate. Apply correctionPlan: keep KEEP sentences and mustKeep facts, repair REPAIR sentences from replaceWithFacts only, delete REMOVE sentences. Do not paraphrase an evaluation, recommendation, viewing experience, or editorial frame into another word of the same class. Title content words come only from correctionPlan.title.titleAuthority; if a natural title cannot be formed, use correctionPlan.title.strongest. Do not join keywords with spaces."
+      ? "GROUNDED CORRECTION. Do not freely regenerate. Apply correctionPlan: keep KEEP sentences and mustKeep facts, repair REPAIR sentences from replaceWithFacts only, delete REMOVE sentences. Do not paraphrase an evaluation, recommendation, viewing experience, or editorial frame into another word of the same class. When correctionPlan.title.action is REPAIR, write a new headline in your own words from the facts in correctionPlan.title.titleAuthority. Do not join keywords with spaces."
       : `Write ARTICLE_PLAN as a natural Japanese product intro (${required}). productTitle in the plan is identity only — do not reuse 8 or more consecutive characters of productTitle in the title (performer names excepted); the article prints the official title separately.`,
     `outputChannel=BLOGGER articleFormat=${JSON.stringify(input.articleFormat)}`,
     "ARTICLE_PLAN (factual boundary — weave into prose; do not dump as taxonomy):",
@@ -204,10 +204,12 @@ export function buildOptionBBloggerGeneratorPrompt(input: {
           "ARTICLE_PLAN_EXECUTION (FACT safety per contribution — obey executionMode / mustPreserve / notAllowed; do not invent):",
           JSON.stringify(execution),
           correcting
-            ? "TITLE CORRECTION: content words only from correctionPlan.title.titleAuthority. Particles and word order may change. Use correctionPlan.title.strongest when a natural title cannot be formed from that authority. Do not add a content word absent from titleAuthority. Do not join keywords with spaces. HARD BAN: 魅せる, が贈る."
-            : "TITLE: Title authority is only performer, official work identity, series, campaign, premise, and a work-specific factual feature in ARTICLE_PLAN. Particles and word order may change. editorialDecision is only a factual cut. Do not assemble/concatenate title.facts. Do not reuse 8 or more consecutive characters of productTitle in the title (performer names excepted); the article prints the official title separately. Do not add editorial copy that is not in that authority (の世界, 繰り広げられる, 禁断, 濃密, 味わう, おすすめ). HARD BAN in title: 魅せる, が贈る, or 「注目は…｜」. Also forbidden: package-copy rephrase, performer+keyword glue, catalog shells.",
+            ? `TITLE CORRECTION: ${WP_HEADLINE_SHAPE} ` +
+              "Rewrite the headline in your own natural Japanese: who appears and what the work is about, stating only facts in titleAuthority (the planned facts). Paraphrase freely; do not string planned words or official-title fragments together, and do not borrow the official title's phrasing. Keep the performer name(s), the genre, and the setting as natural Japanese. Do not reuse 8 or more consecutive characters of productTitle (performer names excepted). Do not add evaluation or viewing copy (堪能, 味わう, 濃密, 禁断, 繰り広げる). HARD BAN: 「が魅せる」「が贈る」."
+            : `TITLE: one natural Japanese headline in your own words that says who appears and what the work is about. ${WP_HEADLINE_SHAPE} ` +
+              "State only facts in ARTICLE_PLAN (performer, work identity, series, campaign, premise, a work-specific feature); OFFICIAL_DESCRIPTION shows how they relate. editorialDecision is only a factual cut. title.facts are hints, not words to string together. Carry the words a searcher would type — performer name(s), the genre, the setting — as natural Japanese, not as a keyword list. Do not borrow the official title's phrasing. Do not reuse 8 or more consecutive characters of productTitle in the title (performer names excepted); the article prints the official title separately. Do not add editorial copy that is not in that authority (の世界, 繰り広げられる, 禁断, 濃密, 味わう, おすすめ). HARD BAN in title: 魅せる, が贈る, or 「注目は…｜」. Also forbidden: package-copy rephrase, performer+keyword glue, catalog shells.",
           correcting
-            ? "On correction, do not write a new article. Copy KEEP. Restate REPAIR from replaceWithFacts as factual sentences. Delete REMOVE. Realize requiredFacts with coveredBySentence null. Do not drop mustKeep facts. Do not add a content word that is not in those facts."
+            ? "On correction, do not write a new article. Copy KEEP. Restate REPAIR from replaceWithFacts as factual sentences. Delete REMOVE. Do not drop mustKeep facts. Other requiredFacts may be explained in your own words where they fit; do not paste them. Do not add a fact that is not in ARTICLE_PLAN."
             : [
                 "articleRole on each execution target is WHO / WORK / PREMISE / FEATURE / FORMAT / VOLUME / SERIES / GENRE / SOURCE_ATTRIBUTED. Explain PREMISE and FEATURE as concrete prose. SOURCE_ATTRIBUTED wording stays attributed (公式では…と紹介されている) and is not your verdict.",
                 "SEMANTIC_PRESERVE body: natural grammar that restates planned facts. No new concrete facts. No evaluation, recommendation, or claim that you watched or experienced the work. Combine related facts into coherent paragraphs.",

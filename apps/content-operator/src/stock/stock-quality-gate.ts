@@ -13,7 +13,7 @@ import {
   isMechanicalTemplateTitle,
   isPerformerGenreListTitle,
 } from "./repair-quality-guard.js";
-import { isLowValueArticleHeadline } from "../article-pattern/article-editorial-decision.js";
+import { lowValueHeadlineDefects } from "../article-pattern/article-editorial-decision.js";
 import { longestTitleSliceInPost } from "../x/x-copy-quality.js";
 
 /** The article prints the official title itself; the headline must not reuse a run this long. */
@@ -102,13 +102,9 @@ export function evaluateStockArticleQualityGate(input: {
     return { ok: false, reason: "PERFORMER_GENRE_LIST_TITLE" };
   }
 
-  if (
-    isLowValueArticleHeadline({
-      title,
-      productTitle: input.productTitle,
-    })
-  ) {
-    return { ok: false, reason: "LOW_VALUE_ARTICLE_HEADLINE" };
+  const headlineDefects = lowValueHeadlineDefects({ title, productTitle: input.productTitle });
+  if (headlineDefects.length) {
+    return { ok: false, reason: `LOW_VALUE_ARTICLE_HEADLINE:${headlineDefects.join(",")}` };
   }
 
   const synopsis = extractSynopsisTheme(input.productTitle, actors);

@@ -79,7 +79,7 @@ const NON_PERFORMER_NAME_STEM_RE =
  * Likely bare performer-name token (identity-critical).
  * Excludes scene/trait/series crumbs that share short Japanese length.
  */
-function isLikelyPerformerNameToken(fact: string): boolean {
+export function isLikelyPerformerNameToken(fact: string): boolean {
   const f = fact.trim();
   if (f.length < 2 || f.length > 8) return false;
   if (!/^[\u3040-\u309f\u30a0-\u30ff\u4e00-\u9fffー]+$/u.test(f)) return false;

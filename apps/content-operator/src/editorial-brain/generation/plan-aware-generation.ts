@@ -6,7 +6,7 @@ import type { ArticlePlan } from "../../article-pattern/article-plan.js";
 import { articlePlanAllFacts } from "../../article-pattern/article-plan.js";
 import {
   blockingSemanticClaims,
-  ungroundedTitleStems,
+  titleEditorialFrames,
 } from "../../article-pattern/article-semantic-claim.js";
 import {
   articleSemanticRole,
@@ -24,6 +24,7 @@ import type {
   ArticlePlanComplianceFinding,
   ArticlePlanComplianceResult,
 } from "./article-plan-compliance.js";
+import { WP_HEADLINE_SHAPE } from "../../article-pattern/natural-product-intro-policy.js";
 import type { RawFailureRouting } from "./raw-failure-routing.js";
 import { isFactRealized, resolveFactRealization } from "./plan-fact-matching.js";
 import { splitIntoSentences } from "./text-surface.js";
@@ -34,7 +35,7 @@ export const MAX_PLAN_EXECUTION_ATTEMPTS = Math.max(
 );
 
 export const PLAN_REGEN_CORRECTION_INSTRUCTION =
-  "GROUNDED CORRECTION, not a new article. Follow correctionPlan KEEP, REPAIR, and REMOVE. Content words may come only from requiredFacts, allowedSupportingFacts, titleAuthority, and Evidence words already in those facts. Particles and copulas may connect them. Do not invent an evaluation, recommendation, viewing experience, catch copy, interpretation, or a new work-specific content word. Do not paraphrase UNSUPPORTED_EVALUATION into another adjective, RECOMMENDATION into another recommendation, VIEWING_EXPERIENCE into another experience claim, or EDITORIAL_EMBELLISHMENT into another catch copy. Delete that meaning or restate the allowed fact as FACTUAL_DESCRIPTION. Do not drop a requiredFacts item whose mustKeep is true. Do not rewrite ARTICLE_PLAN. Do not change seoSearchIntent.primaryQuery.";
+  "GROUNDED CORRECTION, not a new article. Follow correctionPlan KEEP, REPAIR, and REMOVE. In body sentences, content words may come only from requiredFacts, allowedSupportingFacts, and Evidence words already in those facts. Particles and copulas may connect them. Do not invent an evaluation, recommendation, viewing experience, catch copy, interpretation, or a new work-specific content word. Do not paraphrase UNSUPPORTED_EVALUATION into another adjective, RECOMMENDATION into another recommendation, VIEWING_EXPERIENCE into another experience claim, or EDITORIAL_EMBELLISHMENT into another catch copy. Delete that meaning or restate the allowed fact as FACTUAL_DESCRIPTION. Do not drop a requiredFacts item whose mustKeep is true. Do not rewrite ARTICLE_PLAN. Do not change seoSearchIntent.primaryQuery.";
 
 const CONTRASTIVE_REGEN_HINT =
   "Preserve concessive/contrastive relation (e.g. 言えど, ではあるものの, にもかかわらず) — do not replace with neutral copula (である) that removes the planned contrast.";
@@ -43,10 +44,11 @@ const EVAL_REGEN_HINT =
   "For PLAN_UNSUPPORTED_EVAL: REPAIR or REMOVE that sentence. Do not replace UNSUPPORTED_EVALUATION, RECOMMENDATION, VIEWING_EXPERIENCE, or EDITORIAL_EMBELLISHMENT with another word of the same class (印象的, 特徴的, 情熱的, 魅力, おすすめ, 楽しめる, 味わえる, 体験できる, 余すことなく). Restate allowedSupportingFacts only. Maker wording stays only as 公式では…と紹介されている.";
 
 const OMISSION_REGEN_HINT =
-  "For PLAN_FACT_OMISSION: realize each requiredFacts item whose coveredBySentence is null. Copy that fact's authority into the body when a paraphrase is unclear. Keep every item whose mustKeep is true. Do not change the agent, relation, or numbers, and do not add an evaluation.";
+  "For PLAN_FACT_OMISSION: explain the missing requiredFacts in your own words where they fit; do not paste them. Keep every item whose mustKeep is true. Do not change the agent, relation, or numbers, and do not add an evaluation.";
 
 const TITLE_EDITORIAL_REGEN_HINT =
-  "For title defects: emit correctionPlan.title.strongest, or the same authority words joined only by particles such as の. Do not concatenate those words into one token. Do not add a content word absent from titleAuthority. Do not join keywords with spaces. HARD BAN: never write 「が魅せる」「が贈る」.";
+  `For title defects: ${WP_HEADLINE_SHAPE} ` +
+  "Rewrite the headline in your own natural Japanese: who appears and what the work is about, stating only facts in titleAuthority (the planned facts). Paraphrase freely; do not string planned words or official-title fragments together, and do not borrow the official title's phrasing. Keep the performer name(s), the genre, and the setting as natural Japanese. Do not reuse 8 or more consecutive characters of productTitle (performer names excepted). Do not add evaluation or viewing copy (堪能, 味わう, 濃密, 禁断, 繰り広げる). HARD BAN: 「が魅せる」「が贈る」.";
 
 function regenInstructionForViolations(violations: PlanRegenViolation[]): string {
   const parts = [PLAN_REGEN_CORRECTION_INSTRUCTION];
@@ -128,7 +130,8 @@ export function buildStructuredPlanRegenViolations(
     .join("\n");
 
   for (const finding of result.findings) {
-    if (finding.severity !== "BLOCKING") continue;
+    // Omissions no longer block on their own, but a rewrite for another defect still hears about them.
+    if (finding.severity !== "BLOCKING" && finding.code !== "PLAN_FACT_OMISSION") continue;
 
     // Unsupported expansion / theme overreach — cite the offending sentence.
     if (
@@ -167,6 +170,22 @@ export function buildStructuredPlanRegenViolations(
       continue;
     }
 
+    if (finding.code === "PLAN_OFFICIAL_COPY") {
+      const sentence = extractUnsupportedSentenceFromFinding(finding, articleText);
+      const key = `${finding.code}::${sentence ?? finding.message}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      violations.push({
+        code: finding.code,
+        slot: "body",
+        fact: "",
+        reason:
+          "This sentence pastes the official description. Say what it means in your own words as one complete, grammatical sentence, or delete it. Do not guess beyond the official text.",
+        offendingSentence: sentence ?? undefined,
+      });
+      continue;
+    }
+
     if (
       finding.code !== "PLAN_FACT_OMISSION" &&
       finding.code !== "PLAN_SLOT_VIOLATION" &&
@@ -189,13 +208,13 @@ export function buildStructuredPlanRegenViolations(
         .filter(Boolean)
         .slice(0, 12);
       const title = articleText?.title ?? "";
-      const stems = ungroundedTitleStems(title, titleAuthority);
+      const stems = titleEditorialFrames(title, titleAuthority);
       violations.push({
         code: finding.code,
         slot: "title",
         fact: "",
         reason:
-          "Rewrite the title from titleAuthority only. Particles and word order may change. Do not add an editorial frame.",
+          "Rewrite the title in your own words from the facts in titleAuthority. Do not add an editorial frame.",
         unsupportedSentence: title.slice(0, 120) || undefined,
         violationType: stems[0]?.class ?? "EDITORIAL_EMBELLISHMENT",
         offendingSentence: title.slice(0, 120) || undefined,
@@ -282,32 +301,6 @@ function titleAuthorityOf(plan: ArticlePlan): string[] {
     .slice(0, 16);
 }
 
-function strongestTitle(plan: ArticlePlan, authority: string[]): string {
-  const clean = (f: string) => f.trim();
-  const usable = authority.map(clean).filter((f) => f.length >= 2 && f.length <= 32 && !/[。！？]/.test(f));
-  const titleFacts = plan.title.facts.map(clean).filter((f) => usable.includes(f) || (f.length >= 2 && f.length <= 32 && !/[。！？]/.test(f)));
-  const names = usable.filter(
-    (f) => /^[\u4e00-\u9fffぁ-んァ-ヶー]{2,8}$/u.test(f) && articleSemanticRole({ fact: f }) === "WHO",
-  );
-  const who = names
-    .filter((n) => !names.some((other) => other !== n && other.includes(n)))
-    .sort((a, b) => b.length - a.length)[0];
-  const work = [...titleFacts, ...usable].find(
-    (f) =>
-      f !== who &&
-      !/\s/u.test(f) &&
-      f.length <= 24 &&
-      articleSemanticRole({ fact: f }) !== "WHO" &&
-      articleSemanticRole({ fact: f }) !== "VOLUME",
-  );
-  const series = usable.find((f) => articleSemanticRole({ fact: f }) === "SERIES" && !/\s/u.test(f));
-  if (who && work && !work.includes(who)) return `${who}の${work}`.slice(0, 40);
-  if (titleFacts[0] && !/[。！？]/.test(titleFacts[0])) return titleFacts[0].slice(0, 40);
-  if (series && work) return `${series}の${work}`.slice(0, 40);
-  if (work) return work;
-  return usable[0]?.slice(0, 32) ?? "";
-}
-
 function sentenceCoversFact(sentence: string, fact: string): boolean {
   return isFactRealized(resolveFactRealization(sentence, fact, { padBearing: false }).status);
 }
@@ -375,7 +368,7 @@ export function buildGroundedCorrectionPlan(
     });
   }
   const titleBlocked =
-    titleNeedsRepair || ungroundedTitleStems(articleText?.title ?? "", authority).length > 0;
+    titleNeedsRepair || titleEditorialFrames(articleText?.title ?? "", authority).length > 0;
   return {
     mode: "GROUNDED_CORRECTION",
     keep: keep.slice(0, 8),
@@ -385,7 +378,6 @@ export function buildGroundedCorrectionPlan(
       action: titleBlocked ? "REPAIR" : "KEEP",
       current: (articleText?.title ?? "").slice(0, 80),
       titleAuthority: authority,
-      strongest: strongestTitle(plan, authority),
     },
     requiredFacts: [
       ...requiredFacts.filter((f) => !f.mustKeep),

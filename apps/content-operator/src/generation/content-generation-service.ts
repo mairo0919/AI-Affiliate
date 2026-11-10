@@ -1555,6 +1555,10 @@ export class ContentGenerationService {
         const articlePlanCompliance = validateArticlePlanCompliance({
           article: articleForRaw,
           articlePlan,
+          officialDescription:
+            typeof evidencePackPrompt.officialDescription === "string"
+              ? evidencePackPrompt.officialDescription
+              : null,
         });
           publishValidation.articlePlanCompliancePass = articlePlanCompliance.ok;
           const routing = articlePlanCompliance.ok
@@ -2966,14 +2970,19 @@ export class ContentGenerationService {
     await this.budget.assertCanSpend(1);
     const prompt = await this.prompts.getPrompt("revision.partial", "v1");
     const evidence = reviewEvidenceFromStructuredContent(source.structuredContent);
+    const sourceStructured = (source.structuredContent ?? {}) as Record<string, unknown>;
+    // The article JSON, not the plain body: given markdown, the model answered in markdown
+    // (images as ![](...)), which failed the article schema.
+    const sourceArticle = sourceStructured.article ? JSON.stringify(sourceStructured.article) : source.body;
     const rendered = this.prompts.render(prompt, {
       title: source.title,
-      body: source.body,
+      body: sourceArticle,
       rationale: input.rationale,
     });
     const revisionUserPrompt = [
       rendered.userPrompt,
       "Fix only what the review findings name. Keep everything else. Return the whole article in the same JSON shape.",
+      `JSON Schema (authoritative): ${JSON.stringify(getBloggerArticleLlmJsonSchema())}`,
       evidence ?? "",
     ]
       .filter(Boolean)
@@ -3009,7 +3018,7 @@ export class ContentGenerationService {
       }),
       input: {
         title: source.title,
-        body: source.body,
+        body: sourceArticle,
         productTitle: input.productTitle,
         ctaUrl: input.ctaUrl ?? null,
         rationale: input.rationale,
@@ -3037,8 +3046,12 @@ export class ContentGenerationService {
       currency: llm.currency,
     });
 
-    const article = parseBloggerArticle(llm.output);
-    const sourceStructured = (source.structuredContent ?? {}) as Record<string, unknown>;
+    // Same normalization as the writer's output.
+    const article = parseBloggerArticle(
+      fillOptionBArticleDefaults(
+        applyOptionBDeterministicCta(llm.output as Record<string, unknown>, input.ctaUrl ?? null),
+      ),
+    );
     const priorImages = Array.isArray(sourceStructured.images) ? sourceStructured.images : [];
     const body = structuredToPlainBody(article, {
       images: priorImages as Array<{ role: string; sourceUrl: string; alt?: string }>,

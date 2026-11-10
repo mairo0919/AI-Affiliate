@@ -386,6 +386,8 @@ export function fillOptionBArticleDefaults(
       : { label: OPTION_B_CTA_DEFAULT_LABEL, url: null };
   const withoutLead = { ...raw };
   delete withoutLead.lead;
+  // Optional in the schema; the model sometimes answers null for "not set".
+  if (withoutLead.articleFormat === null) delete withoutLead.articleFormat;
   return {
     ...withoutLead,
     title: title || "商品紹介",

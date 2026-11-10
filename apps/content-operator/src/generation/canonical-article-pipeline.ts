@@ -404,6 +404,18 @@ function reviewFindingLines(reviews: ReadonlyArray<ReviewLike>): string[] {
   return lines;
 }
 
+/** What each low-value headline defect means, so the revision knows what to change. */
+const HEADLINE_DEFECT_MEANING: Record<string, string> = {
+  PACKAGE_COPY_REPHRASE: "PACKAGE_COPY_REPHRASE: the title rewords the official work title.",
+  FACT_ASSEMBLY: "FACT_ASSEMBLY: the title strings planned facts or keywords together with particles instead of saying something.",
+  CATALOG_SHELL: "CATALOG_SHELL: the title is a catalog category, not a headline.",
+  GENERIC_LABEL: "GENERIC_LABEL: the title is a generic label that fits any work.",
+  MECHANICAL_TEMPLATE: "MECHANICAL_TEMPLATE: the title uses a stock template such as 〜が魅せる or 〜が贈る.",
+  UNNATURAL_RELATION: "UNNATURAL_RELATION: the title joins words in a relation that is not natural Japanese.",
+  LOW_INFORMATION: "LOW_INFORMATION: the title is too short to say anything about the work.",
+  NO_EDITORIAL_ANGLE: "NO_EDITORIAL_ANGLE: the title is a short noun phrase joined by の/と with no point; say what happens.",
+};
+
 /** The auxiliary gate's reason, as the rationale for one partial revision. */
 export function auxiliaryFindingRationale(reason: string): string {
   if (reason.startsWith("TITLE_COPIES_OFFICIAL")) {
@@ -413,7 +425,20 @@ export function auxiliaryFindingRationale(reason: string): string {
       "- The article prints the official work title separately, so the title does not need to carry it.",
     ].join("\n");
   }
-  return `Auxiliary check failed: ${reason}\n- Fix only what this check names.`;
+  if (reason.startsWith("LOW_VALUE_ARTICLE_HEADLINE")) {
+    const defects = reason.split(":")[1]?.split(",") ?? [];
+    return [
+      `Auxiliary check failed: ${reason}`,
+      "- Rewrite only the title. Say in one natural phrase what happens in this work, from ARTICLE_PLAN.editorialDecision.",
+      ...defects.map((code) => `- ${HEADLINE_DEFECT_MEANING[code] ?? code}`),
+      "- Do not fall back to the official work title: 8 or more consecutive characters of it also fail.",
+    ].join("\n");
+  }
+  return [
+    `Auxiliary check failed: ${reason}`,
+    "- Fix only what this check names.",
+    "- If the fix is a new title, do not fall back to the official work title: 8 or more consecutive characters of it fail the same check.",
+  ].join("\n");
 }
 
 /** The failed reviews' findings, as the rationale for one partial revision. */

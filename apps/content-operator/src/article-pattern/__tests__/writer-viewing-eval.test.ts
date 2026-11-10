@@ -1,3 +1,4 @@
+import { evaluateStockArticleQualityGate } from "../../stock/stock-quality-gate.js";
 /**
  * 1rctd00760 regression: a planned situation plus an unattributed
  * recommendation must fail production compliance and enter the rewrite note.
@@ -127,10 +128,11 @@ describe("writer viewing evaluation", () => {
     expect(built.userPrompt).not.toMatch(/Prefer 描く\/紹介する\/味わう/);
   });
 
-  it("accepts performer plus work identity without genre glue", () => {
-    const result = validateArticlePlanCompliance({
+  // 2026-10: scrap headlines like 「桃乃木かな終結BEST」 passed because every word came from the plan.
+  it("rejects performer plus an official-title scrap, and accepts the same facts in the Writer's words", () => {
+    const check = (title: string) => validateArticlePlanCompliance({
       article: {
-        title: "逢沢みゆの密室タクシードライバー",
+        title,
         summary: "",
         sections: [{ paragraphs: ["逢沢みゆが出演する。65分。"] }],
       },
@@ -149,11 +151,93 @@ describe("writer viewing evaluation", () => {
         },
       },
     });
-    expect(result.findings.some((f) => f.code === "PLAN_TITLE_EDITORIAL_QUALITY")).toBe(false);
-    expect(result.findings.some((f) => f.code === "PLAN_TITLE_INVENT")).toBe(false);
+    const scrap = check("逢沢みゆの密室タクシードライバー");
+    expect(scrap.findings.some((f) => f.code === "PLAN_TITLE_EDITORIAL_QUALITY")).toBe(true);
+    const own = check("逢沢みゆがタクシーの運転手になり、客を乗せた車内が密室になる");
+    expect(own.findings.filter((f) => f.slot === "title")).toEqual([]);
   });
 
-  it("accepts a grounded series title without an evaluative frame", () => {
+  it("rejects the published 2026-10 scrap headlines", () => {
+    const cases: Array<[string, string[], string]> = [
+      ["桃乃木かな終結BEST", ["桃乃木かな", "終結BEST"], "「パンツ脱げ。」 万引きの代償… 8時間 終結BEST 桃乃木かな"],
+      ["広瀬ゆり初BEST", ["広瀬ゆり", "初BEST"], "元地方局アナウンサー 広瀬ゆり 初BEST 12時間 完全収録SPECIAL"],
+      ["北乃衣織のおもちゃ責め", ["北乃衣織", "おもちゃ責め"], "K県立元男性教諭のスマホから流出した 他校の生徒と中出ししまくった記録。 北乃衣織"],
+    ];
+    for (const [title, facts, productTitle] of cases) {
+      const result = validateArticlePlanCompliance({
+        article: { title, summary: "", sections: [{ paragraphs: ["本文。"] }] },
+        articlePlan: {
+          schemaVersion: 1 as const,
+          materialDepth: "standard" as const,
+          productTitle,
+          title: { job: "editorial_headline" as const, facts },
+          lead: { job: "opening_facts" as const, facts: [] },
+          body: [{ job: "body_facts" as const, facts: [] }],
+        },
+      });
+      expect(result.findings.some((f) => f.code === "PLAN_TITLE_EDITORIAL_QUALITY"), title).toBe(true);
+    }
+  });
+
+  it("rejects a headline that borrows a long run of the official title", () => {
+    // 2026-10-25 trial for post 754: no longer scraps, but 「しつこい追姦ピストンレ×プの悲劇」 is the official wording.
+    const result = validateArticlePlanCompliance({
+      article: {
+        title: "桃乃木かな出演、しつこい追姦ピストンレ×プの悲劇を収録した終結BEST作品",
+        summary: "",
+        sections: [{ paragraphs: ["本文。"] }],
+      },
+      articlePlan: {
+        schemaVersion: 1 as const,
+        materialDepth: "standard" as const,
+        productTitle: "「パンツ脱げ。」 万引きの代償…≪何発ヤッても帰れない≫ しつこい追姦ピストンレ×プの悲劇 8時間 終結BEST 桃乃木かな",
+        title: { job: "editorial_headline" as const, facts: ["桃乃木かな", "終結BEST"] },
+        lead: { job: "opening_facts" as const, facts: [] },
+        body: [{ job: "body_facts" as const, facts: [] }],
+      },
+    });
+    expect(result.findings.some((f) => /copies \d+ consecutive characters/.test(f.message))).toBe(true);
+  });
+
+  it("accepts the 「search words｜hook」 headline shape the user chose (2026-10-25)", () => {
+    const cases: Array<[string, string[], string, string[]]> = [
+      [
+        "宮城りえのNTR社内不倫｜彼氏のミスを口実に迫るパワハラ上司",
+        ["宮城りえ", "NTR社内不倫"],
+        "デカ尻美人な彼女がパワハラ絶倫上司に寝取られいつでもどこでも種付けバックでねっちょり犯●れまくってる。デカ尻OL NTR社内不倫 宮城りえ",
+        ["彼氏が大きなミスをしてしまい、パワハラ上司がミスをもみ消す代わりに不倫を持ち掛け"],
+      ],
+      [
+        "広瀬ゆり初BEST｜元地方局アナのデビューから専属ラストまで全7作",
+        ["広瀬ゆり", "初BEST"],
+        "元地方局アナウンサー 広瀬ゆり 初BEST 12時間 完全収録SPECIAL",
+        ["デビューから専属ラストまで全7作品を完全網羅"],
+      ],
+    ];
+    for (const [title, facts, productTitle, bodyFacts] of cases) {
+      const result = validateArticlePlanCompliance({
+        article: { title, summary: "", sections: [{ paragraphs: [bodyFacts[0]!] }] },
+        articlePlan: {
+          schemaVersion: 1 as const,
+          materialDepth: "standard" as const,
+          productTitle,
+          title: { job: "editorial_headline" as const, facts },
+          lead: { job: "opening_facts" as const, facts: [] },
+          body: [{ job: "body_facts" as const, facts: bodyFacts }],
+        },
+      });
+      expect(result.findings.filter((f) => f.slot === "title"), title).toEqual([]);
+      const gate = evaluateStockArticleQualityGate({
+        productTitle,
+        rawData: { title: productTitle, iteminfo: { actress: [{ name: facts[0] }] } },
+        writerTitle: title,
+        structuredContent: { bodyHtml: `<p>${bodyFacts[0]}。</p>`.repeat(40) },
+      });
+      expect(gate, title).toEqual({ ok: true });
+    }
+  });
+
+  it("rejects a headline that is only the series name", () => {
     const result = validateArticlePlanCompliance({
       article: {
         title: "女のアフター5",
@@ -182,8 +266,7 @@ describe("writer viewing evaluation", () => {
         },
       },
     });
-    expect(result.findings.some((f) => f.code === "PLAN_TITLE_EDITORIAL_QUALITY")).toBe(false);
-    expect(result.findings.some((f) => f.code === "PLAN_TITLE_INVENT")).toBe(false);
+    expect(result.findings.some((f) => f.code === "PLAN_TITLE_EDITORIAL_QUALITY")).toBe(true);
   });
 
   it("labels an official situation clause as PREMISE", () => {
@@ -346,7 +429,7 @@ describe("writer viewing evaluation", () => {
     expect(correction.keep.some((k) => k.sentence.includes("お嬢さん"))).toBe(true);
   });
 
-  it("uses a short title fact instead of a sentence-length product title", () => {
+  it("asks for a new headline without handing the Writer one built from plan words", () => {
     const plan = {
       schemaVersion: 1 as const,
       materialDepth: "standard" as const,
@@ -356,7 +439,42 @@ describe("writer viewing evaluation", () => {
       body: [{ job: "body_facts" as const, facts: ["しろうとまんまん"] }],
     };
     const correction = buildGroundedCorrectionPlan(plan, { title: "塩対応ベストの世界", body: "" }, true);
-    expect(correction.title.strongest).toBe("塩対応ベスト");
+    expect(correction.title).not.toHaveProperty("strongest");
     expect(correction.title.action).toBe("REPAIR");
+  });
+});
+
+describe("body that pastes the official description", () => {
+  const official =
+    "彼氏が大きなミスをしてしまい、パワハラ上司がミスをもみ消す代わりに不倫を持ち掛けてきた。";
+  const plan = {
+    schemaVersion: 1 as const,
+    materialDepth: "standard" as const,
+    productTitle: "デカ尻OL NTR社内不倫 宮城りえ",
+    title: { job: "editorial_headline" as const, facts: ["宮城りえ", "NTR社内不倫"] },
+    lead: { job: "opening_facts" as const, facts: [] },
+    body: [{ job: "body_facts" as const, facts: ["宮城りえ", "パワハラ上司"] }],
+  };
+  const check = (body: string) =>
+    validateArticlePlanCompliance({
+      article: { title: "宮城りえのNTR社内不倫｜彼氏のミスを口実に迫るパワハラ上司", summary: "", sections: [{ paragraphs: [body] }] },
+      articlePlan: plan,
+      officialDescription: official,
+    });
+
+  it("rejects a sentence built around a pasted official clause and names it in the rewrite note", () => {
+    const body =
+      "宮城りえが演じるOLの話で、彼氏が大きなミスをしてしまい、パワハラ上司がミスをもみ消す代わりに不倫を持ち掛けてきたことが含まれています。";
+    const result = check(body);
+    expect(result.ok).toBe(false);
+    expect(result.findings.some((f) => f.code === "PLAN_OFFICIAL_COPY" && f.severity === "BLOCKING")).toBe(true);
+    const feedback = buildArticlePlanViolationFeedback(1, result, null, plan, { body });
+    const violation = feedback.violations?.find((v) => v.code === "PLAN_OFFICIAL_COPY");
+    expect(violation?.offendingSentence).toContain("ことが含まれています");
+  });
+
+  it("accepts the same premise in the Writer's own words", () => {
+    const result = check("宮城りえが演じるOLは、彼氏のミスを口実にパワハラ上司から不倫を迫られます。");
+    expect(result.findings.filter((f) => f.code === "PLAN_OFFICIAL_COPY")).toEqual([]);
   });
 });
