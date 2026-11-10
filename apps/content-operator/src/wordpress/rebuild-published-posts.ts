@@ -6,7 +6,15 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { loadConfig, type AppConfig } from "@ai-affiliate/config";
-import { LifecycleRepository, createDatabaseClient, type DatabaseClient } from "@ai-affiliate/database";
+import {
+  LifecycleRepository,
+  P6Repository,
+  ResearchRepository,
+  createDatabaseClient,
+  type DatabaseClient,
+} from "@ai-affiliate/database";
+import { createLogger } from "@ai-affiliate/shared";
+import { buildFanzaCanonicalProductUrl } from "../adapters/affiliate/fanza-affiliate-provider.js";
 import { bindLlmExecutionStore } from "../adapters/llm/llm-execution-binding.js";
 import { requireApiLLMProvider } from "../adapters/llm/create-llm-provider.js";
 import { createPrismaLlmRunStore } from "../adapters/llm/llm-execution-prisma-store.js";
@@ -15,10 +23,12 @@ import {
   createWordPressPublisherFromConfig,
   type WordPressApiPublisher,
 } from "../adapters/publisher/wordpress-api-publisher.js";
+import { ContentReviewService } from "../admin/content-review-service.js";
 import { validateFanzaAffiliateUrl } from "../daily-blog/affiliate-url.js";
-import { BLOG_CTA_CLASS, BLOG_WORK_TITLE_CLASS, renderCtaBlock, renderWorkTitleBlock } from "../generation/blogger-formatter.js";
-import { auxiliaryFindingRationale } from "../generation/canonical-article-pipeline.js";
+import { BLOG_CTA_CLASS, BLOG_WORK_TITLE_CLASS, renderWorkTitleBlock } from "../generation/blogger-formatter.js";
+import { auxiliaryFindingRationale, runCanonicalArticlePipeline } from "../generation/canonical-article-pipeline.js";
 import { ContentGenerationService } from "../generation/content-generation-service.js";
+import { seedP45Prompts } from "../generation/p45-service.js";
 import { extractItemListCatalogFacts } from "../stock/ensure-official-enrichment.js";
 import { evaluateStockArticleQualityGate, WP_TITLE_OFFICIAL_RUN_LIMIT } from "../stock/stock-quality-gate.js";
 import { longestTitleSliceInPost } from "../x/x-copy-quality.js";
@@ -29,7 +39,8 @@ export function bodyInventory(html: string) {
   const count = (re: RegExp) => (html.match(re) ?? []).length;
   return {
     images: count(/<img\b/g),
-    ctas: count(new RegExp(`class="${BLOG_CTA_CLASS}"`, "g")),
+    /** Links to the work page: the CTA buttons of older posts, the linked official title now. */
+    links: count(/data-otonaselect-cta="1"/g),
     workTitle: count(/class="blog-work-title"/g),
     notes: count(/class="blog-meta-note"/g),
     headings: count(/<h[2-4]\b/g),
@@ -43,14 +54,14 @@ export type BodyInventory = ReturnType<typeof bodyInventory>;
 export function inventoryLosses(before: BodyInventory, after: BodyInventory): string[] {
   const losses: string[] = [];
   if (after.images < before.images) losses.push(`images ${before.images}->${after.images}`);
-  if (after.ctas < before.ctas) losses.push(`ctas ${before.ctas}->${after.ctas}`);
+  if (before.links > 0 && after.links === 0) losses.push(`links ${before.links}->0`);
   if (after.notes < before.notes) losses.push(`notes ${before.notes}->${after.notes}`);
   if (after.textLength < before.textLength * 0.8) losses.push(`text ${before.textLength}->${after.textLength}`);
   return losses;
 }
 
 export function liveCtaUrl(html: string): string | null {
-  const match = new RegExp(`<p class="${BLOG_CTA_CLASS}"><a href="([^"]+)"`).exec(html);
+  const match = /<a href="([^"]+)" data-otonaselect-cta="1"/.exec(html);
   return match ? match[1]!.replaceAll("&#39;", "'").replaceAll("&quot;", '"').replaceAll("&amp;", "&") : null;
 }
 
@@ -60,21 +71,18 @@ export function articleProse(html: string): string {
 }
 
 /**
- * Keep the live text and bring only the layout in line: the standard CTA markup and the
- * linked official title before the first CTA. Null when the post has no standard CTA.
+ * Keep the live text and bring only the layout in line: the linked official title takes the
+ * place of the CTA buttons. Null when the post has neither.
  */
 export function restyleLiveBody(html: string, workTitle: string, ctaUrl: string): string | null {
-  const ctaRe = new RegExp(`<p class="${BLOG_CTA_CLASS}">([\\s\\S]*?)<\\/p>`, "g");
-  if (!html.includes(`<p class="${BLOG_CTA_CLASS}">`)) return null;
-  const withoutOldTitle = html.replace(new RegExp(`<p class="${BLOG_WORK_TITLE_CLASS}">[\\s\\S]*?<\\/p>\\n?`, "g"), "");
+  const linkRe = new RegExp(`<p class="(?:${BLOG_CTA_CLASS}|${BLOG_WORK_TITLE_CLASS})">[\\s\\S]*?<\\/p>\\n?`, "g");
   let first = true;
-  return withoutOldTitle.replace(ctaRe, (_whole, inner: string) => {
-    const label = inner.replace(/<[^>]+>/g, "").trim() || "詳細を確認";
-    const cta = renderCtaBlock({ label, url: ctaUrl });
-    if (!first) return cta;
+  const restyled = html.replace(linkRe, () => {
+    if (!first) return "";
     first = false;
-    return `${renderWorkTitleBlock(workTitle, ctaUrl)}\n${cta}`;
+    return `${renderWorkTitleBlock(workTitle, ctaUrl)}\n`;
   });
+  return first ? null : restyled;
 }
 
 /** A body published as unconverted markdown: image syntax and a bare "label: URL" CTA shown as text. */
@@ -95,8 +103,15 @@ export type RebuildRow = {
   titleError?: string;
   ctaBefore?: string | null;
   ctaAfter?: string;
-  /** RENDERED: rebuilt from the stored article. KEPT_TEXT: live text kept, layout aligned. */
-  mode?: "RENDERED" | "KEPT_TEXT";
+  /**
+   * REWRITTEN: new article from the production writer route. RENDERED: rebuilt from the stored
+   * article. KEPT_TEXT: live text kept, layout aligned.
+   */
+  mode?: "REWRITTEN" | "RENDERED" | "KEPT_TEXT";
+  /** Why the article could not be rewritten; the post then only gets the layout change. */
+  rewriteError?: string;
+  /** The ContentVersion the post now shows, when it was rewritten. */
+  contentVersionAfter?: string;
   keptTextBecause?: string;
   /** The live body was unconverted markdown; the rebuild replaces it whole. */
   repairsMarkdown?: boolean;
@@ -116,10 +131,16 @@ export async function rebuildPublishedPosts(deps: {
   apply: boolean;
   /** Ask the writer for a new headline when the current one copies the official title. */
   rewriteTitles: boolean;
+  /** Write each article again through the production route (writer, gate, reviews). Apply only. */
+  rewriteArticles?: boolean;
+  /** With rewriteArticles: keep the live body and only propose the new article's headline. */
+  headlineOnly?: boolean;
   externalIds?: string[];
   limit?: number;
   /** Headlines already proposed by an earlier run (externalId → title), used instead of asking again. */
   titleMap?: Record<string, string>;
+  /** Called after each post, so a run that dies midway still leaves its backups behind. */
+  onRow?: (rows: RebuildRow[]) => void;
 }): Promise<RebuildRow[]> {
   const prisma = deps.database.prisma;
   const lifecycle = new LifecycleRepository(prisma);
@@ -129,8 +150,13 @@ export async function rebuildPublishedPosts(deps: {
     lifecycle,
     prisma: prisma as unknown as WordPressPublishPathDeps["prisma"],
   };
+  if (deps.rewriteArticles && !deps.headlineOnly && !deps.apply) {
+    // A rewrite pays for the writer and reviews; a dry run would pay again when applied.
+    throw new Error("rewriteArticles needs apply");
+  }
   let generation: ContentGenerationService | null = null;
-  if (deps.rewriteTitles) {
+  if (deps.rewriteTitles || deps.rewriteArticles) {
+    await seedP45Prompts(lifecycle);
     bindLlmExecutionStore(createPrismaLlmRunStore(prisma));
     generation = new ContentGenerationService(lifecycle, requireApiLLMProvider(deps.config), {
       generation: deps.config.llmModelGeneration,
@@ -173,7 +199,7 @@ export async function rebuildPublishedPosts(deps: {
         ? await prisma.researchItem.findFirst({
             where: { externalId: { equals: row.cid, mode: "insensitive" } },
             orderBy: { collectedAt: "desc" },
-            select: { title: true, rawData: true },
+            select: { id: true, title: true, rawData: true },
           })
         : null;
       if (!item) {
@@ -194,6 +220,48 @@ export async function rebuildPublishedPosts(deps: {
         continue;
       }
       row.ctaAfter = ctaUrl;
+
+      let proposedTitle: string | null = null;
+      if (deps.rewriteArticles && generation) {
+        const rewritten = await rewriteArticle({
+          database: deps.database,
+          config: deps.config,
+          lifecycle,
+          generation,
+          pathDeps,
+          item,
+          cid: row.cid!,
+          ctaUrl,
+        });
+        if (rewritten.ok && deps.headlineOnly) {
+          // Only the headline is proposed; the generated article is never published.
+          await lifecycle.updateContentVersionStatus(rewritten.versionId, "ARCHIVED");
+          proposedTitle = rewritten.title;
+        } else if (rewritten.ok) {
+          const losses = inventoryLosses(row.before, bodyInventory(rewritten.html)).filter((loss) => !loss.startsWith("text "));
+          if (losses.length) {
+            await lifecycle.updateContentVersionStatus(rewritten.versionId, "ARCHIVED");
+            row.rewriteError = `WOULD_LOSE:${losses.join(";")}`;
+          } else {
+            row.mode = "REWRITTEN";
+            row.after = bodyInventory(rewritten.html);
+            row.titleAfter = rewritten.title;
+            row.backup = live;
+            await publisher.updateBodyAndTitle({ externalId, content: rewritten.html, title: rewritten.title });
+            // The post now shows the new version; it becomes the post_title source of truth.
+            await prisma.publicationTarget.updateMany({
+              where: { platform: "WORDPRESS", publishedExternalId: externalId, contentVersionId: version.id },
+              data: { contentVersionId: rewritten.versionId },
+            });
+            await lifecycle.updateContentVersionStatus(version.id, "ARCHIVED");
+            row.contentVersionAfter = rewritten.versionId;
+            row.result = "UPDATED";
+            continue;
+          }
+        } else {
+          row.rewriteError = rewritten.reason;
+        }
+      }
 
       const rendered = await renderCurrentWordPressBody({
         deps: pathDeps,
@@ -235,10 +303,10 @@ export async function rebuildPublishedPosts(deps: {
 
       const actors = extractItemListCatalogFacts(item.rawData).actors;
       row.titleCopyRun = longestTitleSliceInPost(version.title, item.title, actors);
-      let newTitle: string | null = deps.titleMap?.[externalId]?.trim() || null;
+      let newTitle: string | null = deps.titleMap?.[externalId]?.trim() || proposedTitle;
       if (newTitle) {
         row.titleAfter = newTitle;
-      } else if (row.titleCopyRun >= WP_TITLE_OFFICIAL_RUN_LIMIT && generation) {
+      } else if (row.titleCopyRun >= WP_TITLE_OFFICIAL_RUN_LIMIT && generation && !deps.rewriteArticles) {
         // A headline that cannot be written now (budget, missing topic) keeps the old one;
         // the body is still brought onto the current layout.
         try {
@@ -287,9 +355,75 @@ export async function rebuildPublishedPosts(deps: {
     } catch (error) {
       row.result = "FAILED";
       row.reason = error instanceof Error ? error.message.slice(0, 200) : String(error);
+    } finally {
+      deps.onRow?.(rows);
     }
   }
   return rows;
+}
+
+/** A new article for a published work, written, gated, and reviewed like a new stock article. */
+async function rewriteArticle(input: {
+  database: DatabaseClient;
+  config: AppConfig;
+  lifecycle: LifecycleRepository;
+  generation: ContentGenerationService;
+  pathDeps: WordPressPublishPathDeps;
+  item: { id: string; title: string; rawData: unknown };
+  cid: string;
+  ctaUrl: string;
+}): Promise<{ ok: true; versionId: string; title: string; html: string } | { ok: false; reason: string }> {
+  const prisma = input.database.prisma;
+  const contentReview = new ContentReviewService(input.lifecycle, new P6Repository(prisma));
+  let pipeline: Awaited<ReturnType<typeof runCanonicalArticlePipeline>>;
+  try {
+    pipeline = await runCanonicalArticlePipeline({
+      lifecycle: input.lifecycle,
+      research: new ResearchRepository(prisma),
+      generation: input.generation,
+      contentReview,
+      config: input.config,
+      logger: createLogger("info"),
+      researchItemId: input.item.id,
+      productTitle: input.item.title,
+      productCanonicalId: input.cid,
+      productUrl: buildFanzaCanonicalProductUrl(input.cid),
+      rawData: input.item.rawData,
+      ctaUrl: input.ctaUrl,
+      route: "REPAIR",
+      objective: "stock_blog_option_b",
+      autoApprove: true,
+      approveActor: "wp-rebuild-published",
+      auxiliarySafetyOk: ({ title, structuredContent }) =>
+        evaluateStockArticleQualityGate({
+          productTitle: input.item.title,
+          rawData: input.item.rawData,
+          structuredContent: { ...structuredContent, title },
+          writerTitle: title,
+        }),
+    });
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message.slice(0, 200) : String(error) };
+  }
+  if (!pipeline.ok) return { ok: false, reason: pipeline.reason };
+  if (!pipeline.approved) return { ok: false, reason: "NOT_APPROVED" };
+  const version = await prisma.contentVersion.findUnique({
+    where: { id: pipeline.contentVersionId },
+    select: { id: true, title: true, summary: true, structuredContent: true },
+  });
+  if (!version) return { ok: false, reason: "GENERATED_VERSION_MISSING" };
+  const rendered = await renderCurrentWordPressBody({
+    deps: input.pathDeps,
+    version,
+    productCanonicalId: input.cid,
+    ctaUrl: input.ctaUrl,
+    workTitle: input.item.title,
+  });
+  if (!rendered.ok) {
+    await input.lifecycle.updateContentVersionStatus(version.id, "ARCHIVED");
+    return { ok: false, reason: rendered.reason };
+  }
+  return { ok: true, versionId: version.id, title: version.title, html: rendered.html };
 }
 
 /** One partial revision for the headline; returns it only when it passes the same gate as new articles. */
@@ -330,6 +464,8 @@ async function proposeTitle(input: {
  * Usage:
  *   wp-rebuild-published                      (dry run: lists what would change)
  *   wp-rebuild-published --titles             (also asks for new headlines; calls the LLM)
+ *   wp-rebuild-published --rewrite --apply --backup=...  (writes each article again; calls the LLM)
+ *   wp-rebuild-published --rewrite --headline-only --ids=...  (proposes headlines from the new-article route; calls the LLM)
  *   wp-rebuild-published --apply --backup=/path/backup.json
  *   wp-rebuild-published --ids=43,47 --limit=10
  *   wp-rebuild-published --apply --backup=... --title-map=<earlier --titles output>
@@ -354,6 +490,13 @@ export async function runWpRebuildPublishedCli(argv: string[]): Promise<void> {
           .map((r) => [r.externalId, r.titleAfter!]),
       )
     : undefined;
+  const writeBackup = (rows: RebuildRow[]) => {
+    if (!backupPath) return;
+    writeFileSync(
+      backupPath,
+      JSON.stringify(rows.filter((r) => r.backup).map((r) => ({ externalId: r.externalId, title: r.titleBefore, content: r.backup })), null, 2),
+    );
+  };
   const config = loadConfig({ requireDatabaseUrl: true });
   const database = createDatabaseClient();
   await database.connect();
@@ -363,16 +506,13 @@ export async function runWpRebuildPublishedCli(argv: string[]): Promise<void> {
       config,
       apply,
       rewriteTitles: argv.includes("--titles"),
+      rewriteArticles: argv.includes("--rewrite"),
+      headlineOnly: argv.includes("--headline-only"),
       externalIds,
       limit,
       titleMap,
+      onRow: writeBackup,
     });
-    if (backupPath) {
-      writeFileSync(
-        backupPath,
-        JSON.stringify(rows.filter((r) => r.backup).map((r) => ({ externalId: r.externalId, title: r.titleBefore, content: r.backup })), null, 2),
-      );
-    }
     const count = (result: RebuildRow["result"]) => rows.filter((r) => r.result === result).length;
     console.log(
       JSON.stringify(

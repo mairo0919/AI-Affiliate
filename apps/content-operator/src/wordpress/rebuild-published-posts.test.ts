@@ -24,11 +24,11 @@ const article = {
 describe("rebuild inventory", () => {
   it("counts what a reader sees, and reads the live CTA link back", () => {
     const html = formatBloggerHtml({ ...article, workTitle: "作品" } as never);
-    expect(bodyInventory(html)).toMatchObject({ images: 2, ctas: 2, workTitle: 1, notes: 3 });
+    expect(bodyInventory(html)).toMatchObject({ images: 2, links: 1, workTitle: 1, notes: 3 });
     expect(liveCtaUrl(html)).toBe(CTA_URL);
   });
 
-  it("refuses a rebuild that shows fewer images, buttons, notes, or most of the text", () => {
+  it("refuses a rebuild that shows fewer images or notes, no link to the work, or most of the text", () => {
     const before = bodyInventory(formatBloggerHtml(article as never));
     const fewerImages = bodyInventory(formatBloggerHtml({ ...article, images: [article.images[0]] } as never));
     const shorter = bodyInventory(formatBloggerHtml({ ...article, sections: [{ paragraphs: ["短い。"] }] } as never));
@@ -36,6 +36,8 @@ describe("rebuild inventory", () => {
     expect(inventoryLosses(before, shorter)[0]).toMatch(/^text /);
     const withTitle = bodyInventory(formatBloggerHtml({ ...article, workTitle: "作品" } as never));
     expect(inventoryLosses(before, withTitle)).toEqual([]);
+    const noLink = bodyInventory(formatBloggerHtml({ ...article, cta: { label: "詳細を確認", url: null } } as never));
+    expect(inventoryLosses(before, noLink)).toEqual(["links 1->0"]);
   });
 });
 
@@ -48,17 +50,18 @@ describe("keeping live text", () => {
     '<p class="blog-cta"><a href="https://video.dmm.co.jp/av/content/?id=midv00100">詳細を確認</a></p>',
   ].join("\n");
 
-  it("keeps every paragraph and aligns the CTAs and the work title with new posts", () => {
+  it("keeps every paragraph and puts the linked work title where the CTA buttons were", () => {
     const html = restyleLiveBody(live, "神業ハンドテク", CTA_URL)!;
     expect(articleProse(html)).toBe(articleProse(live));
     const fresh = formatBloggerHtml({ ...article, images: [], workTitle: "神業ハンドテク" } as never);
-    const freshCta = fresh.match(/<p class="blog-cta">[\s\S]*?<\/p>/)![0];
-    expect(html.match(/<p class="blog-cta">[\s\S]*?<\/p>/g)).toEqual([freshCta, freshCta]);
-    expect(bodyInventory(html).workTitle).toBe(1);
-    expect(html.indexOf("blog-work-title")).toBeLessThan(html.indexOf("blog-cta"));
+    const freshTitle = fresh.match(/<p class="blog-work-title">[\s\S]*?<\/p>/)![0];
+    expect(html.match(/<p class="blog-work-title">[\s\S]*?<\/p>/g)).toEqual([freshTitle]);
+    expect(html).not.toContain("blog-cta");
+    expect(html.indexOf("blog-work-title")).toBeGreaterThan(html.indexOf("公開中の本文です。"));
+    expect(html.indexOf("blog-work-title")).toBeLessThan(html.indexOf("二段落目。"));
   });
 
-  it("is idempotent, and leaves a post without the standard CTA alone", () => {
+  it("is idempotent, and leaves a post without a link to the work alone", () => {
     const once = restyleLiveBody(live, "作品", CTA_URL)!;
     expect(restyleLiveBody(once, "作品", CTA_URL)).toBe(once);
     expect(restyleLiveBody("<p>本文</p>", "作品", CTA_URL)).toBeNull();

@@ -223,10 +223,15 @@ export function createPrismaLlmRunStore(prisma: Prisma): LlmRunStore {
       );
     },
     async withLock(key, fn) {
-      return prisma.$transaction(async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`llm:${key}`}, 0))`;
-        return txContext.run(tx, fn);
-      });
+      // The gate runs several queries under the lock; over a slow link (an operator CLI through
+      // a DB tunnel) Prisma's default 5 s expired mid-check and the run failed (2026-10-25).
+      return prisma.$transaction(
+        async (tx) => {
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`llm:${key}`}, 0))`;
+          return txContext.run(tx, fn);
+        },
+        { timeout: 15_000 },
+      );
     },
     async getCircuit(scopeType, scopeKey) {
       const row = await db().llmCircuitState.findUnique({
