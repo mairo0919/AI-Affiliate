@@ -389,13 +389,17 @@ function checkOfficialCopy(
   officialDescription: string,
 ): ArticlePlanComplianceFinding[] {
   if (!officialDescription.trim()) return [];
-  const performerNames = articlePlanAllFacts(plan).filter(
-    (f) => articleSemanticRole({ fact: f }) === "WHO" || isLikelyPerformerNameToken(f),
+  // Names and short planned facts (counts, series names) may be written exactly; they are not pastes.
+  const exactFacts = articlePlanAllFacts(plan).filter(
+    (f) =>
+      articleSemanticRole({ fact: f }) === "WHO" ||
+      isLikelyPerformerNameToken(f) ||
+      f.trim().length <= 24,
   );
   const text = [article.lead ?? "", ...article.sections.flatMap((s) => s.paragraphs)].join("\n");
   const findings: ArticlePlanComplianceFinding[] = [];
   for (const sentence of splitIntoSentences(text)) {
-    const run = longestTitleSliceInPost(sentence, officialDescription, performerNames);
+    const run = longestTitleSliceInPost(sentence, officialDescription, exactFacts);
     if (run >= WP_BODY_OFFICIAL_RUN_LIMIT) {
       findings.push({
         code: "PLAN_OFFICIAL_COPY",

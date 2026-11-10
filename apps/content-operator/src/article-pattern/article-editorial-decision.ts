@@ -37,6 +37,8 @@ const NOUN_CLASS = "[\\u3040-\\u309f\\u30a0-\\u30ff\\u4e00-\\u9fff・ー々A-Za-
 function lacksEditorialFrame(title: string): boolean {
   // 「で/を/へ」+ continuation, quotes, question, or clausal hooks mark editorial cuts.
   if (/[をへ「」『』？?！!]/.test(title)) return false;
+  // The 「search words｜hook」 shape is the cut itself; the hook may end on a noun (〜の支配シーン).
+  if (/｜.{8,}/u.test(title)) return false;
   if (/で[^のと・]/.test(title)) return false;
   if (/(?:から|まで|より|について)/u.test(title)) return false;
   if (

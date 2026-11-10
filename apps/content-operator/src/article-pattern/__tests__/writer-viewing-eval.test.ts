@@ -478,3 +478,11 @@ describe("body that pastes the official description", () => {
     expect(result.findings.filter((f) => f.code === "PLAN_OFFICIAL_COPY")).toEqual([]);
   });
 });
+
+describe("「search words｜hook」 headline whose hook ends on a noun", () => {
+  it("is not a headline without an editorial angle (2026-11 rewrite of post 46)", async () => {
+    const { lowValueHeadlineDefects } = await import("../article-editorial-decision.js");
+    expect(lowValueHeadlineDefects({ title: "川上奈々美の痴女ベスト｜淫語と責めが絡む五時間の支配シーン" })).toEqual([]);
+    expect(lowValueHeadlineDefects({ title: "川上奈々美の痴女ベスト" }).length).toBeGreaterThan(0);
+  });
+});
