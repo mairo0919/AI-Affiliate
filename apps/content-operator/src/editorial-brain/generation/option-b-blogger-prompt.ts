@@ -22,9 +22,19 @@ import { formatWritingQualityGuidanceForWriter } from "./success-experience.js";
 export function toWriterVisibleArticlePlan(plan: unknown): unknown {
   if (!plan || typeof plan !== "object") return plan;
   const p = plan as Record<string, unknown>;
+  // FANZA genre tags stay on the post as taxonomy. Handed to the Writer as facts to cover, they
+  // came back as data lines (「淫乱・ハード系のジャンルに属しています」, user review 2026-11-10).
+  const slots = Array.isArray(p.body) ? (p.body as Array<Record<string, unknown>>) : [];
+  const withoutGenreTags = (slot: Record<string, unknown>): unknown[] => {
+    const facts = Array.isArray(slot.facts) ? slot.facts : [];
+    const types = Array.isArray(slot.factSourceTypes) ? slot.factSourceTypes : [];
+    return facts.filter((_, i) => types[i] !== "GENRE_TAG");
+  };
+  const dropGenreTags = slots.some((slot) => withoutGenreTags(slot).length > 0);
   const body = Array.isArray(p.body)
-    ? (p.body as Array<Record<string, unknown>>).map((slot) => {
+    ? slots.map((slot) => {
         const next = { ...slot };
+        if (dropGenreTags) next.facts = withoutGenreTags(slot);
         delete next.factSourceTypes;
         // Keep presentationPurpose lightly if present — optional grouping hint only.
         return next;
@@ -64,7 +74,12 @@ export function toWriterVisibleArticlePlan(plan: unknown): unknown {
 /** Slim EXECUTION for Writer: FACT safety fields only — no taxonomy lecture notes. */
 export function toWriterVisibleExecution(execution: unknown): unknown {
   if (!Array.isArray(execution)) return execution;
-  return execution.map((row) => {
+  const isGenreTag = (row: unknown) =>
+    Boolean(row && typeof row === "object" && (row as Record<string, unknown>).articleRole === "GENRE");
+  const rows = execution.some((row) => !isGenreTag(row))
+    ? execution.filter((row) => !isGenreTag(row))
+    : execution;
+  return rows.map((row) => {
     if (!row || typeof row !== "object") return row;
     const r = row as Record<string, unknown>;
     return {

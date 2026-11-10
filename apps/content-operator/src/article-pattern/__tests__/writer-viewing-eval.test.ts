@@ -486,3 +486,28 @@ describe("「search words｜hook」 headline whose hook ends on a noun", () => {
     expect(lowValueHeadlineDefects({ title: "川上奈々美の痴女ベスト" }).length).toBeGreaterThan(0);
   });
 });
+
+describe("FANZA genre tags in the Writer prompt", () => {
+  it("are not handed to the Writer as facts to cover (2026-11 post 509: 「淫乱・ハード系のジャンルに属しています」)", async () => {
+    const { toWriterVisibleArticlePlan, toWriterVisibleExecution } = await import(
+      "../../editorial-brain/generation/option-b-blogger-prompt.js"
+    );
+    const plan = toWriterVisibleArticlePlan({
+      schemaVersion: 1,
+      body: [
+        {
+          job: "body_facts",
+          facts: ["河北彩花", "淫乱・ハード系", "完全ノーカット5本番"],
+          factSourceTypes: ["ACTRESS", "GENRE_TAG", "OFFICIAL_DESCRIPTION"],
+        },
+      ],
+    }) as { body: Array<{ facts: string[]; factSourceTypes?: unknown }> };
+    expect(plan.body[0]!.facts).toEqual(["河北彩花", "完全ノーカット5本番"]);
+    expect(plan.body[0]!.factSourceTypes).toBeUndefined();
+    const rows = toWriterVisibleExecution([
+      { fact: "河北彩花", articleRole: "WHO" },
+      { fact: "淫乱・ハード系", articleRole: "GENRE" },
+    ]) as Array<{ fact: string }>;
+    expect(rows.map((r) => r.fact)).toEqual(["河北彩花"]);
+  });
+});

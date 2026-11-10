@@ -33,8 +33,10 @@ export function wpContentIdentity(input: {
  * 3: headline shape 「search words｜hook」 (2026-10-25).
  * 4: short hook without product-label endings; body may not paste the official description (2026-11-10).
  * 5: 「｜」 hooks may end on a noun; short planned facts are not counted as pastes (2026-11-10).
+ * 6: no catalog labels or vague hooks in headlines; bodies introduce the work instead of reading data aloud (2026-11-10).
+ * 7: genre tags are no longer handed to the Writer as facts to cover (2026-11-10).
  */
-export const WP_ARTICLE_ROUTE_VERSION = "5";
+export const WP_ARTICLE_ROUTE_VERSION = "7";
 
 export function wpArticleFingerprint(input: {
   cid: string;
