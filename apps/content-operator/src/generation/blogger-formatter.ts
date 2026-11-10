@@ -55,22 +55,14 @@ export function formatBloggerHtml(input: {
     blocks.push(`<p>${escapeHtml(p)}</p>`);
   }
 
-  // 4. Official work title, linked to the work page
+  // 4. The link to the work: its official title when known, otherwise the CTA label
   const workTitle = input.workTitle?.trim();
-  if (workTitle) {
-    blocks.push(renderWorkTitleBlock(workTitle, input.cta.url));
-  }
+  blocks.push(workTitle ? renderWorkTitleBlock(workTitle, input.cta.url) : renderCtaBlock(input.cta));
 
-  // 5. Mid CTA (before sample gallery)
-  blocks.push(renderCtaBlock(input.cta));
-
-  // 6. Sample images (half width); no figcaption unless image has grounded caption SSOT
+  // 5. Sample images (half width); no figcaption unless image has grounded caption SSOT
   for (const image of auxiliaries) {
     blocks.push(renderSampleFigure(image));
   }
-
-  // 7. Bottom CTA
-  blocks.push(renderCtaBlock(input.cta));
 
   const freshness = input.freshnessDisclaimer ?? FRESHNESS_DISCLAIMER;
   const disclosure = input.disclosure ?? "本記事はアフィリエイト広告を含む場合があります。";

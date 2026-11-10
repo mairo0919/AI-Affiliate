@@ -32,7 +32,7 @@ const sample = (n: number): ArticleImage => ({
 });
 
 describe("formatBloggerHtml R62 layout", () => {
-  it("orders hero → body → mid CTA → samples → bottom CTA (leadless)", () => {
+  it("orders hero → body → one CTA → samples (leadless)", () => {
     const html = formatBloggerHtml({
       title: "t",
       sections: [
@@ -48,23 +48,20 @@ describe("formatBloggerHtml R62 layout", () => {
     const body2Idx = html.indexOf("本文2");
     const firstCtaIdx = html.indexOf("作品詳細を見る");
     const sampleIdx = html.indexOf("halt00091jp-1.jpg");
-    const lastCtaIdx = html.lastIndexOf("作品詳細を見る");
 
     expect(heroIdx).toBeGreaterThan(-1);
     expect(body1Idx).toBeGreaterThan(heroIdx);
     expect(body2Idx).toBeGreaterThan(body1Idx);
     expect(firstCtaIdx).toBeGreaterThan(body2Idx);
     expect(sampleIdx).toBeGreaterThan(firstCtaIdx);
-    expect(lastCtaIdx).toBeGreaterThan(sampleIdx);
-    expect(html.match(/作品詳細を見る/g)?.length).toBe(2);
+    expect(html.match(/作品詳細を見る/g)?.length).toBe(1);
     expect(html).not.toContain("<h2>");
     expect(html).toContain(`class="${BLOG_HERO_CLASS}"`);
     expect(html).toContain(`class="${BLOG_SAMPLE_CLASS}"`);
     expect(html).toContain(`class="${BLOG_CTA_CLASS}"`);
-    expect(html.match(new RegExp(`class="${BLOG_CTA_CLASS}"`, "g"))?.length).toBe(2);
+    expect(html.match(new RegExp(`class="${BLOG_CTA_CLASS}"`, "g"))?.length).toBe(1);
     expect(html.indexOf(BLOG_HERO_CLASS)).toBeLessThan(html.indexOf(BLOG_CTA_CLASS));
     expect(html.indexOf(`class="${BLOG_SAMPLE_CLASS}"`)).toBeGreaterThan(firstCtaIdx);
-    expect(html.lastIndexOf(BLOG_CTA_CLASS)).toBeGreaterThan(sampleIdx);
   });
 
   it("legacy: still emits lead paragraph when present", () => {
