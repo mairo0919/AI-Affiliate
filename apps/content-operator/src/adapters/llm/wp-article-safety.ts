@@ -35,8 +35,9 @@ export function wpContentIdentity(input: {
  * 5: 「｜」 hooks may end on a noun; short planned facts are not counted as pastes (2026-11-10).
  * 6: no catalog labels or vague hooks in headlines; bodies introduce the work instead of reading data aloud (2026-11-10).
  * 7: genre tags are no longer handed to the Writer as facts to cover (2026-11-10).
+ * 8: a body sentence counts as a paste from 30 shared characters, not 20 (2026-11-11).
  */
-export const WP_ARTICLE_ROUTE_VERSION = "7";
+export const WP_ARTICLE_ROUTE_VERSION = "8";
 
 export function wpArticleFingerprint(input: {
   cid: string;

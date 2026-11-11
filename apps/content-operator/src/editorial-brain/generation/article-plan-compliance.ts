@@ -375,8 +375,9 @@ function checkTitleAuthority(
  * Progression = body realizes planned body facts that lead did not already realize.
  * Same-fact reuse is allowed; missing new planned information is not.
  */
-/** A clause this long shared with the official description is a pasted sentence, not a reused fact phrase. */
-export const WP_BODY_OFFICIAL_RUN_LIMIT = 20;
+/** A clause this long shared with the official description is a pasted sentence, not a reused fact phrase.
+ * 20 also caught natural reuse of a short official phrase (2026-11-11 rewrite of post 456). */
+export const WP_BODY_OFFICIAL_RUN_LIMIT = 30;
 
 /**
  * 2026-10 trial (post 346): the Writer pasted an official sentence into its own and the result

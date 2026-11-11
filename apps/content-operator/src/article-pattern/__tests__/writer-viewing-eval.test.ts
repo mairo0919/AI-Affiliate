@@ -453,7 +453,7 @@ describe("body that pastes the official description", () => {
     productTitle: "デカ尻OL NTR社内不倫 宮城りえ",
     title: { job: "editorial_headline" as const, facts: ["宮城りえ", "NTR社内不倫"] },
     lead: { job: "opening_facts" as const, facts: [] },
-    body: [{ job: "body_facts" as const, facts: ["宮城りえ", "パワハラ上司"] }],
+    body: [{ job: "body_facts" as const, facts: ["宮城りえ"] }],
   };
   const check = (body: string) =>
     validateArticlePlanCompliance({

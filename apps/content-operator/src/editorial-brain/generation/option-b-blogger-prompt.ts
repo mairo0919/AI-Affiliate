@@ -203,7 +203,7 @@ export function buildOptionBBloggerGeneratorPrompt(input: {
     JSON.stringify(plan),
     input.officialDescription?.trim()
       ? [
-          "OFFICIAL_DESCRIPTION (context only — read it to understand how the planned facts relate, then write in your own words. Do not copy its sentences: a sentence that carries 20 or more consecutive characters of it is rejected. Concrete facts still come from ARTICLE_PLAN):",
+          "OFFICIAL_DESCRIPTION (context only — read it to understand how the planned facts relate, then write in your own words. Do not copy its sentences: a sentence that carries 30 or more consecutive characters of it is rejected. Concrete facts still come from ARTICLE_PLAN):",
           input.officialDescription.trim(),
         ].join("\n")
       : "",
