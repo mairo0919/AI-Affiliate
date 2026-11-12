@@ -450,9 +450,10 @@ export async function seedP45Prompts(repo: LifecycleRepository): Promise<void> {
     {
       identifier: "review.writing-quality",
       taskType: "REVIEW",
-      body: "Writing quality review for title={{title}} body={{body}}. Evaluate GROUNDING, CONTENT_ALIGNMENT, NATURAL_JAPANESE, EDITORIAL_ANGLE_CLARITY, INFORMATION_VALUE, DISTINCTIVENESS, ARTICLE_HEADLINE_QUALITY. Fail grounded-but-low-value headlines: PACKAGE_COPY_REPHRASE, FACT_ASSEMBLY (performer+keyword glue / fact concatenation), CATALOG_SHELL, GENERIC_LABEL, MECHANICAL_TEMPLATE. Being factual or containing a performer name is NOT enough to PASS the title. FAIL the title when the part after 「｜」 ends on a label for the product (〜総集編, 〜を収録, 〜作品) instead of what happens or what sets the work apart. NATURAL_JAPANESE covers the body voice: FAIL the body when a sentence only reads a data item aloud (収録時間は75分です, 〜ジャンルにも属しています), when it walks through the official scenes one after another instead of the moments that set the work apart, or when sentence after sentence ends with 〜が描かれています/〜が収録されています. Quote the offending sentence in the finding.",
+      // The title has its own code checks; with the title in scope this review failed every headline (2026-11-13).
+      body: "Writing quality review of this article body: {{body}}. FAIL only when you can quote a sentence that does one of these: (1) only reads a data item aloud (収録時間は75分です, 〜ジャンルにも属しています); (2) is one step of a walk through the official scenes one after another, with no sentence saying what sets the work apart; (3) is the third or later sentence in a row ending with 〜が描かれています/〜が収録されています. Otherwise PASS. Quote the sentence in the finding.",
       systemInstruction:
-        "Return only this JSON: {\"result\": \"passed\" or \"failed\", \"findings\": [{\"message\": \"...\"}]}. Judge the article; never rewrite it. Title must be an article headline with editorial value, not package-copy shortening or fact assembly. Reject unnatural performer+genre glue. The body must read like a person introducing the work to a friend, not a catalog readout.",
+        "Return only this JSON: {\"result\": \"passed\" or \"failed\", \"findings\": [{\"message\": \"...\"}]}. Judge the body; never rewrite it, and do not judge the title.",
     },
     {
       identifier: "revision.partial",
