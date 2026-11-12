@@ -36,8 +36,9 @@ export function wpContentIdentity(input: {
  * 6: no catalog labels or vague hooks in headlines; bodies introduce the work instead of reading data aloud (2026-11-10).
  * 7: genre tags are no longer handed to the Writer as facts to cover (2026-11-10).
  * 8: a body sentence counts as a paste from 30 shared characters, not 20 (2026-11-11).
+ * 9: the writing review fails data-line, scene-walk and label-ending output (2026-11-13).
  */
-export const WP_ARTICLE_ROUTE_VERSION = "8";
+export const WP_ARTICLE_ROUTE_VERSION = "9";
 
 export function wpArticleFingerprint(input: {
   cid: string;

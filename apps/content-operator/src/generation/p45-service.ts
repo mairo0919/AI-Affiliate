@@ -450,9 +450,9 @@ export async function seedP45Prompts(repo: LifecycleRepository): Promise<void> {
     {
       identifier: "review.writing-quality",
       taskType: "REVIEW",
-      body: "Writing quality review for title={{title}} body={{body}}. Evaluate GROUNDING, CONTENT_ALIGNMENT, NATURAL_JAPANESE, EDITORIAL_ANGLE_CLARITY, INFORMATION_VALUE, DISTINCTIVENESS, ARTICLE_HEADLINE_QUALITY. Fail grounded-but-low-value headlines: PACKAGE_COPY_REPHRASE, FACT_ASSEMBLY (performer+keyword glue / fact concatenation), CATALOG_SHELL, GENERIC_LABEL, MECHANICAL_TEMPLATE. Being factual or containing a performer name is NOT enough to PASS the title.",
+      body: "Writing quality review for title={{title}} body={{body}}. Evaluate GROUNDING, CONTENT_ALIGNMENT, NATURAL_JAPANESE, EDITORIAL_ANGLE_CLARITY, INFORMATION_VALUE, DISTINCTIVENESS, ARTICLE_HEADLINE_QUALITY. Fail grounded-but-low-value headlines: PACKAGE_COPY_REPHRASE, FACT_ASSEMBLY (performer+keyword glue / fact concatenation), CATALOG_SHELL, GENERIC_LABEL, MECHANICAL_TEMPLATE. Being factual or containing a performer name is NOT enough to PASS the title. FAIL the title when the part after 「｜」 ends on a label for the product (〜総集編, 〜を収録, 〜作品) instead of what happens or what sets the work apart. NATURAL_JAPANESE covers the body voice: FAIL the body when a sentence only reads a data item aloud (収録時間は75分です, 〜ジャンルにも属しています), when it walks through the official scenes one after another instead of the moments that set the work apart, or when sentence after sentence ends with 〜が描かれています/〜が収録されています. Quote the offending sentence in the finding.",
       systemInstruction:
-        "Return JSON review result. Title must be an article headline with editorial value, not package-copy shortening or fact assembly. Reject unnatural performer+genre glue.",
+        "Return JSON review result. Title must be an article headline with editorial value, not package-copy shortening or fact assembly. Reject unnatural performer+genre glue. The body must read like a person introducing the work to a friend, not a catalog readout.",
     },
     {
       identifier: "revision.partial",
