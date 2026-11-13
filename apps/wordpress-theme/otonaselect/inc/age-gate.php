@@ -64,7 +64,9 @@ function otonaselect_age_gate_is_crawler(): bool {
 		. 'Googlebot|Google-InspectionTool|Storebot-Google|AdsBot-Google|'
 		. 'bingbot|BingPreview|Slurp|DuckDuckBot|Baiduspider|YandexBot|'
 		. 'facebookexternalhit|Facebot|Twitterbot|LinkedInBot|Slackbot|'
-		. 'Discordbot|TelegramBot|WhatsApp|Applebot|PetalBot|Bytespider'
+		. 'Discordbot|TelegramBot|WhatsApp|Applebot|PetalBot|Bytespider|'
+		// AI search crawlers and AI answer fetchers (2026-11-14); training-only crawlers are not listed.
+		. 'OAI-SearchBot|ChatGPT-User|PerplexityBot|Perplexity-User|Claude-SearchBot|Claude-User|DuckAssistBot'
 		. '/i',
 		$ua
 	);

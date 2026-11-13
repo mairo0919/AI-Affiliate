@@ -2,7 +2,7 @@
 /**
  * Plugin Name: OtonaSelect Age Gate
  * Description: Site-wide 18+ age confirmation (SSOT). Self-contained single file. Does not load theme age-gate.php.
- * Version: 1.0.3
+ * Version: 1.0.4
  * Requires at least: 6.0
  * Requires PHP: 7.4
  * Author: Otona Select
@@ -74,6 +74,9 @@ function otonaselect_age_cookie_ttl_deny() {
 
 if (!function_exists('otonaselect_age_gate_is_crawler')) {
 /**
+ * AI search crawlers and the fetchers behind AI answers were shown the age gate (2026-11-14);
+ * training-only crawlers are not listed.
+ *
  * @return bool
  */
 function otonaselect_age_gate_is_crawler() {
@@ -82,7 +85,7 @@ function otonaselect_age_gate_is_crawler() {
 		return false;
 	}
 	return (bool) preg_match(
-		'/Googlebot|Google-InspectionTool|Storebot-Google|AdsBot-Google|bingbot|BingPreview|Slurp|DuckDuckBot|Baiduspider|YandexBot|facebookexternalhit|Facebot|Twitterbot|LinkedInBot|Slackbot|Discordbot|TelegramBot|WhatsApp|Applebot|PetalBot|Bytespider/i',
+		'/Googlebot|Google-InspectionTool|Storebot-Google|AdsBot-Google|bingbot|BingPreview|Slurp|DuckDuckBot|Baiduspider|YandexBot|facebookexternalhit|Facebot|Twitterbot|LinkedInBot|Slackbot|Discordbot|TelegramBot|WhatsApp|Applebot|PetalBot|Bytespider|OAI-SearchBot|ChatGPT-User|PerplexityBot|Perplexity-User|Claude-SearchBot|Claude-User|DuckAssistBot/i',
 		$ua
 	);
 }

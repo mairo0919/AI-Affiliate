@@ -3,11 +3,14 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-/** Mirrors theme/plugin crawler allowlist used to skip Age Gate for SEO bots. */
+/** The crawler allowlist the active age-gate plugin ships (read from the plugin, not a copy). */
 function isAgeGateCrawler(ua: string): boolean {
-  return /Googlebot|Google-InspectionTool|Storebot-Google|AdsBot-Google|bingbot|BingPreview|Slurp|DuckDuckBot|Baiduspider|YandexBot|facebookexternalhit|Facebot|Twitterbot|LinkedInBot|Slackbot|Discordbot|TelegramBot|WhatsApp|Applebot|PetalBot|Bytespider/i.test(
-    ua,
+  const php = readFileSync(
+    resolve(dirname(fileURLToPath(import.meta.url)), "../../../../wordpress-plugins/otonaselect-age-gate/otonaselect-age-gate.php"),
+    "utf8",
   );
+  const pattern = /preg_match\(\s*'\/([^']+)\/i'/.exec(php)![1]!;
+  return new RegExp(pattern, "i").test(ua);
 }
 
 describe("Age Gate crawler detection", () => {
@@ -17,6 +20,14 @@ describe("Age Gate crawler detection", () => {
     );
     expect(isAgeGateCrawler("facebookexternalhit/1.1")).toBe(true);
     expect(isAgeGateCrawler("Twitterbot/1.0")).toBe(true);
+  });
+
+  it("allows AI search crawlers and AI answer fetchers, not training-only crawlers", () => {
+    expect(isAgeGateCrawler("Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; OAI-SearchBot/1.0; +https://openai.com/searchbot)")).toBe(true);
+    expect(isAgeGateCrawler("Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; ChatGPT-User/1.0")).toBe(true);
+    expect(isAgeGateCrawler("Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; PerplexityBot/1.0)")).toBe(true);
+    expect(isAgeGateCrawler("Mozilla/5.0 (compatible; Claude-SearchBot/1.0)")).toBe(true);
+    expect(isAgeGateCrawler("Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; GPTBot/1.1)")).toBe(false);
   });
 
   it("does not treat normal browsers as crawlers", () => {
