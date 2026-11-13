@@ -41,7 +41,12 @@ export function toWriterVisibleArticlePlan(plan: unknown): unknown {
         if (focus.size > 0) {
           const facts = Array.isArray(next.facts) ? (next.facts as string[]) : [];
           next.facts = facts.filter((f) => focus.has(f));
-          const optional = facts.filter((f) => !focus.has(f));
+          // A runtime offered as optional context still came back as its own sentence
+          // (「収録時間は75分です。」, post 862 after route 10); it stays only when the decision rests on it.
+          const allFacts = Array.isArray(slot.facts) ? (slot.facts as string[]) : [];
+          const types = Array.isArray(slot.factSourceTypes) ? slot.factSourceTypes : [];
+          const isQuantity = (f: string) => types[allFacts.indexOf(f)] === "QUANTITY";
+          const optional = facts.filter((f) => !focus.has(f) && !isQuantity(f));
           if (optional.length > 0) next.optionalFacts = optional;
         }
         delete next.factSourceTypes;
@@ -95,24 +100,30 @@ export function toWriterVisibleExecution(execution: unknown, plan?: unknown): un
     ? execution.filter((row) => !isGenreTag(row))
     : execution;
   const focus = writerFocusBodyFacts(plan);
-  return rows.map((row) => {
-    if (!row || typeof row !== "object") return row;
+  const isOptionalBody = (r: Record<string, unknown>) =>
+    focus.size > 0 && r.slot === "body" && !focus.has(String(r.fact));
+  return rows.flatMap((row) => {
+    if (!row || typeof row !== "object") return [row];
     const r = row as Record<string, unknown>;
-    const optional = focus.size > 0 && r.slot === "body" && !focus.has(String(r.fact));
-    return {
-      ...(optional ? { optional: true } : {}),
-      contributionId: r.contributionId,
-      slot: r.slot,
-      fact: r.fact,
-      executionMode: r.executionMode,
-      requiredAnchors: r.requiredAnchors,
-      requiredRelations: r.requiredRelations,
-      mustPreserve: r.mustPreserve,
-      allowed: r.allowed,
-      notAllowed: r.notAllowed,
-      ...(r.informationAxis ? { informationAxis: r.informationAxis } : {}),
-      ...(r.articleRole ? { articleRole: r.articleRole } : {}),
-    };
+    const optional = isOptionalBody(r);
+    // Same reason as optional runtimes in the plan view: offered at all, it became its own sentence.
+    if (optional && r.articleRole === "VOLUME") return [];
+    return [
+      {
+        ...(optional ? { optional: true } : {}),
+        contributionId: r.contributionId,
+        slot: r.slot,
+        fact: r.fact,
+        executionMode: r.executionMode,
+        requiredAnchors: r.requiredAnchors,
+        requiredRelations: r.requiredRelations,
+        mustPreserve: r.mustPreserve,
+        allowed: r.allowed,
+        notAllowed: r.notAllowed,
+        ...(r.informationAxis ? { informationAxis: r.informationAxis } : {}),
+        ...(r.articleRole ? { articleRole: r.articleRole } : {}),
+      },
+    ];
   });
 }
 

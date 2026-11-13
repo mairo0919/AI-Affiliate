@@ -525,6 +525,7 @@ describe("body facts the editorial decision rests on", () => {
       {
         job: "body_facts",
         facts: ["北野未奈", "体を芯から熱くする過剰なオイル", "部屋に充満する怪しげな香り、体を芯から熱くする過剰なオイル", "148分", "潮吹き", "愛する夫のために始めたエステは妊娠確定"],
+        factSourceTypes: ["IDENTITY", "SCENE", "OFFICIAL_DESCRIPTION", "QUANTITY", "OTHER", "SCENE"],
       },
     ],
   };
@@ -539,15 +540,16 @@ describe("body facts the editorial decision rests on", () => {
       "部屋に充満する怪しげな香り、体を芯から熱くする過剰なオイル",
       "愛する夫のために始めたエステは妊娠確定",
     ]);
-    expect(plan.body[0]!.optionalFacts).toEqual(["体を芯から熱くする過剰なオイル", "148分", "潮吹き"]);
+    expect(plan.body[0]!.optionalFacts).toEqual(["体を芯から熱くする過剰なオイル", "潮吹き"]);
     const rows = toWriterVisibleExecution(
       [
         { fact: "148分", slot: "body", articleRole: "VOLUME" },
+        { fact: "潮吹き", slot: "body", articleRole: "FEATURE" },
         { fact: "北野未奈", slot: "body", articleRole: "WHO" },
       ],
       raw,
     ) as Array<{ fact: string; optional?: boolean }>;
-    expect(rows.map((r) => r.optional ?? false)).toEqual([true, false]);
+    expect(rows.map((r) => [r.fact, r.optional ?? false])).toEqual([["潮吹き", true], ["北野未奈", false]]);
   });
 
   it("do not make leaving out the runtime an omission", () => {

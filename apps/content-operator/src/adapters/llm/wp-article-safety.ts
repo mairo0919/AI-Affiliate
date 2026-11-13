@@ -38,8 +38,9 @@ export function wpContentIdentity(input: {
  * 8: a body sentence counts as a paste from 30 shared characters, not 20 (2026-11-11).
  * 9: the writing review fails data-line, scene-walk and label-ending output (2026-11-13).
  * 10: the Writer covers only the body facts the editorial decision rests on; the rest is optional (2026-11-13).
+ * 11: a runtime the decision does not rest on is not offered to the Writer at all (2026-11-13).
  */
-export const WP_ARTICLE_ROUTE_VERSION = "10";
+export const WP_ARTICLE_ROUTE_VERSION = "11";
 
 export function wpArticleFingerprint(input: {
   cid: string;
