@@ -122,7 +122,8 @@ export function evaluateStockArticleQualityGate(input: {
   if (
     body > 0 &&
     body < 420 &&
-    (castShape === "BEST_COMPILATION" || actors.length >= 2 || catalog.genres.length >= 3)
+    // Not genre count: nearly every FANZA work has 3+ genres, so single-performer posts failed at 330-370 (2026-11-13).
+    (castShape === "BEST_COMPILATION" || actors.length >= 2)
   ) {
     return { ok: false, reason: `THIN_ARTICLE_FOR_RICH_CAST:body=${body}` };
   }

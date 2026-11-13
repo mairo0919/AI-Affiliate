@@ -290,3 +290,31 @@ describe("repair quality guard", () => {
     expect("buildEvidenceEditorialTitle" in mod).toBe(false);
   });
 });
+
+describe("thin article rule", () => {
+  // Post 866 trial (2026-11-13): a 367-character single-performer body failed only because the work had 3+ genres.
+  const productTitle = "旦那を愛しているのに…危険日に、妊活媚薬エステで全身痙攣 北野未奈";
+  const body =
+    "<p>北野未奈が登場する本作は、妊活を目的にエステを訪れる女性の体験が描かれています。夫との子作りを願い始めたエステで、部屋に充満する怪しげな香りや体を芯から熱くする過剰なオイルが使われます。</p>" +
+    "<p>施術が進むにつれて、過剰なほどのメスホルモンが分泌され、気づけば体は敏感になり、愛液が溢れ出す状態に。無理やり挿入されたチンポを離さないほどの変化も現れます。</p>" +
+    "<p>開ききった子宮口に濁流中出し13発という内容も含まれています。愛する夫のために始めたエステは妊娠確定という展開が描かれています。</p>" +
+    "<p>結婚して数年、子宝に恵まれず悩んでいた未奈は、どうしても夫との子供が欲しいという思いから、藁にも縋る気持ちで近所の妊活エステを訪れます。</p>";
+  const gate = (genres: string[], actresses: string[]) =>
+    evaluateStockArticleQualityGate({
+      productTitle,
+      rawData: {
+        title: productTitle,
+        iteminfo: { actress: actresses.map((name) => ({ name })), genre: genres.map((name) => ({ name })) },
+      },
+      structuredContent: { bodyHtml: body },
+      writerTitle: "北野未奈 妊活エステ｜怪しげな香りと過剰なオイルに包まれる人妻",
+    });
+
+  it("does not ask a single-performer work for a rich-cast length because of its genres", () => {
+    expect(gate(["人妻・主婦", "巨乳", "中出し", "潮吹き"], ["北野未奈"]).reason ?? "").not.toMatch(/THIN_ARTICLE/);
+  });
+
+  it("still asks a multi-performer work for the longer body", () => {
+    expect(gate(["人妻・主婦"], ["北野未奈", "三比菜々美"]).reason ?? "").toMatch(/THIN_ARTICLE_FOR_RICH_CAST/);
+  });
+});
