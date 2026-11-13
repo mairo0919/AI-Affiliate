@@ -169,7 +169,8 @@ export async function rebuildPublishedPosts(deps: {
   const targets = await prisma.publicationTarget.findMany({
     where: {
       platform: "WORDPRESS",
-      status: "PUBLISHED",
+      // Scheduled posts already exist in WordPress as future posts; updating keeps their date and status.
+      status: { in: ["PUBLISHED", "SCHEDULED"] },
       publishedExternalId: deps.externalIds?.length ? { in: deps.externalIds } : { not: null },
     },
     select: { publishedExternalId: true, platformMetadata: true, contentVersionId: true },
