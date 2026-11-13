@@ -324,14 +324,8 @@ export function parseEditorialDecisionJson(
     if (!angle || angle.length < 4) return null;
     // Reject if model returned a finished title-looking short glue phrase as angle
     if (looksLikePerformerKeywordGlue(angle) && angle.length <= 28) return null;
-    const voice = `${angle}${readerHook}${whyThisWork}`;
-    if (
-      /(?:おすすめ|オススメ|味わ[えうい]|楽しめ|体験でき|印象的|魅了|見逃せ|たまらな|臨場感|存分に|魅力的|堪能|必見|革命的|濃密|圧巻|刺激的|禁断|快楽|屈辱|決め手|差別化)/u.test(
-        voice,
-      )
-    ) {
-      return null;
-    }
+    // No word list here: one 「体験できる」 in these Writer-only notes discarded the whole decision for a
+    // title-pasting fallback (posts 856/862 trial, 2026-11-14). The Writer prompt and reviews guard the prose.
     return {
       angle: angle.slice(0, 160),
       readerHook: (readerHook || angle).slice(0, 160),

@@ -138,6 +138,13 @@ describe("article editorial headline (not fact assembly)", () => {
     expect(d?.supportingEvidenceRefs).toContain("再会");
   });
 
+  it("keeps a decision whose Writer notes say 体験できる (post 862 trial, 2026-11-14)", () => {
+    const d = parseEditorialDecisionJson(
+      `{"angle":"結婚式二次会後のワンナイトを描く","readerHook":"密かな逢瀬を体験できるストーリー","whyThisWork":"初VR出演","supportingEvidenceRefs":["結婚式の二次会終わり"]}`,
+    );
+    expect(d?.angle).toBe("結婚式二次会後のワンナイトを描く");
+  });
+
   it("fallback editorial decision is free-text cut, not a title phrase", () => {
     const d = buildDeterministicEditorialDecisionFallback({
       productTitle: "公式ロングタイトル",
