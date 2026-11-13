@@ -70,12 +70,14 @@ describe("R156 material restore", () => {
     );
   });
 
-  it("halt title is performer + title-safe facet — not name-only; unsafe title stays out of body overview", () => {
+  // Only a character-window cut (「…Z世代部下のボ」) used to fill the second title fact here (2026-11-13).
+  it("halt title keeps the performer and no mid-word cut; unsafe title stays out of body overview", () => {
     expect(isUnsafeTitleExecutionTarget(HALT_TITLE)).toBe(true);
     const { plan } = planFor(HALT_TITLE, HALT_DESC, ["北野未奈"]);
     expect(plan.title.facts).toContain("北野未奈");
-    expect(plan.title.facts.length).toBeGreaterThan(1);
-    expect(plan.title.facts.join("")).not.toBe("北野未奈");
+    const sentence = "今日も終電過ぎまで残業に付き合うダメなZ世代部下のボク";
+    const cut = (f: string) => f !== sentence && f.length >= 6 && sentence.startsWith(f);
+    expect([...plan.title.facts, ...plan.body.flatMap((b) => b.facts)].some(cut)).toBe(false);
     expect(plan.title.facts.some(isUnsafeTitleExecutionTarget)).toBe(false);
     expect(plan.title.facts.some((f) => /^halt$/i.test(f))).toBe(false);
     expect(plan.lead.facts).toEqual([]);

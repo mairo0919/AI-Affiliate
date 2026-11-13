@@ -166,3 +166,23 @@ describe("title.facts SOURCE theme retention", () => {
     }
   });
 });
+
+// Post 866 (2026-11-13): character-count cuts of the title, the series and a blurb sentence
+// reached the Writer as facts (「…悪徳デカマラ絶」「…注がれてしま」「…体を芯から熱」).
+describe("no character-count cuts become plan facts", () => {
+  const title =
+    "旦那を愛しているのに…危険日に、妊活媚薬エステで全身痙攣・膣収縮・感じ過ぎて開きっぱなしの子宮口に悪徳デカマラ絶倫チ●ポ中出し13発も注がれてしまったワタシ…。 北野未奈";
+  const series =
+    "旦那を愛しているのに…危険日に、妊活媚薬エステで全身痙攣・膣収縮・感じ過ぎて開きっぱなしの子宮口に悪徳デカマラ絶倫チ●ポ中出し○発も注がれてしまったワタシ…。";
+  const description =
+    "結婚して数年、子宝に恵まれず悩んでいた未奈。部屋に充満する怪しげな香り、体を芯から熱くする過剰なオイル…施術師の匠な手技…。過剰な程のメスホルモンが分泌され、気づけばキッツキツのマンコから溢れ出る愛液。";
+
+  it("keeps only whole official phrases", () => {
+    const { plan, claims } = planFor({ productTitle: title, actors: ["北野未奈"], description, series });
+    const facts = [...claims, ...(plan?.title.facts ?? []), ...(plan?.body.flatMap((b) => b.facts) ?? [])];
+    expect(facts.some((f) => f.endsWith("デカマラ絶"))).toBe(false);
+    expect(facts.some((f) => f.endsWith("注がれてしま"))).toBe(false);
+    expect(facts.some((f) => f.endsWith("体を芯から熱"))).toBe(false);
+    expect(facts).toContain("部屋に充満する怪しげな香り、体を芯から熱くする過剰なオイル");
+  });
+});

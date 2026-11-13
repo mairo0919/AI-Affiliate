@@ -840,19 +840,10 @@ export function claimStatementsFromPageEvidence(input: {
   // 1) Official productName facets — work-specific theme SSOT (not affiliate / genre shell).
   const productName = (pe.productName?.trim() || input.productTitle?.trim() || "").trim();
   if (productName && !looksLikeBareContentId(productName, pe.contentId)) {
+    // Longer titles reach the plan only as the facets below: a character-count cut ended mid-word
+    // (「…悪徳デカマラ絶」) and the Writer pasted it in quotes (post 866, 2026-11-13).
     if (productName.length >= 12 && productName.length <= 72) {
       pushScored(productName, 140, "product_identity::name");
-    } else if (productName.length > 72) {
-      // Long official titles: keep leading situation/theme phrase (not full synopsis dump).
-      const lead = productName
-        .split(/[。！？]/u)[0]!
-        .trim()
-        .slice(0, 56)
-        .replace(/[、・\s]+$/u, "")
-        .trim();
-      if (lead.length >= 12 && !isWriterSynopsisLike(lead)) {
-        pushScored(lead, 136, "product_identity::name_lead");
-      }
     }
     for (const facet of titleFacets(productName)) {
       if (BARE_COMPILATION_FORM_RE.test(facet)) {
@@ -885,9 +876,9 @@ export function claimStatementsFromPageEvidence(input: {
   // 2) Official series when it is a work-specific theme (not "4時間").
   const series = pe.catalog?.series?.value?.trim();
   if (series && series.length >= 4 && !WEAK_SERIES_SHELL_RE.test(series)) {
-    const seriesClaim = series.length <= 72 ? series : series.slice(0, 72);
-    if (!isWriterSynopsisLike(seriesClaim)) {
-      pushScored(seriesClaim, 128, "catalog::series");
+    // A series longer than this is a restated title; cutting it gave 「…注がれてしま」 (post 866).
+    if (series.length <= 72 && !isWriterSynopsisLike(series)) {
+      pushScored(series, 128, "catalog::series");
     }
   }
 

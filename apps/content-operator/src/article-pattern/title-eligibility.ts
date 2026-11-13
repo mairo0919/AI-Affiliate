@@ -195,31 +195,8 @@ export function extractSourceTitleSafeThemes(source: string): string[] {
     if (s.length >= 4) push(s);
   }
 
-  if (out.length > 0) {
-    return [...out].sort((a, b) => scoreSourceTitleTheme(b) - scoreSourceTitleTheme(a)).slice(0, 6);
-  }
-
-  // Longest title-safe contiguous windows (SOURCE substring only) — last resort.
-  const maxLen = Math.min(src.length, 28);
-  for (let len = maxLen; len >= 6; len -= 1) {
-    let addedAtLen = 0;
-    for (let i = 0; i + len <= src.length; i += 1) {
-      const sub = src.slice(i, i + len).trim();
-      if (sub.length < 6) continue;
-      if (/^[。！？、\sぁ-ん]/.test(sub) || /[。！？、\s]$/.test(sub)) continue;
-      if (/(?:して|した|してくる|され|させ)/u.test(sub)) continue;
-      // Prefer token boundaries (start of string / whitespace / punct).
-      if (i > 0 && !/[\s\u3000。！？、・]/.test(src[i - 1]!)) continue;
-      const before = out.length;
-      push(sub);
-      if (out.length > before) {
-        addedAtLen += 1;
-        if (addedAtLen >= 2) break;
-      }
-    }
-    if (out.length >= 6) break;
-  }
-
+  // No sliding character windows: they ended mid-word (「部屋に充満する怪しげな香り、体を芯から熱」)
+  // and the cut reached the Writer as a body fact (post 866, 2026-11-13).
   return [...out].sort((a, b) => scoreSourceTitleTheme(b) - scoreSourceTitleTheme(a)).slice(0, 6);
 }
 
