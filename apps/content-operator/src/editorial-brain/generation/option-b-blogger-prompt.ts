@@ -41,6 +41,7 @@ export function toWriterVisibleArticlePlan(plan: unknown): unknown {
         if (focus.size > 0) {
           const facts = Array.isArray(next.facts) ? (next.facts as string[]) : [];
           next.facts = facts.filter((f) => focus.has(f));
+          if (slot === slots[0]) next.facts = [...(next.facts as string[]), ...citedEvidenceOutsidePlan(plan)];
         }
         delete next.factSourceTypes;
         // Keep presentationPurpose lightly if present — optional grouping hint only.
@@ -82,6 +83,25 @@ function writerFocusBodyFacts(plan: unknown): Set<string> {
   const p = plan as Partial<ArticlePlan> | null;
   if (!p || !Array.isArray(p.body)) return new Set();
   return editorialFocusBodyFacts({ body: p.body, editorialDecision: p.editorialDecision ?? null });
+}
+
+/**
+ * Official evidence the editorial decision cites that the plan body does not carry. Without it the
+ * Writer saw 3 of the 11 cited items and wrote two paragraphs (post 866 trial, 2026-11-13). Grounding
+ * already checked every ref against the evidence; the official title and runtimes stay out.
+ */
+function citedEvidenceOutsidePlan(plan: unknown): string[] {
+  const p = plan as Partial<ArticlePlan> | null;
+  if (!p || !Array.isArray(p.body)) return [];
+  const surface = (text: string) => text.replace(/[「」『』【】！!？?\s]/gu, "");
+  const bodyFacts = p.body.flatMap((b) => b.facts);
+  const quantities = new Set(p.body.flatMap((b) => b.facts.filter((_, i) => b.factSourceTypes?.[i] === "QUANTITY")));
+  const productTitle = surface(String(p.productTitle ?? ""));
+  return [...new Set(p.editorialDecision?.supportingEvidenceRefs ?? [])].filter((ref) => {
+    const s = surface(ref);
+    if (!s || s === productTitle || quantities.has(ref)) return false;
+    return !bodyFacts.some((fact) => surface(fact).includes(s));
+  });
 }
 
 /** Slim EXECUTION for Writer: FACT safety fields only — no taxonomy lecture notes. */

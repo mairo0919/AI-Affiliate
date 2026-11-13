@@ -557,6 +557,27 @@ describe("body facts the editorial decision rests on", () => {
     expect(rows.map((r) => `${r.slot}:${r.fact}`)).toEqual(["body:北野未奈", "title:北野未奈"]);
   });
 
+  it("include cited official evidence the plan body lacks, never the official title (post 866 trial)", async () => {
+    const { toWriterVisibleArticlePlan } = await import("../../editorial-brain/generation/option-b-blogger-prompt.js");
+    const productTitle = "旦那を愛しているのに…危険日に、妊活媚薬エステで 北野未奈";
+    const cited = {
+      ...raw,
+      productTitle,
+      editorialDecision: {
+        ...raw.editorialDecision,
+        supportingEvidenceRefs: [...raw.editorialDecision.supportingEvidenceRefs, productTitle, "148分", "藁にも縋る思いで", "「強力媚薬」"],
+      },
+    };
+    const plan = toWriterVisibleArticlePlan(cited) as { body: Array<{ facts: string[] }> };
+    expect(plan.body[0]!.facts).toEqual([
+      "北野未奈",
+      "部屋に充満する怪しげな香り、体を芯から熱くする過剰なオイル",
+      "愛する夫のために始めたエステは妊娠確定",
+      "藁にも縋る思いで",
+      "「強力媚薬」",
+    ]);
+  });
+
   it("do not make leaving out the runtime an omission", () => {
     const result = validateArticlePlanCompliance({
       article: {
