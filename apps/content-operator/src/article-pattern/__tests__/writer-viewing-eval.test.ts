@@ -530,26 +530,31 @@ describe("body facts the editorial decision rests on", () => {
     ],
   };
 
-  it("are the Writer's facts; the rest of the blurb is optional context (2026-11 post 866 walked 18 fragments)", async () => {
+  it("are the only body facts the Writer sees (2026-11 post 866 walked every fragment, even optional ones)", async () => {
     const { toWriterVisibleArticlePlan, toWriterVisibleExecution } = await import(
       "../../editorial-brain/generation/option-b-blogger-prompt.js"
     );
-    const plan = toWriterVisibleArticlePlan(raw) as { body: Array<{ facts: string[]; optionalFacts?: string[] }> };
+    const withRuntimeRef = {
+      ...raw,
+      editorialDecision: { ...raw.editorialDecision, supportingEvidenceRefs: [...raw.editorialDecision.supportingEvidenceRefs, "148分"] },
+    };
+    const plan = toWriterVisibleArticlePlan(withRuntimeRef) as { body: Array<{ facts: string[]; optionalFacts?: string[] }> };
     expect(plan.body[0]!.facts).toEqual([
       "北野未奈",
       "部屋に充満する怪しげな香り、体を芯から熱くする過剰なオイル",
       "愛する夫のために始めたエステは妊娠確定",
     ]);
-    expect(plan.body[0]!.optionalFacts).toEqual(["体を芯から熱くする過剰なオイル", "潮吹き"]);
+    expect(plan.body[0]!.optionalFacts).toBeUndefined();
     const rows = toWriterVisibleExecution(
       [
         { fact: "148分", slot: "body", articleRole: "VOLUME" },
         { fact: "潮吹き", slot: "body", articleRole: "FEATURE" },
         { fact: "北野未奈", slot: "body", articleRole: "WHO" },
+        { fact: "北野未奈", slot: "title", articleRole: "WHO" },
       ],
-      raw,
-    ) as Array<{ fact: string; optional?: boolean }>;
-    expect(rows.map((r) => [r.fact, r.optional ?? false])).toEqual([["潮吹き", true], ["北野未奈", false]]);
+      withRuntimeRef,
+    ) as Array<{ fact: string; slot: string }>;
+    expect(rows.map((r) => `${r.slot}:${r.fact}`)).toEqual(["body:北野未奈", "title:北野未奈"]);
   });
 
   it("do not make leaving out the runtime an omission", () => {

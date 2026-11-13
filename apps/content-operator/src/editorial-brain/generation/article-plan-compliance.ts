@@ -172,16 +172,21 @@ function dropPreservesPlannedRealization(
 const refSurface = (text: string): string => text.replace(/[「」『』【】！!？?\s]/gu, "");
 
 /**
- * Body facts the Brain's editorial decision rests on. The Writer builds the body on these and gets
- * the rest of the plan as optional context: handed every official fragment as a fact to cover, it
- * walked the blurb scene by scene and read the runtime aloud (user review 2026-11-13).
+ * Body facts the Brain's editorial decision rests on, and the only body facts the Writer is shown.
+ * Handed every official fragment, even marked optional, it walked them scene by scene; without the
+ * rest it introduced the situation (post 866 ablation, 2026-11-13). The full plan still bounds facts.
  * Empty when there is no decision or it grounds fewer than two facts; callers then keep every fact.
  */
 export function editorialFocusBodyFacts(plan: Pick<ArticlePlan, "body" | "editorialDecision">): Set<string> {
   const refs = (plan.editorialDecision?.supportingEvidenceRefs ?? []).map(refSurface).filter(Boolean);
+  // A runtime the Brain cites still came back as its own sentence (「収録時間は148分と長尺で」, 866 ablation).
+  const quantities = new Set(
+    plan.body.flatMap((b) => b.facts.filter((_, i) => b.factSourceTypes?.[i] === "QUANTITY")),
+  );
   const focus = plan.body
     .flatMap((b) => b.facts)
     .filter((fact) => {
+      if (quantities.has(fact)) return false;
       const surface = refSurface(fact);
       return (
         surface.length > 0 &&

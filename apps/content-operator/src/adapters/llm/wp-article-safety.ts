@@ -39,8 +39,9 @@ export function wpContentIdentity(input: {
  * 9: the writing review fails data-line, scene-walk and label-ending output (2026-11-13).
  * 10: the Writer covers only the body facts the editorial decision rests on; the rest is optional (2026-11-13).
  * 11: a runtime the decision does not rest on is not offered to the Writer at all (2026-11-13).
+ * 12: the Writer sees only the focus body facts, never a runtime; the rest stays in the plan as the fact bound (2026-11-13).
  */
-export const WP_ARTICLE_ROUTE_VERSION = "11";
+export const WP_ARTICLE_ROUTE_VERSION = "12";
 
 export function wpArticleFingerprint(input: {
   cid: string;

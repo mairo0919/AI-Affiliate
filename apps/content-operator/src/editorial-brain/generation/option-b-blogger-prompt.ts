@@ -41,13 +41,6 @@ export function toWriterVisibleArticlePlan(plan: unknown): unknown {
         if (focus.size > 0) {
           const facts = Array.isArray(next.facts) ? (next.facts as string[]) : [];
           next.facts = facts.filter((f) => focus.has(f));
-          // A runtime offered as optional context still came back as its own sentence
-          // (「収録時間は75分です。」, post 862 after route 10); it stays only when the decision rests on it.
-          const allFacts = Array.isArray(slot.facts) ? (slot.facts as string[]) : [];
-          const types = Array.isArray(slot.factSourceTypes) ? slot.factSourceTypes : [];
-          const isQuantity = (f: string) => types[allFacts.indexOf(f)] === "QUANTITY";
-          const optional = facts.filter((f) => !focus.has(f) && !isQuantity(f));
-          if (optional.length > 0) next.optionalFacts = optional;
         }
         delete next.factSourceTypes;
         // Keep presentationPurpose lightly if present — optional grouping hint only.
@@ -100,17 +93,15 @@ export function toWriterVisibleExecution(execution: unknown, plan?: unknown): un
     ? execution.filter((row) => !isGenreTag(row))
     : execution;
   const focus = writerFocusBodyFacts(plan);
+  // Rows for body facts outside the editorial focus are not shown, like the facts themselves.
   const isOptionalBody = (r: Record<string, unknown>) =>
     focus.size > 0 && r.slot === "body" && !focus.has(String(r.fact));
   return rows.flatMap((row) => {
     if (!row || typeof row !== "object") return [row];
     const r = row as Record<string, unknown>;
-    const optional = isOptionalBody(r);
-    // Same reason as optional runtimes in the plan view: offered at all, it became its own sentence.
-    if (optional && r.articleRole === "VOLUME") return [];
+    if (isOptionalBody(r)) return [];
     return [
       {
-        ...(optional ? { optional: true } : {}),
         contributionId: r.contributionId,
         slot: r.slot,
         fact: r.fact,
@@ -258,7 +249,7 @@ export function buildOptionBBloggerGeneratorPrompt(input: {
                 "articleRole on each execution target is WHO / WORK / PREMISE / FEATURE / FORMAT / VOLUME / SERIES / GENRE / SOURCE_ATTRIBUTED. Explain PREMISE and FEATURE as concrete prose. SOURCE_ATTRIBUTED wording stays attributed (公式では…と紹介されている) and is not your verdict.",
                 "SEMANTIC_PRESERVE body: natural grammar that restates planned facts. No new concrete facts. No evaluation, recommendation, or claim that you watched or experienced the work. Combine related facts into coherent paragraphs.",
                 "Write continuous adult product explanation. Weave short tags into what the work specifically contains — do not explain internal labels, and do not turn tags into a scene you were not given.",
-                "Build the body on ARTICLE_PLAN.body facts. optionalFacts (and execution rows marked optional) are context: use one only where it sharpens those facts, never one after another. Do not close with おすすめ / 楽しめる / 味わえる / 見逃せません / 体験できる. Forbidden unless planned and attributed: external reputation/market claims (～で知られている / 売上No.1 / 大人気 / ファンから高評価).",
+                "Build the body on ARTICLE_PLAN.body facts. Do not close with おすすめ / 楽しめる / 味わえる / 見逃せません / 体験できる. Forbidden unless planned and attributed: external reputation/market claims (～で知られている / 売上No.1 / 大人気 / ファンから高評価).",
                 "If ARTICLE_PLAN.sourceExpansion.writerDensityNote is present, obey it as a length/expansion ceiling. Stop when planned facts are naturally covered.",
               ].join("\n"),
         ].join("\n")
