@@ -33,6 +33,7 @@ import { extractItemListCatalogFacts } from "../stock/ensure-official-enrichment
 import { evaluateStockArticleQualityGate, WP_TITLE_OFFICIAL_RUN_LIMIT } from "../stock/stock-quality-gate.js";
 import { longestTitleSliceInPost } from "../x/x-copy-quality.js";
 import { renderCurrentWordPressBody, type WordPressPublishPathDeps } from "./wordpress-publish-path.js";
+import { truncateMetaDescription, WP_SEO_META_KEYS } from "./wordpress-seo-attach.js";
 
 /** What a reader sees in a body, to check a rebuild does not drop anything. */
 export function bodyInventory(html: string) {
@@ -135,6 +136,8 @@ export async function rebuildPublishedPosts(deps: {
   rewriteArticles?: boolean;
   /** With rewriteArticles: keep the live body and only propose the new article's headline. */
   headlineOnly?: boolean;
+  /** Only point the search title and description at the live headline and opening paragraph. */
+  seoMetaOnly?: boolean;
   externalIds?: string[];
   limit?: number;
   /** Headlines already proposed by an earlier run (externalId → title), used instead of asking again. */
@@ -210,6 +213,11 @@ export async function rebuildPublishedPosts(deps: {
 
       const live = await publisher.getRawContent(externalId);
       row.before = bodyInventory(live);
+      if (deps.seoMetaOnly) {
+        if (deps.apply) await publisher.updateMetadataOnly({ externalId, ...seoMetaFor(version.title, live) });
+        row.result = deps.apply ? "UPDATED" : "WOULD_UPDATE";
+        continue;
+      }
       row.ctaBefore = liveCtaUrl(live);
       const raw = rec(item.rawData);
       const affiliate = validateFanzaAffiliateUrl(
@@ -249,6 +257,7 @@ export async function rebuildPublishedPosts(deps: {
             row.titleAfter = rewritten.title;
             row.backup = live;
             await publisher.updateBodyAndTitle({ externalId, content: rewritten.html, title: rewritten.title });
+            await publisher.updateMetadataOnly({ externalId, ...seoMetaFor(rewritten.title, rewritten.html) });
             // The post now shows the new version; it becomes the post_title source of truth.
             await prisma.publicationTarget.updateMany({
               where: { platform: "WORDPRESS", publishedExternalId: externalId, contentVersionId: version.id },
@@ -338,6 +347,7 @@ export async function rebuildPublishedPosts(deps: {
       }
       row.backup = live;
       await publisher.updateBodyAndTitle({ externalId, content: html, title: newTitle });
+      await publisher.updateMetadataOnly({ externalId, ...seoMetaFor(newTitle ?? version.title, html) });
       if (newTitle) {
         // ContentVersion.title is the post_title source of truth; keep it in step with WordPress.
         await prisma.contentVersion.update({
@@ -364,6 +374,22 @@ export async function rebuildPublishedPosts(deps: {
 }
 
 /** A new article for a published work, written, gated, and reviewed like a new stock article. */
+/**
+ * Search title and description follow the post itself: its headline and opening paragraph. Rewrites
+ * left the old 「シリーズ『…』作品情報」 title and a catalog description in search results (2026-11-14).
+ */
+export function seoMetaFor(title: string, html: string): { excerpt?: string; wpSeoMeta: Record<string, string> } {
+  const lead = articleProse(html).split("\n").find((p) => p.length >= 28);
+  const description = lead ? truncateMetaDescription(lead, 120) : "";
+  return {
+    ...(description ? { excerpt: description } : {}),
+    wpSeoMeta: {
+      [WP_SEO_META_KEYS.seoTitle]: title,
+      ...(description ? { [WP_SEO_META_KEYS.seoDescription]: description } : {}),
+    },
+  };
+}
+
 async function rewriteArticle(input: {
   database: DatabaseClient;
   config: AppConfig;
@@ -468,6 +494,7 @@ async function proposeTitle(input: {
  *   wp-rebuild-published --rewrite --apply --backup=...  (writes each article again; calls the LLM)
  *   wp-rebuild-published --rewrite --headline-only --ids=...  (proposes headlines from the new-article route; calls the LLM)
  *   wp-rebuild-published --apply --backup=/path/backup.json
+ *   wp-rebuild-published --seo-meta --apply --backup=...  (search title/description from the live headline and opening; no LLM)
  *   wp-rebuild-published --ids=43,47 --limit=10
  *   wp-rebuild-published --apply --backup=... --title-map=<earlier --titles output>
  */
@@ -509,6 +536,7 @@ export async function runWpRebuildPublishedCli(argv: string[]): Promise<void> {
       rewriteTitles: argv.includes("--titles"),
       rewriteArticles: argv.includes("--rewrite"),
       headlineOnly: argv.includes("--headline-only"),
+      seoMetaOnly: argv.includes("--seo-meta"),
       externalIds,
       limit,
       titleMap,

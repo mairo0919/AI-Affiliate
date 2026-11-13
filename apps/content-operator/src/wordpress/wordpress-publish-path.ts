@@ -388,11 +388,7 @@ export function buildWordPressHtmlFromVersion(input: {
     workTitle: input.workTitle,
     images,
   });
-  const excerpt =
-    article.metaDescription ||
-    article.summary ||
-    input.summary ||
-    bodyParas[0]!.slice(0, 120);
+  const excerpt = bodyParas.find((p) => p.trim().length >= 28) ?? article.summary ?? input.summary ?? bodyParas[0] ?? "";
   return { title, lead: legacyLead, excerpt, html, article };
 }
 
@@ -876,7 +872,7 @@ export async function publishContentVersionToWordPress(
   built = {
     ...built,
     title: canonicalWpTitle,
-    excerpt: publicationMetadata?.metaDescription || built.excerpt,
+    excerpt: built.excerpt,
   };
 
   const authPass =
@@ -939,7 +935,7 @@ export async function publishContentVersionToWordPress(
   const seoAttach = buildSeoAttachFromStructured({
     structured: structuredForHtml,
     title: built.title,
-    excerptFallback: publicationMetadata?.metaDescription || built.excerpt,
+    excerptFallback: built.excerpt,
     productCanonicalId,
     siteOrigin: deps.config.wordpressBaseUrl ?? OTONASELECT_PRODUCTION_ORIGIN,
     evidenceLabels: evidencePack.labels,
@@ -1396,16 +1392,10 @@ function buildSeoAttachFromStructured(input: {
 
   const attach = buildWordPressSeoAttach({
     title: input.title,
-    seoTitle:
-      pub?.seoTitle ||
-      (typeof seoBlock.title === "string" && seoBlock.title) ||
-      (typeof article.seoTitle === "string" && article.seoTitle) ||
-      input.title,
-    metaDescription:
-      pub?.metaDescription ||
-      (typeof seoBlock.metaDescription === "string" && seoBlock.metaDescription) ||
-      (typeof article.metaDescription === "string" && article.metaDescription) ||
-      input.excerptFallback,
+    // The search result shows the post's own headline and opening, not a catalog line
+    // (「シリーズ『…』作品情報」「品番…から内容を確認したい方に向けた情報」, 2026-11-14).
+    seoTitle: input.title,
+    metaDescription: input.excerptFallback,
     summary: input.excerptFallback,
     performers: (pub?.performers ?? derived.performers).map((name) => {
       const hit = performers.find((p) => p.name.replace(/\s+/g, "") === name.replace(/\s+/g, ""));

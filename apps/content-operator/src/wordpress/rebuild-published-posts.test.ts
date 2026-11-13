@@ -8,6 +8,7 @@ import {
   isUnrenderedMarkdownBody,
   liveCtaUrl,
   restyleLiveBody,
+  seoMetaFor,
 } from "./rebuild-published-posts.js";
 
 const CTA_URL = "https://al.fanza.co.jp/?lurl=https%3A%2F%2Fvideo.dmm.co.jp%2Fav%2Fcontent%2F%3Fid%3Dymbp00001&af_id=a-990&ch=api";
@@ -105,5 +106,16 @@ describe("WordPress body and title edits", () => {
     expect(calls[0]!.init.method).toBe("GET");
     expect(JSON.parse(String(calls[1]!.init.body))).toEqual({ content: "<p>y</p>" });
     expect(JSON.parse(String(calls[2]!.init.body))).toEqual({ content: "<p>y</p>", title: "新しい見出し" });
+  });
+});
+
+describe("seoMetaFor", () => {
+  it("uses the headline and the opening paragraph, not the work-title line or notes", () => {
+    const html =
+      '<p class="blog-work-title">作品名：公式タイトル</p><p>仕事で疲れ果てて家に戻った主人公が、ふと息子のおもちゃを見て子供に戻りたいと思い始めるところから物語は動き出します。</p><p>二段落目。</p>';
+    const meta = seoMetaFor("VR授乳手コキ・かすみ先生｜担任の先生に甘える夜", html);
+    expect(meta.wpSeoMeta.otonaselect_seo_title).toBe("VR授乳手コキ・かすみ先生｜担任の先生に甘える夜");
+    expect(meta.wpSeoMeta.otonaselect_seo_description).toMatch(/^仕事で疲れ果てて/);
+    expect(meta.excerpt).toBe(meta.wpSeoMeta.otonaselect_seo_description);
   });
 });
