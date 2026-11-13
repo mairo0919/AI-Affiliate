@@ -511,3 +511,66 @@ describe("FANZA genre tags in the Writer prompt", () => {
     expect(rows.map((r) => r.fact)).toEqual(["河北彩花"]);
   });
 });
+
+describe("body facts the editorial decision rests on", () => {
+  const raw = {
+    schemaVersion: 1,
+    editorialDecision: {
+      angle: "妊活エステで追い込まれる展開",
+      readerHook: "",
+      whyThisWork: "",
+      supportingEvidenceRefs: ["北野未奈", "部屋に充満する怪しげな香り、体を芯から熱くする過剰なオイル", "愛する夫のために始めたエステは妊娠確定"],
+    },
+    body: [
+      {
+        job: "body_facts",
+        facts: ["北野未奈", "体を芯から熱くする過剰なオイル", "部屋に充満する怪しげな香り、体を芯から熱くする過剰なオイル", "148分", "潮吹き", "愛する夫のために始めたエステは妊娠確定"],
+      },
+    ],
+  };
+
+  it("are the Writer's facts; the rest of the blurb is optional context (2026-11 post 866 walked 18 fragments)", async () => {
+    const { toWriterVisibleArticlePlan, toWriterVisibleExecution } = await import(
+      "../../editorial-brain/generation/option-b-blogger-prompt.js"
+    );
+    const plan = toWriterVisibleArticlePlan(raw) as { body: Array<{ facts: string[]; optionalFacts?: string[] }> };
+    expect(plan.body[0]!.facts).toEqual([
+      "北野未奈",
+      "部屋に充満する怪しげな香り、体を芯から熱くする過剰なオイル",
+      "愛する夫のために始めたエステは妊娠確定",
+    ]);
+    expect(plan.body[0]!.optionalFacts).toEqual(["体を芯から熱くする過剰なオイル", "148分", "潮吹き"]);
+    const rows = toWriterVisibleExecution(
+      [
+        { fact: "148分", slot: "body", articleRole: "VOLUME" },
+        { fact: "北野未奈", slot: "body", articleRole: "WHO" },
+      ],
+      raw,
+    ) as Array<{ fact: string; optional?: boolean }>;
+    expect(rows.map((r) => r.optional ?? false)).toEqual([true, false]);
+  });
+
+  it("do not make leaving out the runtime an omission", () => {
+    const result = validateArticlePlanCompliance({
+      article: {
+        title: "北野未奈 妊活媚薬エステ｜怪しい香りと過剰なオイルに追い込まれる人妻",
+        summary: "",
+        sections: [{ paragraphs: ["北野未奈が演じる人妻は、部屋に充満する怪しげな香りと体を芯から熱くする過剰なオイルに包まれ、愛する夫のために始めたエステは妊娠確定という結末を迎えます。"] }],
+      },
+      articlePlan: {
+        ...raw,
+        materialDepth: "standard",
+        productTitle: "妊活媚薬エステ 北野未奈",
+        title: { job: "editorial_headline", facts: ["北野未奈"] },
+        lead: { job: "opening_facts", facts: [] },
+      } as never,
+    });
+    const omissions = result.findings.filter((f) => f.code === "PLAN_FACT_OMISSION").map((f) => f.message);
+    expect(omissions.some((m) => m.includes("148分") || m.includes("潮吹き"))).toBe(false);
+  });
+
+  it("keep every fact when the decision grounds fewer than two", async () => {
+    const { editorialFocusBodyFacts } = await import("../../editorial-brain/generation/article-plan-compliance.js");
+    expect(editorialFocusBodyFacts({ body: raw.body as never, editorialDecision: null }).size).toBe(0);
+  });
+});

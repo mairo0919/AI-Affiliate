@@ -14,6 +14,8 @@ import type { ArticleOutputContract } from "../../generation/article-output-cont
 import { applyArticleOutputContractToLlmSchema } from "../../generation/article-output-contract.js";
 import { OPTION_B_WRITER_SYSTEM, WP_HEADLINE_SHAPE } from "../../article-pattern/natural-product-intro-policy.js";
 import { formatWritingQualityGuidanceForWriter } from "./success-experience.js";
+import { editorialFocusBodyFacts } from "./article-plan-compliance.js";
+import type { ArticlePlan } from "../../article-pattern/article-plan.js";
 
 /**
  * Writer-visible ARTICLE_PLAN: keep facts/jobs; hide internal HOW taxonomy dumps.
@@ -31,10 +33,17 @@ export function toWriterVisibleArticlePlan(plan: unknown): unknown {
     return facts.filter((_, i) => types[i] !== "GENRE_TAG");
   };
   const dropGenreTags = slots.some((slot) => withoutGenreTags(slot).length > 0);
+  const focus = writerFocusBodyFacts(plan);
   const body = Array.isArray(p.body)
     ? slots.map((slot) => {
         const next = { ...slot };
         if (dropGenreTags) next.facts = withoutGenreTags(slot);
+        if (focus.size > 0) {
+          const facts = Array.isArray(next.facts) ? (next.facts as string[]) : [];
+          next.facts = facts.filter((f) => focus.has(f));
+          const optional = facts.filter((f) => !focus.has(f));
+          if (optional.length > 0) next.optionalFacts = optional;
+        }
         delete next.factSourceTypes;
         // Keep presentationPurpose lightly if present — optional grouping hint only.
         return next;
@@ -71,18 +80,27 @@ export function toWriterVisibleArticlePlan(plan: unknown): unknown {
   return out;
 }
 
+function writerFocusBodyFacts(plan: unknown): Set<string> {
+  const p = plan as Partial<ArticlePlan> | null;
+  if (!p || !Array.isArray(p.body)) return new Set();
+  return editorialFocusBodyFacts({ body: p.body, editorialDecision: p.editorialDecision ?? null });
+}
+
 /** Slim EXECUTION for Writer: FACT safety fields only — no taxonomy lecture notes. */
-export function toWriterVisibleExecution(execution: unknown): unknown {
+export function toWriterVisibleExecution(execution: unknown, plan?: unknown): unknown {
   if (!Array.isArray(execution)) return execution;
   const isGenreTag = (row: unknown) =>
     Boolean(row && typeof row === "object" && (row as Record<string, unknown>).articleRole === "GENRE");
   const rows = execution.some((row) => !isGenreTag(row))
     ? execution.filter((row) => !isGenreTag(row))
     : execution;
+  const focus = writerFocusBodyFacts(plan);
   return rows.map((row) => {
     if (!row || typeof row !== "object") return row;
     const r = row as Record<string, unknown>;
+    const optional = focus.size > 0 && r.slot === "body" && !focus.has(String(r.fact));
     return {
+      ...(optional ? { optional: true } : {}),
       contributionId: r.contributionId,
       slot: r.slot,
       fact: r.fact,
@@ -137,7 +155,7 @@ export function buildOptionBBloggerGeneratorPrompt(input: {
   const executionRaw = Array.isArray(input.generationAuthority.ARTICLE_PLAN_EXECUTION)
     ? input.generationAuthority.ARTICLE_PLAN_EXECUTION
     : null;
-  const execution = toWriterVisibleExecution(executionRaw);
+  const execution = toWriterVisibleExecution(executionRaw, planRaw);
 
   const qualityGuidanceText = formatWritingQualityGuidanceForWriter(
     input.generationAuthority.WRITING_QUALITY_GUIDANCE &&
@@ -229,7 +247,7 @@ export function buildOptionBBloggerGeneratorPrompt(input: {
                 "articleRole on each execution target is WHO / WORK / PREMISE / FEATURE / FORMAT / VOLUME / SERIES / GENRE / SOURCE_ATTRIBUTED. Explain PREMISE and FEATURE as concrete prose. SOURCE_ATTRIBUTED wording stays attributed (公式では…と紹介されている) and is not your verdict.",
                 "SEMANTIC_PRESERVE body: natural grammar that restates planned facts. No new concrete facts. No evaluation, recommendation, or claim that you watched or experienced the work. Combine related facts into coherent paragraphs.",
                 "Write continuous adult product explanation. Weave short tags into what the work specifically contains — do not explain internal labels, and do not turn tags into a scene you were not given.",
-                "Stop when the planned facts are covered. Do not close with おすすめ / 楽しめる / 味わえる / 見逃せません / 体験できる. Forbidden unless planned and attributed: external reputation/market claims (～で知られている / 売上No.1 / 大人気 / ファンから高評価).",
+                "Build the body on ARTICLE_PLAN.body facts. optionalFacts (and execution rows marked optional) are context: use one only where it sharpens those facts, never one after another. Do not close with おすすめ / 楽しめる / 味わえる / 見逃せません / 体験できる. Forbidden unless planned and attributed: external reputation/market claims (～で知られている / 売上No.1 / 大人気 / ファンから高評価).",
                 "If ARTICLE_PLAN.sourceExpansion.writerDensityNote is present, obey it as a length/expansion ceiling. Stop when planned facts are naturally covered.",
               ].join("\n"),
         ].join("\n")

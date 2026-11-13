@@ -169,6 +169,33 @@ function dropPreservesPlannedRealization(
   return setsEqual(before.global, after.global) && setsEqual(before.bodySlot, after.bodySlot);
 }
 
+const refSurface = (text: string): string => text.replace(/[「」『』【】！!？?\s]/gu, "");
+
+/**
+ * Body facts the Brain's editorial decision rests on. The Writer builds the body on these and gets
+ * the rest of the plan as optional context: handed every official fragment as a fact to cover, it
+ * walked the blurb scene by scene and read the runtime aloud (user review 2026-11-13).
+ * Empty when there is no decision or it grounds fewer than two facts; callers then keep every fact.
+ */
+export function editorialFocusBodyFacts(plan: Pick<ArticlePlan, "body" | "editorialDecision">): Set<string> {
+  const refs = (plan.editorialDecision?.supportingEvidenceRefs ?? []).map(refSurface).filter(Boolean);
+  const focus = plan.body
+    .flatMap((b) => b.facts)
+    .filter((fact) => {
+      const surface = refSurface(fact);
+      return (
+        surface.length > 0 &&
+        refs.some((ref) => ref.includes(surface) || (ref.length >= 4 && surface.includes(ref)))
+      );
+    });
+  // The planner cuts the same official sentence at several lengths; keep only the longest cut.
+  const distinct = focus.filter(
+    (fact, i) =>
+      !focus.some((other, j) => j !== i && other !== fact && refSurface(other).includes(refSurface(fact))),
+  );
+  return distinct.length >= 2 ? new Set(distinct) : new Set();
+}
+
 function checkOmissions(
   plan: ArticlePlan,
   article: ArticlePlanComplianceArticle,
@@ -214,8 +241,10 @@ function checkOmissions(
   }
 
   const bodyText = slotText(article, "body");
+  const focus = editorialFocusBodyFacts(plan);
   for (const fact of plan.body.flatMap((b) => b.facts)) {
     if (isWeakPlanFact(fact)) continue;
+    if (focus.size > 0 && !focus.has(fact)) continue;
     if (!factRealizedIn(bodyText, fact)) {
       // THEME/METADATA: short genre/play tags are representative, not mandatory full coverage.
       if (softThemeCoverage && isOptionalThemeCoverageFact(fact, plan)) {
