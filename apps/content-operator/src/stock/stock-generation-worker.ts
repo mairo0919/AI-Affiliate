@@ -25,7 +25,7 @@ import {
   loadRecentBlogActressKeys,
 } from "../daily-ops/publication-history.js";
 import { tokyoDateString } from "../daily-blog/idempotency.js";
-import { validateFanzaAffiliateUrl } from "../daily-blog/affiliate-url.js";
+import { validateFanzaAffiliateUrl, withWordPressAffiliateId } from "../daily-blog/affiliate-url.js";
 import { buildFanzaCanonicalProductUrl } from "../adapters/affiliate/fanza-affiliate-provider.js";
 import { normalizeProductKey } from "../daily-ops/blog-product-exclusion.js";
 import {
@@ -340,9 +340,10 @@ export async function runStockGenerationBatch(deps: {
     stamp?: Record<string, unknown>,
   ): Promise<boolean> => {
     let produced = false;
-    const ctaUrl =
-      selected.affiliateUrl?.trim() ||
-      buildFanzaCanonicalProductUrl(selected.canonicalId);
+    const ctaUrl = withWordPressAffiliateId(
+      selected.affiliateUrl?.trim() || buildFanzaCanonicalProductUrl(selected.canonicalId),
+      deps.config.dmmAffiliateId,
+    );
     const affiliateCheck = validateFanzaAffiliateUrl(ctaUrl);
     if (!affiliateCheck.ok) {
       held.push({ canonicalId: selected.canonicalId, reason: "AFFILIATE_URL_INVALID" });

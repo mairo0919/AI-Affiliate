@@ -24,7 +24,7 @@ import {
   type WordPressApiPublisher,
 } from "../adapters/publisher/wordpress-api-publisher.js";
 import { ContentReviewService } from "../admin/content-review-service.js";
-import { validateFanzaAffiliateUrl } from "../daily-blog/affiliate-url.js";
+import { validateFanzaAffiliateUrl, withWordPressAffiliateId } from "../daily-blog/affiliate-url.js";
 import { BLOG_CTA_CLASS, BLOG_WORK_TITLE_CLASS, renderWorkTitleBlock } from "../generation/blogger-formatter.js";
 import { auxiliaryFindingRationale, runCanonicalArticlePipeline } from "../generation/canonical-article-pipeline.js";
 import { ContentGenerationService } from "../generation/content-generation-service.js";
@@ -235,7 +235,7 @@ export async function rebuildPublishedPosts(deps: {
       const affiliate = validateFanzaAffiliateUrl(
         (typeof raw.affiliateURL === "string" && raw.affiliateURL) || row.ctaBefore,
       );
-      const ctaUrl = affiliate.url ?? row.ctaBefore;
+      const ctaUrl = affiliate.url ? withWordPressAffiliateId(affiliate.url, deps.config.dmmAffiliateId) : row.ctaBefore;
       if (!ctaUrl) {
         row.reason = "CTA_URL_MISSING";
         continue;
@@ -277,6 +277,10 @@ export async function rebuildPublishedPosts(deps: {
                 data: { contentVersionId: rewritten.versionId },
               });
               await lifecycle.updateContentVersionStatus(version.id, "ARCHIVED");
+            } else {
+              // With no target pointing at it, an approved version is a new article to the WP
+              // scheduler, which posted four legacy rewrites a second time (2026-11-14).
+              await lifecycle.updateContentVersionStatus(rewritten.versionId, "ARCHIVED");
             }
             row.contentVersionAfter = rewritten.versionId;
             row.result = "UPDATED";

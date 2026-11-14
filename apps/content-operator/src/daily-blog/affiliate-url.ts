@@ -41,3 +41,19 @@ export function validateFanzaAffiliateUrl(url: string | null | undefined): Affil
   // R61: product page without partner params is allowed until affiliate id is available.
   return { ok: true, url: trimmed, failureCode: null, hasAffiliateIdHint };
 }
+
+/**
+ * WordPress CTA with the affiliate ID. A plain product URL (page-evidence items, the canonical
+ * fallback) linked 52 posts with no affiliate ID after DMM_AFFILIATE_ID was set (2026-11-14); it is
+ * wrapped the way the DMM API wraps its own affiliateURL. X keeps its own URL rules and never uses this.
+ */
+export function withWordPressAffiliateId(url: string, affiliateId: string | null | undefined): string {
+  const id = affiliateId?.trim();
+  const check = validateFanzaAffiliateUrl(url);
+  if (!id || !check.ok || check.hasAffiliateIdHint) return url;
+  const wrapped = new URL("https://al.fanza.co.jp/");
+  wrapped.searchParams.set("lurl", url.trim());
+  wrapped.searchParams.set("af_id", id);
+  wrapped.searchParams.set("ch", "api");
+  return wrapped.toString();
+}
