@@ -7,6 +7,7 @@ import {
   inventoryLosses,
   isUnrenderedMarkdownBody,
   liveCtaUrl,
+  rebuildPublishedPosts,
   restyleLiveBody,
   seoMetaFor,
 } from "./rebuild-published-posts.js";
@@ -106,6 +107,26 @@ describe("WordPress body and title edits", () => {
     expect(calls[0]!.init.method).toBe("GET");
     expect(JSON.parse(String(calls[1]!.init.body))).toEqual({ content: "<p>y</p>" });
     expect(JSON.parse(String(calls[2]!.init.body))).toEqual({ content: "<p>y</p>", title: "新しい見出し" });
+  });
+
+  it("reads the stored title of a post that has no publication target", async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    expect(await publisher(calls, { title: { raw: "椎名心春とハメ撮り" } }).getRawTitle("70")).toBe("椎名心春とハメ撮り");
+    expect(calls[0]!.url).toContain("/posts/70?context=edit&_fields=title");
+  });
+});
+
+describe("legacy posts", () => {
+  it("are only rewritten, never re-rendered from a stored article they do not have", async () => {
+    await expect(
+      rebuildPublishedPosts({
+        database: { prisma: {} } as never,
+        config: { wordpressMode: "mock" } as never,
+        apply: true,
+        rewriteTitles: false,
+        legacyPosts: { "70": "h_1711docm00001" },
+      }),
+    ).rejects.toThrow("legacyPosts needs rewriteArticles");
   });
 });
 

@@ -139,6 +139,11 @@ export async function rebuildPublishedPosts(deps: {
   /** Only point the search title and description at the live headline and opening paragraph. */
   seoMetaOnly?: boolean;
   externalIds?: string[];
+  /**
+   * Posts made before publication targets were recorded (externalId → cid). They have no stored
+   * article, so only a full rewrite touches them; a failed rewrite leaves them as they are.
+   */
+  legacyPosts?: Record<string, string>;
   limit?: number;
   /** Headlines already proposed by an earlier run (externalId → title), used instead of asking again. */
   titleMap?: Record<string, string>;
@@ -169,7 +174,11 @@ export async function rebuildPublishedPosts(deps: {
     });
   }
 
-  const targets = await prisma.publicationTarget.findMany({
+  const legacy = Object.entries(deps.legacyPosts ?? {});
+  if (legacy.length && !deps.rewriteArticles) throw new Error("legacyPosts needs rewriteArticles");
+  const targets: { publishedExternalId: string | null; platformMetadata: unknown; contentVersionId: string | null }[] = legacy.length
+    ? legacy.map(([externalId, cid]) => ({ publishedExternalId: externalId, platformMetadata: { productCanonicalId: cid }, contentVersionId: null }))
+    : await prisma.publicationTarget.findMany({
     where: {
       platform: "WORDPRESS",
       // Scheduled posts already exist in WordPress as future posts; updating keeps their date and status.
@@ -184,19 +193,21 @@ export async function rebuildPublishedPosts(deps: {
   const rows: RebuildRow[] = [];
   for (const target of targets) {
     const externalId = String(target.publishedExternalId);
-    const version = await prisma.contentVersion.findUnique({
-      where: { id: target.contentVersionId },
-      select: { id: true, title: true, summary: true, structuredContent: true },
-    });
+    const version = target.contentVersionId
+      ? await prisma.contentVersion.findUnique({
+          where: { id: target.contentVersionId },
+          select: { id: true, title: true, summary: true, structuredContent: true },
+        })
+      : null;
     const row: RebuildRow = { externalId, cid: null, result: "SKIPPED", titleBefore: version?.title ?? "" };
     rows.push(row);
     try {
-      if (!version) {
+      if (!version && target.contentVersionId) {
         row.reason = "CONTENT_VERSION_MISSING";
         continue;
       }
       const meta = rec(target.platformMetadata);
-      const sc = rec(version.structuredContent);
+      const sc = rec(version?.structuredContent);
       const cidRaw = meta.productCanonicalId ?? meta.canonicalId ?? meta.productKey ?? sc.productCanonicalId ?? sc.canonicalId;
       row.cid = typeof cidRaw === "string" && cidRaw.trim() ? cidRaw.trim().toLowerCase() : null;
       const item = row.cid
@@ -213,7 +224,8 @@ export async function rebuildPublishedPosts(deps: {
 
       const live = await publisher.getRawContent(externalId);
       row.before = bodyInventory(live);
-      if (deps.seoMetaOnly) {
+      if (!version) row.titleBefore = await publisher.getRawTitle(externalId);
+      if (deps.seoMetaOnly && version) {
         if (deps.apply) await publisher.updateMetadataOnly({ externalId, ...seoMetaFor(version.title, live) });
         row.result = deps.apply ? "UPDATED" : "WOULD_UPDATE";
         continue;
@@ -258,12 +270,14 @@ export async function rebuildPublishedPosts(deps: {
             row.backup = live;
             await publisher.updateBodyAndTitle({ externalId, content: rewritten.html, title: rewritten.title });
             await publisher.updateMetadataOnly({ externalId, ...seoMetaFor(rewritten.title, rewritten.html) });
-            // The post now shows the new version; it becomes the post_title source of truth.
-            await prisma.publicationTarget.updateMany({
-              where: { platform: "WORDPRESS", publishedExternalId: externalId, contentVersionId: version.id },
-              data: { contentVersionId: rewritten.versionId },
-            });
-            await lifecycle.updateContentVersionStatus(version.id, "ARCHIVED");
+            if (version) {
+              // The post now shows the new version; it becomes the post_title source of truth.
+              await prisma.publicationTarget.updateMany({
+                where: { platform: "WORDPRESS", publishedExternalId: externalId, contentVersionId: version.id },
+                data: { contentVersionId: rewritten.versionId },
+              });
+              await lifecycle.updateContentVersionStatus(version.id, "ARCHIVED");
+            }
             row.contentVersionAfter = rewritten.versionId;
             row.result = "UPDATED";
             continue;
@@ -273,6 +287,10 @@ export async function rebuildPublishedPosts(deps: {
         }
       }
 
+      if (!version) {
+        row.result = "UNCHANGED";
+        continue;
+      }
       const rendered = await renderCurrentWordPressBody({
         deps: pathDeps,
         version,
@@ -496,6 +514,7 @@ async function proposeTitle(input: {
  *   wp-rebuild-published --apply --backup=/path/backup.json
  *   wp-rebuild-published --seo-meta --apply --backup=...  (search title/description from the live headline and opening; no LLM)
  *   wp-rebuild-published --ids=43,47 --limit=10
+ *   wp-rebuild-published --rewrite --apply --backup=b.json --legacy=70:h_1711docm00001  (posts with no publication target)
  *   wp-rebuild-published --apply --backup=... --title-map=<earlier --titles output>
  */
 export async function runWpRebuildPublishedCli(argv: string[]): Promise<void> {
@@ -508,6 +527,10 @@ export async function runWpRebuildPublishedCli(argv: string[]): Promise<void> {
     return;
   }
   const externalIds = flag("ids")?.split(",").map((s) => s.trim()).filter(Boolean);
+  // --legacy=158:125umd01020,157:1rctd00758 — posts with no publication target, rewritten from their work.
+  const legacyPosts = flag("legacy")
+    ? Object.fromEntries(flag("legacy")!.split(",").map((pair) => pair.split(":").map((s) => s.trim())))
+    : undefined;
   const limit = flag("limit") ? Number(flag("limit")) : undefined;
   // A previous run's output: its proposed headlines are applied as-is.
   const titleMapPath = flag("title-map");
@@ -538,6 +561,7 @@ export async function runWpRebuildPublishedCli(argv: string[]): Promise<void> {
       headlineOnly: argv.includes("--headline-only"),
       seoMetaOnly: argv.includes("--seo-meta"),
       externalIds,
+      legacyPosts,
       limit,
       titleMap,
       onRow: writeBackup,

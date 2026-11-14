@@ -275,6 +275,18 @@ export class WordPressApiPublisher implements PublisherAdapter {
     return json.content.raw;
   }
 
+  /** The stored post title, for posts whose title is recorded nowhere else. */
+  async getRawTitle(externalId: string): Promise<string> {
+    this.assertCanCallApi("getStatus");
+    const response = await this.request(`/posts/${externalId}?context=edit&_fields=title`, { method: "GET" });
+    if (!response.ok) {
+      const err = await safeWpError(response);
+      throw new WordPressPublisherError(`WordPress read failed (${response.status}): ${err}`, "UPDATE_FAILED");
+    }
+    const json = (await response.json()) as { title?: { raw?: unknown } };
+    return typeof json.title?.raw === "string" ? json.title.raw : "";
+  }
+
   /** Replace the post body (and title when given); dates, status, and taxonomies are left unchanged. */
   async updateBodyAndTitle(input: { externalId: string; content: string; title?: string | null }): Promise<void> {
     this.assertCanCallApi("update");
