@@ -191,6 +191,10 @@ add_action('wp_head', static function (): void {
 /**
  * Robots: public content indexable; keep thin/duplicate surfaces noindex.
  */
+if (!defined('OTONASELECT_MIN_INDEXED_TERM_POSTS')) {
+	define('OTONASELECT_MIN_INDEXED_TERM_POSTS', 2);
+}
+
 add_filter('wp_robots', static function (array $robots): array {
 	if (is_search() || is_404() || is_author() || is_date() || is_attachment()) {
 		$robots['noindex'] = true;
@@ -207,10 +211,11 @@ add_filter('wp_robots', static function (array $robots): array {
 			return $robots;
 		}
 	}
-	// Empty taxonomy archives: keep crawlable for discovery, but do not index.
+	// Archives with fewer than two posts: keep crawlable for discovery, but do not index.
+	// A one-post archive repeats that post; 547 of them left Google deferring 758 URLs (2026-11-14).
 	if (is_category() || is_tag() || is_tax()) {
 		$term = get_queried_object();
-		if ($term instanceof WP_Term && (int) $term->count <= 0) {
+		if ($term instanceof WP_Term && (int) $term->count < OTONASELECT_MIN_INDEXED_TERM_POSTS) {
 			$robots['noindex'] = true;
 			$robots['follow'] = true;
 			unset($robots['index']);
@@ -429,10 +434,20 @@ add_filter('wp_sitemaps_taxonomies_entry', static function (array $entry): array
 	}
 	return $entry;
 });
-add_filter('wp_sitemaps_taxonomies_query_args', static function (array $args): array {
+add_filter('wp_sitemaps_taxonomies_query_args', static function (array $args, string $taxonomy): array {
 	$args['hide_empty'] = true;
+	// Leave out the archives that are noindex above.
+	$thin = [];
+	foreach (get_terms(['taxonomy' => $taxonomy, 'hide_empty' => true]) as $term) {
+		if ($term instanceof WP_Term && (int) $term->count < OTONASELECT_MIN_INDEXED_TERM_POSTS) {
+			$thin[] = (int) $term->term_id;
+		}
+	}
+	if ($thin) {
+		$args['exclude'] = $thin;
+	}
 	return $args;
-});
+}, 10, 2);
 add_filter('wp_sitemaps_add_provider', static function ($provider, string $name) {
 	if ($name === 'users') {
 		return false;

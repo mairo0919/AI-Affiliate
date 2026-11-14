@@ -10,11 +10,11 @@ const PLUGIN_DIR = resolve(HERE, "../../../../wordpress-plugins/otonaselect-age-
 const THEME_FUNCTIONS = resolve(HERE, "../../../../wordpress-theme/otonaselect/functions.php");
 const THEME_AGE = resolve(HERE, "../../../../wordpress-theme/otonaselect/inc/age-gate.php");
 
-describe("Age Gate 1.0.3 plugin source guards", () => {
+describe("Age Gate 1.0.4 plugin source guards", () => {
   const main = readFileSync(join(PLUGIN_DIR, "otonaselect-age-gate.php"), "utf8");
 
-  it("is version 1.0.3 and self-contained", () => {
-    expect(main).toMatch(/\*\s*Version:\s*1\.0\.3\b/);
+  it("is version 1.0.4 and self-contained", () => {
+    expect(main).toMatch(/\*\s*Version:\s*1\.0\.4\b/);
     expect(main).not.toMatch(/require(?:_once)?\s+__DIR__\s*\.\s*['"]\/embedded-age-gate\.php['"]/);
     expect(existsSync(join(PLUGIN_DIR, "embedded-age-gate.php"))).toBe(false);
     expect(main).toMatch(/add_action\(\s*'init'\s*,\s*'otonaselect_age_gate_plugin_bootstrap'/);
@@ -55,14 +55,14 @@ describe("Age Gate regression decisions", () => {
 });
 
 describe("Age Gate activation/bootstrap ZIP smoke", () => {
-  it("builds a 1.0.3 zip with only the main SSOT file", () => {
+  it("builds a 1.0.4 zip with only the main SSOT file", () => {
     const work = mkdtempSync(join(tmpdir(), "age-gate-boot-"));
     try {
       const pluginSrc = join(PLUGIN_DIR, "otonaselect-age-gate.php");
       const packDir = join(work, "otonaselect-age-gate");
       mkdirSync(packDir, { recursive: true });
       writeFileSync(join(packDir, "otonaselect-age-gate.php"), readFileSync(pluginSrc));
-      const zipPath = join(work, "otonaselect-age-gate-1.0.3.zip");
+      const zipPath = join(work, "otonaselect-age-gate-1.0.4.zip");
       execFileSync("zip", ["-r", "-q", zipPath, "otonaselect-age-gate"], { cwd: work });
       const listing = execFileSync("unzip", ["-l", zipPath], { encoding: "utf8" });
       expect(listing).toMatch(/otonaselect-age-gate\/otonaselect-age-gate\.php/);
@@ -70,7 +70,7 @@ describe("Age Gate activation/bootstrap ZIP smoke", () => {
       const extractedMain = execFileSync("unzip", ["-p", zipPath, "otonaselect-age-gate/otonaselect-age-gate.php"], {
         encoding: "utf8",
       });
-      expect(extractedMain).toMatch(/Version:\s*1\.0\.3/);
+      expect(extractedMain).toMatch(/Version:\s*1\.0\.4/);
       expect(extractedMain).toMatch(/OTONASELECT_AGE_GATE_PLUGIN_ACTIVE/);
     } finally {
       rmSync(work, { recursive: true, force: true });

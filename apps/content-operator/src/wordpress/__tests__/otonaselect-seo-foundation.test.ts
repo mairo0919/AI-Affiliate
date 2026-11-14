@@ -98,6 +98,14 @@ describe("otonaselect SEO foundation contracts", () => {
     expect(ld).not.toMatch(/aggregateRating|priceCurrency|"offers"/);
   });
 
+  it("keeps one-post archives out of the index and the sitemap with one threshold", () => {
+    const seo = read("inc/seo-head.php");
+    expect(seo).toContain("define('OTONASELECT_MIN_INDEXED_TERM_POSTS', 2)");
+    expect(seo.match(/\$term->count < OTONASELECT_MIN_INDEXED_TERM_POSTS/g)).toHaveLength(2);
+    expect(seo).toContain("$args['exclude'] = $thin");
+    expect(seo).toMatch(/wp_sitemaps_taxonomies_query_args[\s\S]*?\}, 10, 2\);/);
+  });
+
   it("does not breadcrumb to non-existent taxonomy roots", () => {
     const ld = read("inc/json-ld.php");
     expect(ld).not.toMatch(/'name'\s*=>\s*'出演者'[\s\S]{0,80}'\/performer\/'/);

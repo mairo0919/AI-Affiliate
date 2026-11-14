@@ -34,13 +34,13 @@ function unguardedFunctionDefs(source: string): string[] {
   return out;
 }
 
-describe("Age Gate 1.0.3 dual-load fatal reproduction guards", () => {
+describe("Age Gate 1.0.4 dual-load fatal reproduction guards", () => {
   const pluginMain = readFileSync(join(PLUGIN_DIR, "otonaselect-age-gate.php"), "utf8");
   const themeGate = readFileSync(THEME_AGE, "utf8");
   const themeFunctions = readFileSync(THEME_FUNCTIONS, "utf8");
 
   it("plugin defines SSOT constants at include-time before any function body", () => {
-    expect(pluginMain).toMatch(/Version:\s*1\.0\.3\b/);
+    expect(pluginMain).toMatch(/Version:\s*1\.0\.4\b/);
     const activeIdx = pluginMain.indexOf("OTONASELECT_AGE_GATE_PLUGIN_ACTIVE");
     const loadedIdx = pluginMain.indexOf("define('OTONASELECT_AGE_GATE_LOADED'");
     const firstFn = pluginMain.indexOf("function otonaselect_age_cookie_ttl_ok");
@@ -123,7 +123,7 @@ describe("Age Gate 1.0.3 dual-load fatal reproduction guards", () => {
   });
 });
 
-describe("Age Gate 1.0.3 ZIP packaging verification", () => {
+describe("Age Gate 1.0.4 ZIP packaging verification", () => {
   it("builds zip without executable embedded-age-gate and with single SSOT main", () => {
     expect(existsSync(join(PLUGIN_DIR, "embedded-age-gate.php"))).toBe(false);
 
@@ -132,7 +132,7 @@ describe("Age Gate 1.0.3 ZIP packaging verification", () => {
       const pack = join(work, "otonaselect-age-gate");
       mkdirSync(pack);
       writeFileSync(join(pack, "otonaselect-age-gate.php"), readFileSync(join(PLUGIN_DIR, "otonaselect-age-gate.php")));
-      const zipPath = join(work, "otonaselect-age-gate-1.0.3.zip");
+      const zipPath = join(work, "otonaselect-age-gate-1.0.4.zip");
       execFileSync("zip", ["-r", "-q", zipPath, "otonaselect-age-gate"], { cwd: work });
 
       const listing = execFileSync("unzip", ["-l", zipPath], { encoding: "utf8" });
@@ -142,7 +142,7 @@ describe("Age Gate 1.0.3 ZIP packaging verification", () => {
       const extracted = execFileSync("unzip", ["-p", zipPath, "otonaselect-age-gate/otonaselect-age-gate.php"], {
         encoding: "utf8",
       });
-      expect(extracted).toMatch(/Version:\s*1\.0\.3/);
+      expect(extracted).toMatch(/Version:\s*1\.0\.4/);
       expect(extracted).toMatch(/OTONASELECT_AGE_GATE_PLUGIN_ACTIVE/);
       expect((extracted.match(/function\s+otonaselect_age_cookie_ttl_ok\s*\(/g) || []).length).toBe(1);
 
