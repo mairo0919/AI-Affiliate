@@ -131,13 +131,10 @@ import {
   type ArticleEditorialDecision,
 } from "../article-pattern/article-editorial-decision.js";
 import {
-  buildSeoReviewPrompt,
   decideSeoSearchIntent,
-  evaluateSeoIntentReview,
   groundSeoCopy,
   noteInternalDemandMatch,
   preserveSeoSearchIntentFields,
-  readSeoSearchIntent,
 } from "../article-pattern/seo-search-intent.js";
 import type { ArticlePatternRepository } from "@ai-affiliate/database";
 import {
@@ -2617,7 +2614,9 @@ export class ContentGenerationService {
       "claim-consistency",
       "factual-consistency",
       "writing-quality",
-      "seo-basic",
+      // seo-basic is gone: it failed natural headlines for not naming an empty or series-name primaryQuery,
+      // and the revision then replaced the headline with the official title (2026-11-14). Search title
+      // and description now come from the headline and opening paragraph.
       "adult-policy",
       "blogger-readiness",
     ] as const;
@@ -2658,13 +2657,11 @@ export class ContentGenerationService {
           ? "review.claim"
           : reviewType === "factual-consistency"
             ? "review.factual"
-            : reviewType === "seo-basic"
-              ? "review.seo"
-              : reviewType === "adult-policy"
-                ? "review.adult-policy"
-                : reviewType === "blogger-readiness"
-                  ? "review.channel-fit"
-                  : "review.writing-quality";
+            : reviewType === "adult-policy"
+              ? "review.adult-policy"
+              : reviewType === "blogger-readiness"
+                ? "review.channel-fit"
+                : "review.writing-quality";
 
       const prompt = await this.prompts.getPrompt(promptId, "v1");
       const reusable = existing.find((r) => {
@@ -2695,41 +2692,6 @@ export class ContentGenerationService {
       const reviewUserPrompt = officialEvidence
         ? `${rendered.userPrompt}\n\n${officialEvidence}`
         : rendered.userPrompt;
-      const structuredSeo =
-        version.structuredContent &&
-        typeof version.structuredContent === "object" &&
-        !Array.isArray(version.structuredContent)
-          ? ((version.structuredContent as Record<string, unknown>).seo as
-              | Record<string, unknown>
-              | undefined)
-          : undefined;
-      const articleRecord =
-        version.structuredContent &&
-        typeof version.structuredContent === "object" &&
-        !Array.isArray(version.structuredContent)
-          ? ((version.structuredContent as Record<string, unknown>).article as
-              | Record<string, unknown>
-              | undefined)
-          : undefined;
-      const lockedIntent = readSeoSearchIntent(structuredSeo);
-      const seoReview =
-        reviewType === "seo-basic"
-          ? buildSeoReviewPrompt({
-              intent: lockedIntent,
-              title: version.title,
-              body: version.body,
-              seoTitle:
-                (typeof structuredSeo?.title === "string" && structuredSeo.title) ||
-                (typeof articleRecord?.seoTitle === "string" && articleRecord.seoTitle) ||
-                null,
-              metaDescription:
-                (typeof structuredSeo?.metaDescription === "string" &&
-                  structuredSeo.metaDescription) ||
-                (typeof articleRecord?.metaDescription === "string" &&
-                  articleRecord.metaDescription) ||
-                null,
-            })
-          : null;
       await this.budget.assertCanSpend(0.5);
 
       const modelRun = await this.repo.createModelRun({
@@ -2747,8 +2709,8 @@ export class ContentGenerationService {
         taskType: "REVIEW",
         promptIdentifier: prompt.identifier,
         promptVersion: prompt.version,
-        systemInstruction: seoReview?.system ?? rendered.systemInstruction,
-        userPrompt: seoReview?.user ?? reviewUserPrompt,
+        systemInstruction: rendered.systemInstruction,
+        userPrompt: reviewUserPrompt,
         model: this.models.review,
         input: { title: version.title, body: version.body, reviewType },
         safety: wpLlmSafety({
@@ -2795,28 +2757,6 @@ export class ContentGenerationService {
               ? "MANUAL_REVIEW_REQUIRED"
               : "PASSED";
       const findings = Array.isArray(llm.output.findings) ? [...llm.output.findings] : [];
-      if (reviewType === "seo-basic") {
-        const hard = evaluateSeoIntentReview({
-          intent: lockedIntent,
-          title: version.title,
-          body: version.body,
-          seoTitle:
-            (typeof structuredSeo?.title === "string" && structuredSeo.title) ||
-            (typeof articleRecord?.seoTitle === "string" && articleRecord.seoTitle) ||
-            null,
-          metaDescription:
-            (typeof structuredSeo?.metaDescription === "string" &&
-              structuredSeo.metaDescription) ||
-            (typeof articleRecord?.metaDescription === "string" &&
-              articleRecord.metaDescription) ||
-            null,
-          allowedText: `${version.title}\n${version.body}`,
-        });
-        if (hard.hardFail) {
-          mapped = "FAILED";
-          findings.push(...hard.findings);
-        }
-      }
 
       const review = await this.repo.createReview({
         reviewType,
