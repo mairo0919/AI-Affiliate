@@ -6,7 +6,7 @@ Description: オトナセレクト専用の軽量ブロックテーマ。note風
 Requires at least: 6.7
 Tested up to: 6.8
 Requires PHP: 8.0
-Version: 1.6.12
+Version: 1.6.13
 License: GNU General Public License v2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 Text Domain: otonaselect
@@ -627,8 +627,8 @@ body.single-post .otonaselect-single-title {
 	object-fit: contain;
 }
 
-/* Samples: a row of square thumbnails (4 across, 3 on phones), tap to enlarge (front-enhance.js).
-   One per row made tall VR stills fill whole screens (user, 2026-11-17). */
+/* Samples: a row of thumbnails (4 across, 3 on phones) in their own shape, tap to enlarge (front-enhance.js).
+   One per row made tall VR stills fill whole screens; square crops cut them off (user, 2026-11-17). */
 .wp-block-post-content .blog-sample {
 	display: inline-block;
 	vertical-align: top;
@@ -641,8 +641,7 @@ body.single-post .otonaselect-single-title {
 	width: 100% !important;
 	max-width: 100% !important;
 	height: auto !important;
-	aspect-ratio: 1;
-	object-fit: cover;
+	object-fit: contain;
 	cursor: zoom-in;
 	border-radius: 4px;
 }

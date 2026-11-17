@@ -11,8 +11,8 @@ function read(rel: string): string {
 }
 
 describe("otonaselect SEO foundation contracts", () => {
-  it("ships theme 1.6.12 with rewrite flush version gate", () => {
-    expect(read("style.css")).toMatch(/Version:\s*1\.6\.12/);
+  it("ships theme 1.6.13 with rewrite flush version gate", () => {
+    expect(read("style.css")).toMatch(/Version:\s*1\.6\.13/);
     const tax = read("inc/taxonomies.php");
     expect(tax).toContain("otonaselect-tax-rewrite-1.6.7");
     expect(tax).toContain("flush_rewrite_rules");
@@ -111,6 +111,7 @@ describe("otonaselect SEO foundation contracts", () => {
     expect(css).toMatch(/\.blog-sample \{\s*display: inline-block;[\s\S]*?width: calc\(25% - 0\.5em\)/);
     expect(css).toContain("width: calc(33.333% - 0.5em)");
     expect(css).toContain(".otonaselect-lightbox");
+    expect(css).not.toContain("aspect-ratio: 1;");
     expect(read("assets/front-enhance.js")).toContain('closest(".blog-sample img")');
   });
 
