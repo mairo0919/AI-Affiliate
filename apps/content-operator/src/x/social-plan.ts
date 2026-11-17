@@ -106,6 +106,8 @@ export type XSocialPlan = {
   productTitle: string;
   /** The official description, given to the writer whole so it knows what the work is. */
   officialDescription?: string | null;
+  /** Brain advice from past rejections and human fixes. */
+  writerAdvice?: string[];
   canonicalContext: {
     performers: string[];
     seriesName: string | null;

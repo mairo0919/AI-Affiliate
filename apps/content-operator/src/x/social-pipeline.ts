@@ -56,6 +56,8 @@ export type SocialPipelineInput = {
   claimStatements?: Array<{ id?: string; statement: string }>;
   groundedPlanFacts?: string[];
   officialDescription?: string | null;
+  /** Brain advice from past rejections and human fixes (editorial-brain/core/writer-lessons.ts). */
+  writerAdvice?: string[];
   maxBodyChars?: number;
   llm?: LLMProvider | null;
   model?: string;
@@ -130,7 +132,7 @@ export async function runXSocialPipeline(
     };
   }
 
-  const plan = planned.plan;
+  const plan = { ...planned.plan, writerAdvice: input.writerAdvice ?? [] };
   if (plan.viability === "X_INSUFFICIENT_MATERIAL") {
     return {
       ok: false,

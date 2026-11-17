@@ -266,6 +266,9 @@ export function buildXSocialWriterPrompts(
       prev
         ? `Previous draft (do not copy flaws; rewrite from grounded plan):\n${prev.slice(0, 280)}`
         : "",
+      plan.writerAdvice?.length
+        ? `BRAIN_ADVICE（過去の不合格と手直しから。言い回しは真似しない）:\n- ${plan.writerAdvice.join("\n- ")}`
+        : "",
       "OFFICIAL_SOURCE（作品について書いてよいのはここにあることだけ）:",
       JSON.stringify(writerSource, null, 2),
     ]

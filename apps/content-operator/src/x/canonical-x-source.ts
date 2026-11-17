@@ -342,6 +342,8 @@ export async function adaptLoadedCanonicalToX(
     normalProductUrl?: string | null;
     llm?: import("../adapters/types.js").LLMProvider | null;
     llmModel?: string;
+    /** Brain advice from past rejections and human fixes. */
+    writerAdvice?: string[];
   },
 ): Promise<XSocialAdaptationResult> {
   const preferredLinkMode = opts?.preferredRoute
@@ -358,6 +360,7 @@ export async function adaptLoadedCanonicalToX(
     taxonomyTags: source.taxonomyTags,
     articlePlanFacts: source.articlePlanFacts,
     officialDescription: source.officialDescription,
+    writerAdvice: opts?.writerAdvice ?? [],
     articleImages: source.articleImages,
     publishedBlogUrl: source.publishedBlogUrl,
     wpStatus: source.wpStatus,

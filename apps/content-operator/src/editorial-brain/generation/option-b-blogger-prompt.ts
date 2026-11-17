@@ -151,6 +151,8 @@ export function buildOptionBBloggerGeneratorPrompt(input: {
   officialDescription?: string | null;
   /** Findings from this work's earlier rejected versions. */
   priorReviewFindings?: string[] | null;
+  /** Brain advice from past rejections and human fixes. */
+  writerAdvice?: string[] | null;
 }): { systemInstruction: string; userPrompt: string; outputSchema: Record<string, unknown> } {
   const baseSchema = getOptionBBloggerArticleLlmJsonSchema();
   const outputSchema = applyArticleOutputContractToLlmSchema(
@@ -251,6 +253,12 @@ export function buildOptionBBloggerGeneratorPrompt(input: {
       ? [
           "PRIOR_REVIEW_FINDINGS (an earlier article for this work was rejected for these; do not repeat them):",
           ...input.priorReviewFindings.map((line) => `- ${line}`),
+        ].join("\n")
+      : "",
+    input.writerAdvice?.length
+      ? [
+          "BRAIN_ADVICE (learned from past rejections and human fixes; do not copy wording):",
+          ...input.writerAdvice.map((line) => `- ${line}`),
         ].join("\n")
       : "",
     seoBlock,

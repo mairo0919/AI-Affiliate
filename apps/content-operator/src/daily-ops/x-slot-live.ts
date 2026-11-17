@@ -3,6 +3,12 @@
  * Affiliate URLs and WordPress URLs are not scheduled.
  */
 
+import {
+  avoidWordsFromFindings,
+  loadWriterAdvice,
+  recordWriterLesson,
+  type WriterLessonDb,
+} from "../editorial-brain/core/writer-lessons.js";
 import { createHash } from "node:crypto";
 import type { AppConfig } from "@ai-affiliate/config";
 import { ContentRepository, type DatabaseClient } from "@ai-affiliate/database";
@@ -144,6 +150,7 @@ async function adaptCanonicalForXSchedule(input: {
     trigger: input.trigger,
     generate: async (ctx) =>
       await adaptLoadedCanonicalToX(input.source, {
+        writerAdvice: await loadWriterAdvice(input.prisma as unknown as WriterLessonDb, "X"),
         preferredRoute: "DIRECT_AFFILIATE",
         disclosure: null,
         preferWpTraffic: false,
@@ -157,6 +164,17 @@ async function adaptCanonicalForXSchedule(input: {
         llmModel: input.model,
       }),
   });
+  const rejected = resolved.result.skip;
+  if (resolved.generated && rejected && rejected.failureClass !== "GENERATION_FAILURE") {
+    const findings = resolved.result.reviewFindings ?? [];
+    await recordWriterLesson(input.prisma as unknown as WriterLessonDb, {
+      channel: "X",
+      sourceType: "SYSTEM_VALIDATOR",
+      outcome: rejected.reason,
+      codes: findings.map((f) => f.code),
+      avoid: avoidWordsFromFindings(findings),
+    });
+  }
   const store = getLlmExecutionStore();
   if (store && resolved.generated && runIds.length > 0) {
     const gate = xScheduleGate(resolved.result);

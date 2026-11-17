@@ -6,6 +6,7 @@
  *   Evidence → Claims → generateBloggerArticle → runQualityReviews → (optional revise) → approve eligibility
  */
 
+import { loadWriterAdvice, type WriterLessonDb } from "../editorial-brain/core/writer-lessons.js";
 import type { AppConfig } from "@ai-affiliate/config";
 import type { LifecycleRepository, ResearchRepository } from "@ai-affiliate/database";
 import type { Logger } from "@ai-affiliate/shared";
@@ -220,6 +221,10 @@ export async function runCanonicalArticlePipeline(
   const priorReviewFindings = await loadPriorReviewFindings(input.lifecycle, input.productCanonicalId).catch(
     () => [] as string[],
   );
+  const writerAdvice = await loadWriterAdvice(
+    (input.lifecycle as unknown as { prisma?: WriterLessonDb }).prisma,
+    "BLOG",
+  );
   const generated = await input.generation.generateBloggerArticle({
     topicId: boot.topicId,
     strategyId: boot.strategyId,
@@ -231,6 +236,7 @@ export async function runCanonicalArticlePipeline(
     // The stock route's own exclusion rules decide when a work may be written again.
     regenerateReason: "canonical-regeneration",
     priorReviewFindings,
+    writerAdvice,
   });
 
   const sc = (generated.version.structuredContent ?? {}) as Record<string, unknown>;

@@ -70,6 +70,7 @@ export type XSocialAdaptationInput = {
   taxonomyTags?: string[];
   articlePlanFacts?: XSocialFact[];
   officialDescription?: string | null;
+  writerAdvice?: string[];
   articleImages?: ArticleImage[] | unknown | null;
   publishedBlogUrl?: string | null;
   wordpressPermalink?: string | null;
@@ -452,6 +453,7 @@ export async function adaptCanonicalToXSocial(
     claimStatements: input.claimStatements,
     groundedPlanFacts: groundedPlanFactTexts(input.articlePlanFacts),
     officialDescription: input.officialDescription,
+    writerAdvice: input.writerAdvice,
     llm: input.llm,
     model: input.llmModel,
   });

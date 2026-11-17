@@ -169,6 +169,8 @@ export interface GenerateBloggerInput {
   regenerateReason?: string | null;
   /** Findings from this work's earlier rejected versions, shown to the writer. */
   priorReviewFindings?: string[] | null;
+  /** Brain advice from past rejections and human fixes (editorial-brain/core/writer-lessons.ts). */
+  writerAdvice?: string[] | null;
   topicId: string;
   strategyId: string;
   contentId?: string;
@@ -1341,6 +1343,7 @@ export class ContentGenerationService {
               ? evidencePackPrompt.officialDescription
               : null,
           priorReviewFindings: input.priorReviewFindings ?? null,
+          writerAdvice: input.writerAdvice ?? null,
         });
         const systemInstruction = slim.systemInstruction;
         const userPrompt = slim.userPrompt;
