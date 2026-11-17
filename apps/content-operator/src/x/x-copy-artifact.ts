@@ -8,7 +8,8 @@ import type { XAdaptedPost, XSocialAdaptationResult } from "./x-social-adaptatio
 import type { XSocialPlan } from "./social-plan.js";
 
 export const X_COPY_ARTIFACT_KEY = "xCopyArtifact";
-export const X_COPY_REUSE_POLICY_VERSION = "x-copy-reuse-v1";
+// v2 (2026-11-17): the writer prompt was rewritten, so copies written under the old prompt are not reused.
+export const X_COPY_REUSE_POLICY_VERSION = "x-copy-reuse-v2";
 
 /** Logical generations of the same fingerprint. Internal writer rewrites stay inside one generation. */
 export const MAX_LOGICAL_X_COPY_GENERATIONS = 3;

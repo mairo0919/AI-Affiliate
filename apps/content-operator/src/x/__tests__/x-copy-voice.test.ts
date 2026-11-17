@@ -2,12 +2,7 @@ import { describe, expect, it } from "vitest";
 import { reviewXSocialCopy } from "../social-review.js";
 import { buildXSocialWriterPrompts, X_SOCIAL_WRITER_PROMPT_VERSION } from "../social-write.js";
 import type { XSocialPlan } from "../social-plan.js";
-import {
-  chooseXCopyArchetype,
-  copiesOfficialDescription,
-  X_COPY_ARCHETYPES,
-  type XCopyArchetype,
-} from "../x-copy-voice.js";
+import { copiesOfficialDescription } from "../x-copy-voice.js";
 import { classifyXCopyOutcome, maxNewXCopyCandidatesForRefill } from "../x-copy-artifact.js";
 import { resolveNormalXProductUrl } from "../x-normal-destination.js";
 
@@ -41,27 +36,27 @@ function planFor(performer: string, fact: string): XSocialPlan {
   };
 }
 
-const WORKS: Array<{ performer: string; fact: string; archetype: XCopyArchetype; body: string }> = [
-  { performer: "九井スナオ", fact: "完全主観ホラー", archetype: "SHORT_REACTION", body: "九井スナオのやつ、普通によかった。" },
-  { performer: "糸井瑠花", fact: "女のアフター5", archetype: "FOUND_IT", body: "糸井瑠花の新しいの出てる。あとで見ようと思って一応保存。" },
-  { performer: "小那海あや", fact: "オーディション", archetype: "ONE_LINER", body: "小那海あやの新作これか。" },
-  { performer: "一色さら", fact: "無個性ゼンタイ人間化", archetype: "PERSONAL_PREFERENCE", body: "一色さらのこういう設定、個人的には結構好き。" },
-  { performer: "夏川あゆみ", fact: "ベスト", archetype: "LOW_EXPECTATION", body: "夏川あゆみ、タイトルだけ見た時はそこまでだったけど少し気になった。" },
-  { performer: "堀北桃愛", fact: "学生", archetype: "CASUAL_REVIEW", body: "堀北桃愛のやつ昨日見た。個人的にはこの人の方がよかった。" },
-  { performer: "有村のぞみ", fact: "総集編", archetype: "QUESTION", body: "有村のぞみって最近こういうの多いな。" },
-  { performer: "藤森里穂", fact: "メンズエステ", archetype: "PERFORMER_COMMENT", body: "藤森里穂の新しいやつ出てた。この人はこういう方が個人的には好き。" },
-  { performer: "広瀬美結", fact: "ゼンタイ", archetype: "SHORT_REACTION", body: "広瀬美結、なんか普通に見てしまった。" },
-  { performer: "加藤ツバキ", fact: "人間化", archetype: "FOUND_IT", body: "加藤ツバキのやつ出てた。とりあえず保存だけした。" },
-  { performer: "逢沢みゆ", fact: "タクシー", archetype: "ONE_LINER", body: "逢沢みゆのこれ、こういうのでいいんだよ。" },
-  { performer: "響蓮", fact: "8K", archetype: "QUESTION", body: "響蓮のシリーズ、前にも似たのなかったっけ。" },
-  { performer: "八木奈々", fact: "メンズエステ", archetype: "PERSONAL_PREFERENCE", body: "八木奈々のメンズエステ系、自分はこういうのが好きかも。" },
-  { performer: "天川そら", fact: "VR", archetype: "LOW_EXPECTATION", body: "天川そらのVR、最初はそこまでだった。内容見たらちょっと気になった。" },
-  { performer: "希月あまね", fact: "デビュー", archetype: "CASUAL_REVIEW", body: "希月あまねのやつ見た。笑ったけど普通によかった。" },
-  { performer: "青空ひかり", fact: "飲み会", archetype: "PERFORMER_COMMENT", body: "青空ひかりの新しいの。自分はこの人の方が好き。" },
-  { performer: "美園和花", fact: "同棲", archetype: "SHORT_REACTION", body: "美園和花の同棲のやつ、なんかよかった。" },
-  { performer: "森日向子", fact: "新作", archetype: "FOUND_IT", body: "森日向子の新しいの出てる。あとで見る。" },
-  { performer: "石川澪", fact: "先輩", archetype: "ONE_LINER", body: "石川澪の新作、これでいい。" },
-  { performer: "河北彩花", fact: "組み合わせ", archetype: "QUESTION", body: "河北彩花のこの組み合わせ、久しぶりに見た気がする。" },
+const WORKS: Array<{ performer: string; fact: string; body: string }> = [
+  { performer: "九井スナオ", fact: "完全主観ホラー", body: "九井スナオのやつ、普通によかった。" },
+  { performer: "糸井瑠花", fact: "女のアフター5", body: "糸井瑠花の新しいの出てる。あとで見ようと思って一応保存。" },
+  { performer: "小那海あや", fact: "オーディション", body: "小那海あやの新作これか。" },
+  { performer: "一色さら", fact: "無個性ゼンタイ人間化", body: "一色さらのこういう設定、個人的には結構好き。" },
+  { performer: "夏川あゆみ", fact: "ベスト", body: "夏川あゆみ、タイトルだけ見た時はそこまでだったけど少し気になった。" },
+  { performer: "堀北桃愛", fact: "学生", body: "堀北桃愛のやつ昨日見た。個人的にはこの人の方がよかった。" },
+  { performer: "有村のぞみ", fact: "総集編", body: "有村のぞみって最近こういうの多いな。" },
+  { performer: "藤森里穂", fact: "メンズエステ", body: "藤森里穂の新しいやつ出てた。この人はこういう方が個人的には好き。" },
+  { performer: "広瀬美結", fact: "ゼンタイ", body: "広瀬美結、なんか普通に見てしまった。" },
+  { performer: "加藤ツバキ", fact: "人間化", body: "加藤ツバキのやつ出てた。とりあえず保存だけした。" },
+  { performer: "逢沢みゆ", fact: "タクシー", body: "逢沢みゆのこれ、こういうのでいいんだよ。" },
+  { performer: "響蓮", fact: "8K", body: "響蓮のシリーズ、前にも似たのなかったっけ。" },
+  { performer: "八木奈々", fact: "メンズエステ", body: "八木奈々のメンズエステ系、自分はこういうのが好きかも。" },
+  { performer: "天川そら", fact: "VR", body: "天川そらのVR、最初はそこまでだった。内容見たらちょっと気になった。" },
+  { performer: "希月あまね", fact: "デビュー", body: "希月あまねのやつ見た。笑ったけど普通によかった。" },
+  { performer: "青空ひかり", fact: "飲み会", body: "青空ひかりの新しいの。自分はこの人の方が好き。" },
+  { performer: "美園和花", fact: "同棲", body: "美園和花の同棲のやつ、なんかよかった。" },
+  { performer: "森日向子", fact: "新作", body: "森日向子の新しいの出てる。あとで見る。" },
+  { performer: "石川澪", fact: "先輩", body: "石川澪の新作、これでいい。" },
+  { performer: "河北彩花", fact: "組み合わせ", body: "河北彩花のこの組み合わせ、久しぶりに見た気がする。" },
 ];
 
 describe("personal X copy voice", () => {
@@ -106,11 +101,10 @@ describe("personal X copy voice", () => {
     expect(recent.findings.map((f) => f.code)).toContain("TOO_SIMILAR_TO_RECENT_POST");
   });
 
-  it("rotates archetypes without another model call and keeps the existing cost gates", () => {
-    const recent = X_COPY_ARCHETYPES.slice(0, X_COPY_ARCHETYPES.length - 1);
-    expect(chooseXCopyArchetype("same-seed", recent)).toBe("QUESTION");
+  it("asks for what the work is and one scene, and keeps the existing cost gates", () => {
     const prompts = buildXSocialWriterPrompts(planFor("九井スナオ", "完全主観ホラー"));
-    expect(X_COPY_ARCHETYPES.some((name) => prompts.userPrompt.includes(name))).toBe(true);
+    expect(prompts.systemInstruction).toContain("場面を1つだけ");
+    expect(prompts.systemInstruction).not.toMatch(/VERY_SHORT|独り言/);
     expect(prompts.systemInstruction).toContain("個人Xアカウント");
     expect(prompts.systemInstruction).not.toContain("http");
     expect(X_SOCIAL_WRITER_PROMPT_VERSION).toBe("v3");
