@@ -96,17 +96,10 @@ export type XProseViolationCode =
   | "ARTICLE_SUMMARY_STYLE"
   | "CATALOG_DESCRIPTION_STYLE"
   | "TITLE_PARAPHRASE_STYLE"
-  | "GENERIC_WORK_INTRO"
-  | "FOCUS_NOT_SPECIFIC";
+  | "GENERIC_WORK_INTRO";
 
 function compactProse(text: string): string {
   return text.replace(/\s+/gu, "");
-}
-
-function isGenericFocusLabel(focus: string): boolean {
-  const value = focus.trim();
-  if (value.length < 2) return true;
-  return /^(?:作品の焦点|作品の具体点|焦点)$/u.test(value) || /の作品$/u.test(value);
 }
 
 /**
@@ -116,7 +109,7 @@ function isGenericFocusLabel(focus: string): boolean {
  */
 export function classifyXProseQuality(
   text: string,
-  input: { focus?: string | null; productTitle?: string | null },
+  input: { productTitle?: string | null },
 ): XProseViolationCode[] {
   const body = text.trim();
   if (!body) return [];
@@ -155,10 +148,6 @@ export function classifyXProseQuality(
     /シリーズ作品は[、，]/u.test(body)
   ) {
     codes.push("GENERIC_WORK_INTRO");
-  }
-  const focus = (input.focus ?? "").trim();
-  if (!isGenericFocusLabel(focus) && !compactProse(body).includes(compactProse(focus))) {
-    codes.push("FOCUS_NOT_SPECIFIC");
   }
   return codes;
 }

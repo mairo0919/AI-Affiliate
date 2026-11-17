@@ -45,6 +45,10 @@ export type SocialWriteResult = {
   mode: "llm" | "editorial_synthesize";
 };
 
+function dedupeStrings(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
 function ensurePeriod(s: string): string {
   const t = s.replace(/[。．]+$/u, "").trim();
   if (!t) return "";
@@ -62,7 +66,7 @@ function softNormalize(s: string): string {
 }
 
 const WRITER_REJECT_RE =
-  /魅力を感じ|注目が集まり|注目されます|入り込みやすい|雰囲気を引き立て|が出演する作品|見どころとして、|の近作では、|出演作では|という状況設定|状況設定が特徴|として制作されて|登場して|振り返ることが|におすすめ|興味がある方|KMPVRが変わる|制作・著作株式会社|という設定が|という設定も|魅力の一作|楽しめる一作|金ヅル|ナメ腐った|生き物の本懐|P活女ども|詳しくはこちら|記事に書いています/u;
+  /魅力を感じ|注目が集まり|注目されます|入り込みやすい|雰囲気を引き立て|が出演する作品|見どころとして、|の近作では、|出演作では|という状況設定|状況設定が特徴|として制作されて|登場して|振り返ることが|におすすめ|興味がある方|KMPVRが変わる|制作・著作株式会社|魅力の一作|楽しめる一作|金ヅル|ナメ腐った|生き物の本懐|P活女ども|詳しくはこちら|記事に書いています/u;
 
 function isAdultUnsafe(text: string): boolean {
   return detectXAdultExpressions(text).hit;
@@ -240,11 +244,14 @@ export function buildXSocialWriterPrompts(
   userPrompt: string;
   outputSchema: Record<string, unknown>;
 } {
-  const writerPlan = {
-    FOCUS: plan.angle,
-    SUBJECT: plan.subject,
-    RELATIONS: plan.semanticRelations ?? [],
-    SUPPORTING: (plan.semanticFacts ?? []).filter((fact) => fact.salience === "supporting").map((fact) => fact.value),
+  // 2026-11-17: the writer only saw one clipped clause (FOCUS), so it did not know what the work was.
+  // It now reads the whole official information and picks the scene itself.
+  const writerSource = {
+    TITLE: plan.productTitle,
+    PERFORMERS: plan.canonicalContext.performers,
+    SERIES: plan.canonicalContext.seriesName,
+    OFFICIAL_DESCRIPTION: plan.officialDescription ?? null,
+    FACTS: dedupeStrings([...(plan.semanticFacts ?? []).map((fact) => fact.value), ...plan.allowedClaims]),
   };
   const hints = (opts?.revisionHints ?? []).filter(Boolean);
   const prev = (opts?.previousBody ?? "").trim();
@@ -259,8 +266,8 @@ export function buildXSocialWriterPrompts(
       prev
         ? `Previous draft (do not copy flaws; rewrite from grounded plan):\n${prev.slice(0, 280)}`
         : "",
-      "X_PLAN:",
-      JSON.stringify(writerPlan, null, 2),
+      "OFFICIAL_SOURCE（作品について書いてよいのはここにあることだけ）:",
+      JSON.stringify(writerSource, null, 2),
     ]
       .filter(Boolean)
       .join("\n"),
@@ -363,8 +370,7 @@ export async function writeXSocialCopy(
           };
           const retryHints = [
             ...(opts?.revisionHints ?? []),
-            "Use ONLY EXPRESSION_SAFE_FACTS / SUBJECT / CONTENT_TYPE.",
-            "Ignore WORK_UNDERSTANDING entirely.",
+            "Use only OFFICIAL_SOURCE.",
             "Describe cast and setting only — never sexual acts or body focus.",
             "No CTA, no mechanical templates, no empty praise.",
           ];

@@ -104,6 +104,8 @@ export type XSocialPlan = {
   /** Soft publication intent — not a fixed thread template. */
   publicationIntent: XSocialPublicationIntent;
   productTitle: string;
+  /** The official description, given to the writer whole so it knows what the work is. */
+  officialDescription?: string | null;
   canonicalContext: {
     performers: string[];
     seriesName: string | null;
@@ -919,6 +921,7 @@ export function planXSocial(input: XPlannerInput): XPlanResult {
         preferredReplyOrder,
       },
       productTitle,
+      officialDescription: input.officialDescription?.trim() || null,
       canonicalContext: {
         performers: performers.filter((p) => p.length >= 2).slice(0, 5),
         seriesName: seriesSafe,

@@ -121,6 +121,19 @@ describe("personal X copy voice", () => {
     ).toBe(true);
   });
 
+  it("gives the writer the whole official description and accepts a post that names the situation and one scene", () => {
+    const description = "夫の出張中、隣に住む大学生を部屋に招いた人妻。雨の夜、濡れた彼にタオルを渡したことから距離が縮まっていく。";
+    const plan = { ...planFor("美園和花", "隣の大学生"), officialDescription: description };
+    const prompts = buildXSocialWriterPrompts(plan);
+    expect(prompts.userPrompt).toContain(description);
+    const review = reviewXSocialCopy(
+      "美園和花が夫の出張中に隣の大学生を部屋に招くという設定。雨の夜にタオルを渡しながら距離が縮まる場面、ここから先が気になる。",
+      plan,
+      { officialDescription: description },
+    );
+    expect(review.ok, review.findings.map((f) => f.code).join(",")).toBe(true);
+  });
+
   it("keeps the official normal product URL helper off affiliate hosts", () => {
     const url = resolveNormalXProductUrl({
       canonicalCid: "dvaj00760",

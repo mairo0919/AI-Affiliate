@@ -259,16 +259,7 @@ export function reviewXSocialCopy(
       "package/scene narration voice — not third-party media introduction",
     );
   }
-  if (
-    sents.some(
-      (s) =>
-        /^(?:そして|その後|すると)/u.test(s) === false &&
-        /しながら.+(する|した)$/u.test(s) &&
-        !/出演|紹介|作品/u.test(s),
-    )
-  ) {
-    fail("VOICE", "SCENE_NARRATION", "scene-narration sentence shape");
-  }
+  // SCENE_NARRATION (〜しながら〜する) is gone: the writer is asked for one concrete scene (2026-11-17).
 
   if (MECHANICAL_TEMPLATE_RE.test(text) || isMechanicalIntro(text, plan)) {
     fail(
@@ -309,10 +300,8 @@ export function reviewXSocialCopy(
   // A long verbatim run of the title or the official blurb used as a noun
   // ("〇〇は、<pasted run>を収録している") reads as a catalog paste, not a post.
   const nameKeys = [plan.subject ?? "", plan.canonicalContext.seriesName ?? "", ...plan.canonicalContext.performers];
-  const pastedRun = Math.max(
-    plan.productTitle ? longestTitleSliceInPost(text, plan.productTitle, nameKeys) : 0,
-    opts?.officialDescription ? longestTitleSliceInPost(text, opts.officialDescription, nameKeys) : 0,
-  );
+  // The blurb is checked by OFFICIAL_DESCRIPTION_COPY; a 10-character run of it is how a post names the situation.
+  const pastedRun = plan.productTitle ? longestTitleSliceInPost(text, plan.productTitle, nameKeys) : 0;
   if (pastedRun >= X_TITLE_SLICE_LIMIT) {
     fail("NATURAL_JAPANESE", "TITLE_SLICE_COPY", "long verbatim run of the official title or blurb pasted into the post");
   }
@@ -341,8 +330,8 @@ export function reviewXSocialCopy(
     .filter((fact) => fact.salience === "primary")
     .map((fact) => fact.value);
   const workNamed = identifiesXWork(text, plan);
-  for (const code of classifyXProseQuality(text, { focus: plan.angle, productTitle: plan.productTitle })) {
-    if (code === "FOCUS_NOT_SPECIFIC" && workNamed) continue;
+  // No focus is passed: the writer picks its own scene from the whole official source (2026-11-17).
+  for (const code of classifyXProseQuality(text, { productTitle: plan.productTitle })) {
     fail("PROSE_QUALITY", code, `x prose quality: ${code}`);
   }
 
@@ -407,28 +396,12 @@ export function reviewXSocialCopy(
     compactLen >= 16 &&
     /収録している|収録されている|出演している/u.test(text);
 
-  if (/という作品です|という設定が|という独特な舞台設定|という設定も|という設定を|という企画|を描く|描いて/u.test(text)) {
-    fail("VOICE", "GENERIC_FRAME", "generic 「という作品／設定」 frame concentration");
-  }
+  // GENERIC_FRAME (という設定 / 描く) is gone: saying what situation the work is about is now the brief (2026-11-17).
 
   // Publish bar: too short / name-only stubs.
   const personalShort = workNamed && compactLen >= 10;
   if (compactLen > 0 && compactLen < 36 && !personalShort && !(concreteHook && compactLen >= 16) && !honestShort) {
     fail("PRODUCT_SPECIFICITY", "LOW_INFORMATION", "body too short for publish-quality intro");
-  } else if (
-    sents.length <= 1 &&
-    compactLen < 48 &&
-    !personalShort &&
-    !concreteHook &&
-    !honestShort &&
-    (Boolean(plan.corePremise) || plan.workUnderstanding.length >= 1)
-  ) {
-    fail(
-      "PRODUCT_SPECIFICITY",
-      "THIN_WORK_INTRO",
-      "parent copy too thin — expect multi-sentence work introduction",
-      "BLOCKING",
-    );
   }
 
   const semanticValues = (plan.semanticFacts ?? []).map((fact) => fact.value);
@@ -528,7 +501,6 @@ export function reviewXSocialCopy(
     "MECHANICAL_TEMPLATE",
     "TOO_LONG",
     "EMPTY_BODY",
-    "THIN_WORK_INTRO",
     "LOW_INFORMATION",
     "UNGROUNDED",
     "COHERENCE",
@@ -537,7 +509,6 @@ export function reviewXSocialCopy(
     "INCOMPLETE_SENTENCE",
     "CATALOG_SUMMARY",
     "GENERIC_PUFFERY",
-    "GENERIC_FRAME",
     "FRAGMENT_ASSEMBLY",
     "PACKAGE_FRAGMENT_GLUE",
     "BROKEN_PHRASE",
@@ -548,12 +519,10 @@ export function reviewXSocialCopy(
     "CATALOG_DESCRIPTION_STYLE",
     "TITLE_PARAPHRASE_STYLE",
     "GENERIC_WORK_INTRO",
-    "FOCUS_NOT_SPECIFIC",
     "UNSUPPORTED_SWEEP",
     "TOO_THIN",
     "STOCK_CTA",
     "PACKAGE_SCENE_NARRATION",
-    "SCENE_NARRATION",
     "SOURCE_VOICE",
     "AI_PHRASE_DETECTED",
     "AD_COPY_DETECTED",
@@ -707,14 +676,14 @@ function findingsToHints(findings: SocialReviewFinding[]): string[] {
   const codes = new Set(findings.map((f) => f.code));
   const hints: string[] = [];
   if (codes.has("ADULT_EXPRESSION")) {
-    hints.push("Remove adult/sexual wording; paraphrase only with EXPRESSION_SAFE_FACTS.");
+    hints.push("Remove adult/sexual wording; describe the cast and the situation instead.");
   }
   if (codes.has("MECHANICAL_TEMPLATE") || codes.has("MECHANICAL_INTRO")) {
     hints.push("Avoid が出演する作品で / 作品紹介 templates; write a varied natural opening.");
   }
   if (codes.has("CATALOG_SUMMARY") || codes.has("GENERIC_PUFFERY") || codes.has("GENERIC_FRAME")) {
     hints.push(
-      "Remove every evaluation (魅力, 話題, 世界観, 没入, 味わえる, 楽しめる, 活躍). The sentence may only name the performer and one EXPRESSION_SAFE_FACT.",
+      "Remove empty evaluation (魅力, 話題, 世界観, 没入, 味わえる, 楽しめる, 活躍). Say what happens in the work instead.",
     );
   }
   if (
@@ -727,7 +696,7 @@ function findingsToHints(findings: SocialReviewFinding[]): string[] {
     codes.has("PACKAGE_FRAGMENT_GLUE")
   ) {
     hints.push(
-      "Write only a relation that is already in RELATIONS. Put the primary fact in the sentence. Do not make the post a runtime, disc count, BEST, or 配信限定 readout. Do not write 「の作品は、〜だ」. Do not treat a campaign as something that 収録される, or a person as the work.",
+      "Write whole natural sentences in your own words. Do not make the post a runtime, disc count, BEST, or 配信限定 readout. Do not write 「の作品は、〜だ」. Do not treat a campaign as something that 収録される, or a person as the work.",
     );
   }
   if (codes.has("UNSUPPORTED_SWEEP")) {
@@ -737,19 +706,18 @@ function findingsToHints(findings: SocialReviewFinding[]): string[] {
     codes.has("ARTICLE_SUMMARY_STYLE") ||
     codes.has("CATALOG_DESCRIPTION_STYLE") ||
     codes.has("TITLE_PARAPHRASE_STYLE") ||
-    codes.has("GENERIC_WORK_INTRO") ||
-    codes.has("FOCUS_NOT_SPECIFIC")
+    codes.has("GENERIC_WORK_INTRO")
   ) {
     hints.push(
-      "Fact overlap is not enough. Write one natural X post about FOCUS only. Do not use 本作は, として制作, が特徴, or a title paraphrase as an overview.",
+      "Do not use 本作は, として制作, が特徴, or a title paraphrase as an overview. Say who is in what situation and one scene from OFFICIAL_SOURCE.",
     );
   }
-  if (codes.has("THIN_WORK_INTRO") || codes.has("LOW_INFORMATION") || codes.has("TOO_THIN")) {
-    hints.push("Write one or two sentences about FOCUS. Do not expand into a work overview.");
+  if (codes.has("LOW_INFORMATION") || codes.has("TOO_THIN")) {
+    hints.push("Say who is in what situation, and one scene from OFFICIAL_SOURCE.");
   }
   if (codes.has("UNGROUNDED") || codes.has("COHERENCE")) {
     hints.push(
-      "Stay inside ANGLE / WORK_UNDERSTANDING / EXPRESSION_SAFE_FACTS. Do not invent cast history, jobs, or scenes absent from the plan.",
+      "Stay inside OFFICIAL_SOURCE. Do not invent cast history, jobs, places, or scenes it does not contain.",
     );
   }
   if (codes.has("TITLE_SLICE_COPY")) {
@@ -793,7 +761,7 @@ export async function rewriteXSocialCopyOnce(
   const hints = findingsToHints(findings);
   if (codes.has("EMPTY_BODY") || !previous.trim()) {
     hints.unshift(
-      "Previous draft was empty or discarded. Write a fresh publish-quality body from EXPRESSION_SAFE_FACTS / SUBJECT / ANGLE only.",
+      "Previous draft was empty or discarded. Write a fresh body from OFFICIAL_SOURCE only.",
     );
   }
   hints.push(
@@ -809,8 +777,7 @@ export async function rewriteXSocialCopyOnce(
       !codes.has("ARTICLE_SUMMARY_STYLE") &&
       !codes.has("CATALOG_DESCRIPTION_STYLE") &&
       !codes.has("TITLE_PARAPHRASE_STYLE") &&
-      !codes.has("GENERIC_WORK_INTRO") &&
-      !codes.has("FOCUS_NOT_SPECIFIC");
+      !codes.has("GENERIC_WORK_INTRO");
     const rewritten = await writeXSocialCopy(plan, {
       llm: opts.llm,
       model: opts.model,
