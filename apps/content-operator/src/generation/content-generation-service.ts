@@ -2612,17 +2612,16 @@ export class ContentGenerationService {
     const reviews: QualityReviewRecord[] = [];
     const allReviewTypes = [
       "claim-consistency",
-      "factual-consistency",
       "writing-quality",
       // seo-basic is gone: it failed natural headlines for not naming an empty or series-name primaryQuery,
       // and the revision then replaced the headline with the official title (2026-11-14). Search title
       // and description now come from the headline and opening paragraph.
-      "adult-policy",
-      "blogger-readiness",
+      // factual-consistency (same evidence and question as claim-consistency), adult-policy (evaluatePolicies
+      // above checks the same text in code) and blogger-readiness (no criteria) are gone too: none of them
+      // failed a single article in 14 days, about 250 articles (2026-11-17).
     ] as const;
     const semanticTypes = new Set([
       "claim-consistency",
-      "factual-consistency",
       "writing-quality",
     ]);
     const allowed = options?.allowedReviewTypes
@@ -2652,16 +2651,7 @@ export class ContentGenerationService {
       if (options?.stopOnFirstFailure && (overall === "failed" || policy.overall === "BLOCKED")) {
         break;
       }
-      const promptId =
-        reviewType === "claim-consistency"
-          ? "review.claim"
-          : reviewType === "factual-consistency"
-            ? "review.factual"
-            : reviewType === "adult-policy"
-              ? "review.adult-policy"
-              : reviewType === "blogger-readiness"
-                ? "review.channel-fit"
-                : "review.writing-quality";
+      const promptId = reviewType === "claim-consistency" ? "review.claim" : "review.writing-quality";
 
       const prompt = await this.prompts.getPrompt(promptId, "v1");
       const reusable = existing.find((r) => {
@@ -2686,7 +2676,7 @@ export class ContentGenerationService {
       });
       // Fact reviewers judge against the same official material the writer was given.
       const officialEvidence =
-        reviewType === "claim-consistency" || reviewType === "factual-consistency"
+        reviewType === "claim-consistency"
           ? reviewEvidenceFromStructuredContent(version.structuredContent)
           : null;
       const reviewUserPrompt = officialEvidence
