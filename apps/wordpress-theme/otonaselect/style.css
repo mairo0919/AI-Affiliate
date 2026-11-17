@@ -6,7 +6,7 @@ Description: オトナセレクト専用の軽量ブロックテーマ。note風
 Requires at least: 6.7
 Tested up to: 6.8
 Requires PHP: 8.0
-Version: 1.6.11
+Version: 1.6.12
 License: GNU General Public License v2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 Text Domain: otonaselect
@@ -627,16 +627,41 @@ body.single-post .otonaselect-single-title {
 	object-fit: contain;
 }
 
-/* Samples: separate from hero; tame inline width:50% */
+/* Samples: a row of square thumbnails (4 across, 3 on phones), tap to enlarge (front-enhance.js).
+   One per row made tall VR stills fill whole screens (user, 2026-11-17). */
 .wp-block-post-content .blog-sample {
-	margin: 0 0 1.25em;
-	max-width: min(100%, 22rem);
+	display: inline-block;
+	vertical-align: top;
+	width: calc(25% - 0.5em);
+	max-width: none;
+	margin: 0 0.4em 0.4em 0 !important;
 }
 
 .wp-block-post-content .blog-sample img {
 	width: 100% !important;
 	max-width: 100% !important;
 	height: auto !important;
+	aspect-ratio: 1;
+	object-fit: cover;
+	cursor: zoom-in;
+	border-radius: 4px;
+}
+
+.otonaselect-lightbox {
+	position: fixed;
+	inset: 0;
+	z-index: 1000;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 1rem;
+	background: rgba(0, 0, 0, 0.88);
+	cursor: zoom-out;
+}
+
+.otonaselect-lightbox img {
+	max-width: 100%;
+	max-height: 100%;
 	object-fit: contain;
 }
 
@@ -843,7 +868,7 @@ body.single-post .otonaselect-single-title {
 	}
 
 	.wp-block-post-content .blog-sample {
-		max-width: 100%;
+		width: calc(33.333% - 0.5em);
 	}
 
 	.wp-block-post-content .blog-cta a {

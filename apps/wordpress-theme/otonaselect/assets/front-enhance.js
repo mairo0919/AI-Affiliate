@@ -1,5 +1,5 @@
 /**
- * Front helpers: taxonomy cleanup + analytics only.
+ * Front helpers: taxonomy cleanup, analytics, and enlarging sample thumbnails.
  * Card images are resolved server-side in presentation.php (no REST N+1).
  */
 (function () {
@@ -160,6 +160,29 @@
     }
   }
 
+  function wireSampleLightbox() {
+    document.addEventListener("click", function (ev) {
+      var img = ev.target.closest && ev.target.closest(".blog-sample img");
+      if (!img) return;
+      var box = document.createElement("div");
+      box.className = "otonaselect-lightbox";
+      var big = document.createElement("img");
+      big.src = img.currentSrc || img.src;
+      big.alt = img.alt;
+      box.appendChild(big);
+      function close() {
+        box.remove();
+        document.removeEventListener("keydown", onKey);
+      }
+      function onKey(e) {
+        if (e.key === "Escape") close();
+      }
+      box.addEventListener("click", close);
+      document.addEventListener("keydown", onKey);
+      document.body.appendChild(box);
+    });
+  }
+
   function ready(fn) {
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", fn);
     else fn();
@@ -169,5 +192,6 @@
     cleanupTaxonomy();
     hideFalseEmptyState();
     wireAnalytics();
+    wireSampleLightbox();
   });
 })();

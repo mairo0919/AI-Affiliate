@@ -11,8 +11,8 @@ function read(rel: string): string {
 }
 
 describe("otonaselect SEO foundation contracts", () => {
-  it("ships theme 1.6.11 with rewrite flush version gate", () => {
-    expect(read("style.css")).toMatch(/Version:\s*1\.6\.11/);
+  it("ships theme 1.6.12 with rewrite flush version gate", () => {
+    expect(read("style.css")).toMatch(/Version:\s*1\.6\.12/);
     const tax = read("inc/taxonomies.php");
     expect(tax).toContain("otonaselect-tax-rewrite-1.6.7");
     expect(tax).toContain("flush_rewrite_rules");
@@ -104,6 +104,14 @@ describe("otonaselect SEO foundation contracts", () => {
     expect(seo.match(/\$term->count < OTONASELECT_MIN_INDEXED_TERM_POSTS/g)).toHaveLength(2);
     expect(seo).toContain("$args['exclude'] = $thin");
     expect(seo).toMatch(/wp_sitemaps_taxonomies_query_args[\s\S]*?\}, 10, 2\);/);
+  });
+
+  it("lays sample images out as tappable thumbnails, not one tall image per row", () => {
+    const css = read("style.css");
+    expect(css).toMatch(/\.blog-sample \{\s*display: inline-block;[\s\S]*?width: calc\(25% - 0\.5em\)/);
+    expect(css).toContain("width: calc(33.333% - 0.5em)");
+    expect(css).toContain(".otonaselect-lightbox");
+    expect(read("assets/front-enhance.js")).toContain('closest(".blog-sample img")');
   });
 
   it("does not breadcrumb to non-existent taxonomy roots", () => {

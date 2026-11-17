@@ -456,10 +456,12 @@ export function selectArticleImagesWithReport(input: {
     };
   }
 
+  // A VR work's package image is a landscape scene collage; its jacket is sample 1 (31 of 32 VR posts, 2026-11-17), so the collage is left out.
+  const isVrJacket = (x: ArticleImageCandidate) => /vr/.test(x.contentKey.split(":")[0]!) && x.contentKey.endsWith(":sample:1");
   const byHero = [...unique].sort((a, b) => {
     // Prefer package family for hero over sample images.
     const famScore = (x: ArticleImageCandidate) =>
-      x.family === "package" ? 2 : x.family === "other" ? 1 : 0;
+      isVrJacket(x) ? 3 : x.family === "package" ? 2 : x.family === "other" ? 1 : 0;
     return famScore(b) - famScore(a) || b.heroRank - a.heroRank || b.qualityRank - a.qualityRank;
   });
   const hero = byHero[0]!;

@@ -98,6 +98,28 @@ describe("imageContentKey underscore CIDs", () => {
     expect(urls.some((u) => /mgtd00084-1\.jpg$/.test(u))).toBe(false);
     expect(urls.some((u) => u.endsWith("ps.jpg"))).toBe(false);
   });
+
+  it("puts a VR work's jacket (sample 1) first and leaves out its package collage", () => {
+    // savr00684 (post 922): pl.jpg is a landscape scene collage, jp-1 is the jacket.
+    const img = (id: string, imageType: string, file: string) => ({
+      id,
+      imageType,
+      sourceUrl: `https://pics.dmm.co.jp/digital/video/savr00684/${file}`,
+      usageStatus: "ALLOWED",
+    });
+    const report = selectArticleImagesWithReport({
+      researchImages: [
+        img("1", "main_large", "savr00684pl.jpg"),
+        img("2", "main_small", "savr00684ps.jpg"),
+        img("3", "sample_large", "savr00684jp-1.jpg"),
+        img("4", "sample_large", "savr00684jp-2.jpg"),
+      ],
+    });
+    expect(report.selected.map((s) => [s.role, s.sourceUrl.split("/").pop()])).toEqual([
+      ["hero", "savr00684jp-1.jpg"],
+      ["auxiliary", "savr00684jp-2.jpg"],
+    ]);
+  });
 });
 
 describe("proposeMaxOfficialImageUrl", () => {
