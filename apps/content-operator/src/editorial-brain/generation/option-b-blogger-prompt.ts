@@ -153,6 +153,8 @@ export function buildOptionBBloggerGeneratorPrompt(input: {
   priorReviewFindings?: string[] | null;
   /** Brain advice from past rejections and human fixes. */
   writerAdvice?: string[] | null;
+  /** What buyers wrote on the work page (EvidencePack.buyerReviews). */
+  buyerReviews?: string[] | null;
 }): { systemInstruction: string; userPrompt: string; outputSchema: Record<string, unknown> } {
   const baseSchema = getOptionBBloggerArticleLlmJsonSchema();
   const outputSchema = applyArticleOutputContractToLlmSchema(
@@ -247,6 +249,12 @@ export function buildOptionBBloggerGeneratorPrompt(input: {
       ? [
           "OFFICIAL_DESCRIPTION (context only — read it to understand how the planned facts relate, then write in your own words. Do not copy its sentences: a sentence that carries 30 or more consecutive characters of it is rejected. Concrete facts still come from ARTICLE_PLAN):",
           input.officialDescription.trim(),
+        ].join("\n")
+      : "",
+    input.buyerReviews?.length
+      ? [
+          "BUYER_REVIEWS (what people who bought this work wrote). Put one or two concrete points from them in the body — a scene, act, body detail, or line the official text lacks — each in a sentence that says buyers' reviews mention it (買った人のレビューでは…, レビューで挙がっているのは…). Use only what a reviewer says happens in this work — never a wish (〜してほしい), a complaint about something missing, or another work. Say what they mention, not how good it was or how popular (no 印象的, 話題). Do not write as if you watched. Do not copy a review sentence.",
+          ...input.buyerReviews.map((line) => `- ${line}`),
         ].join("\n")
       : "",
     input.priorReviewFindings?.length

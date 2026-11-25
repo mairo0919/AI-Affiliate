@@ -141,6 +141,11 @@ export type ArticlePlan = {
    * Writer and Rewrite must reuse this object; they must not replace the query.
    */
   seoSearchIntent?: import("./seo-search-intent.js").SeoSearchIntent | null;
+  /**
+   * What buyers wrote (EvidencePack.buyerReviews). Not a planned fact: a sentence may draw on it
+   * only when it attributes the point to buyers' reviews.
+   */
+  buyerReviews?: string[] | null;
 };
 
 export const ARTICLE_PLAN_JOBS = {

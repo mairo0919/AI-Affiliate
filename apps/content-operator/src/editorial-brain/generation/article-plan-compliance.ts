@@ -99,6 +99,15 @@ export type ArticlePlanComplianceMutationResult = {
   mutated: boolean;
 };
 
+const BUYER_ATTRIBUTION_RE = /レビュー|買った人|購入者/;
+
+/** Buyer reviews back a sentence only when that sentence attributes the point to buyers. */
+function attestedFactsFor(text: string, planFacts: string[], plan: ArticlePlan): string[] {
+  return plan.buyerReviews?.length && BUYER_ATTRIBUTION_RE.test(text)
+    ? [...planFacts, ...plan.buyerReviews]
+    : planFacts;
+}
+
 /** Concrete scene stems — used only to detect plan-unbacked concrete additions. */
 const CONCRETE_STEM_RE =
   /杭打ち|逆3P|逆5P|手コキ|腿コキ|アナル舐め|射精|専属第二弾|性感|12タイトル|ベスト第6弾|回春エステ|催●|学芸員|コインランドリー|ピストン|170cm|痴女|犯される|攻め立て|ガニ股|バレー/g;
@@ -490,7 +499,7 @@ function checkUnplannedConcrete(
     const p = bodyParas[i]!;
     const stems = p.match(CONCRETE_STEM_RE) ?? [];
     for (const stem of stems) {
-      const backed = planFacts.some(
+      const backed = attestedFactsFor(p, planFacts, plan).some(
         (f) =>
           f.includes(stem) ||
           paraphraseHit(p, f) ||
@@ -566,12 +575,13 @@ function checkPlanAttestationSurplus(
   article: ArticlePlanComplianceArticle,
 ): ArticlePlanComplianceFinding[] {
   const findings: ArticlePlanComplianceFinding[] = [];
-  const planFacts = writerVisiblePlanFacts(articlePlanAllFacts(plan));
+  const planFactsBase = writerVisiblePlanFacts(articlePlanAllFacts(plan));
   const bodyParas = article.sections.flatMap((s) => s.paragraphs);
   for (let i = 0; i < bodyParas.length; i++) {
     const p = bodyParas[i]!;
     for (const sent of splitIntoSentences(p)) {
       if (sent.replace(/\s+/g, "").length < 10) continue;
+      const planFacts = attestedFactsFor(sent, planFactsBase, plan);
       if (hasShortThemeSemanticOverreach(sent, planFacts)) {
         findings.push({
           code: "PLAN_THEME_OVERREACH",
@@ -666,7 +676,7 @@ export function stripPureUnsupportedEvalClosers(input: {
 
   for (let i = 0; i < body.length; i++) {
     const sentence = body[i]!.sentence;
-    if (!isPureUnsupportedEvaluativePadding(sentence, planFacts)) continue;
+    if (!isPureUnsupportedEvaluativePadding(sentence, attestedFactsFor(sentence, planFacts, input.articlePlan))) continue;
 
     const currentKept = body.map((b) => b.sentence).filter((_, j) => keptFlags[j]);
     const dropIdx = currentKept.indexOf(sentence);

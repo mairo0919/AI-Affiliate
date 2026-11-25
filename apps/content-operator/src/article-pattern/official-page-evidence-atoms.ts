@@ -1082,6 +1082,8 @@ export type PageEvidenceMetaShape = {
     originField?: string;
   } | null;
   actors?: string[];
+  /** Buyer reviews captured with the page (see fanza-page-evidence-fetch). */
+  buyerReviews?: Array<{ title?: string | null; comment?: string; rating?: number | null; helpfulCount?: number }>;
   images?: Array<{ contentKey?: string; sourceUrl?: string }>;
   uniqueSampleSceneCount?: number;
   uniquePackageCount?: number;

@@ -22,6 +22,7 @@ import { canonicalizeResearchUrl } from "../../ops/research-url-canonical.js";
 import {
   extractFanzaPageEvidenceFromHtml,
   type FanzaPageEvidence,
+  type PageBuyerReview,
 } from "./fanza-page-evidence.js";
 
 export type PageEvidenceFetchMode = "html" | "browser_fallback" | "fixture";
@@ -228,10 +229,13 @@ export async function fetchFanzaPageEvidence(
     if (browserHtml.html) {
       html = browserHtml.html;
       if (browserHtml.finalUrl) finalUrl = browserHtml.finalUrl;
-      evidence = extractFanzaPageEvidenceFromHtml({
-        html,
-        contentIdHint: options.contentIdHint,
-      });
+      evidence = {
+        ...extractFanzaPageEvidenceFromHtml({
+          html,
+          contentIdHint: options.contentIdHint,
+        }),
+        buyerReviews: browserHtml.buyerReviews,
+      };
       const captureClass =
         browserHtml.captureClass ??
         classifyOfficialPageCapture({
@@ -349,6 +353,7 @@ async function fetchRenderedHtmlLowCost(input: {
   finalUrl?: string;
   title?: string;
   bodyTextLength?: number;
+  buyerReviews?: PageBuyerReview[];
   requestEstimate: number;
   captureClass: OfficialPageCaptureClass;
   captureDetail?: string;
@@ -388,6 +393,25 @@ async function fetchRenderedHtmlLowCost(input: {
     });
     const page = await context.newPage();
     page.setDefaultNavigationTimeout(input.navigationTimeoutMs);
+    // The page loads its buyer reviews itself once the review section scrolls into view; keep
+    // what it receives (2026-11-26: the user chose buyer reviews as article material).
+    const buyerReviews: PageBuyerReview[] = [];
+    page.on("response", async (response) => {
+      if (!response.url().includes("/graphql")) return;
+      const json = (await response.json().catch(() => null)) as {
+        data?: { reviews?: { items?: Array<Record<string, unknown>> } };
+      } | null;
+      for (const item of json?.data?.reviews?.items ?? []) {
+        const comment = typeof item.comment === "string" ? item.comment.trim() : "";
+        if (!comment) continue;
+        buyerReviews.push({
+          title: typeof item.title === "string" ? item.title.trim() || null : null,
+          comment,
+          rating: typeof item.rating === "number" ? item.rating : null,
+          helpfulCount: typeof item.helpfulCount === "number" ? item.helpfulCount : 0,
+        });
+      }
+    });
     await page.goto(input.url, { waitUntil: "domcontentloaded" });
 
     // Age gate: official affirm only (when cookies were not yet injected / still gated)
@@ -424,6 +448,11 @@ async function fetchRenderedHtmlLowCost(input: {
       )
       .catch(() => undefined);
 
+    for (let i = 0; i < 5 && buyerReviews.length === 0; i++) {
+      await page.mouse.wheel(0, 2500).catch(() => undefined);
+      await page.waitForTimeout(700);
+    }
+
     const html = await readStablePageHtml(page);
     const renderedUrl = page.url();
     const renderedTitle = await page.title().catch(() => "");
@@ -455,6 +484,7 @@ async function fetchRenderedHtmlLowCost(input: {
       finalUrl: renderedUrl,
       title: renderedTitle,
       bodyTextLength: flags.bodyTextLength ?? 0,
+      buyerReviews,
       requestEstimate,
       captureClass: classifyOfficialPageCapture({
         finalUrl: renderedUrl,

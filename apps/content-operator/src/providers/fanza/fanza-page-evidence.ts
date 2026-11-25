@@ -76,6 +76,15 @@ export type FanzaPageEvidence = {
   actors: string[];
   extractMode: "jsonld" | "gallery_dom" | "jsonld+gallery" | "empty";
   originFields: string[];
+  /** Buyer reviews the work page loaded while it rendered (absent on HTML-only fetches). */
+  buyerReviews?: PageBuyerReview[];
+};
+
+export type PageBuyerReview = {
+  title: string | null;
+  comment: string;
+  rating: number | null;
+  helpfulCount: number;
 };
 
 export type MergedProductImageEvidence = {
@@ -542,6 +551,7 @@ export function toSourceDocumentPageEvidenceMeta(evidence: FanzaPageEvidence): R
     video: evidence.video,
     description: evidence.description,
     actors: evidence.actors,
+    buyerReviews: evidence.buyerReviews ?? [],
   };
 }
 

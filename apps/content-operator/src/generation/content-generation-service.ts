@@ -940,6 +940,7 @@ export class ContentGenerationService {
       ...articlePlanBase,
       editorialDecision,
       seoSearchIntent,
+      ...(evidencePack.buyerReviews?.length ? { buyerReviews: evidencePack.buyerReviews } : {}),
     };
     const articlePlanExecution = toWriterExecutionContractView(
       buildArticlePlanExecutionContract(articlePlanWithDecision),
@@ -1344,6 +1345,7 @@ export class ContentGenerationService {
               : null,
           priorReviewFindings: input.priorReviewFindings ?? null,
           writerAdvice: input.writerAdvice ?? null,
+          buyerReviews: evidencePack.buyerReviews ?? null,
         });
         const systemInstruction = slim.systemInstruction;
         const userPrompt = slim.userPrompt;
@@ -3109,6 +3111,9 @@ export function reviewEvidenceFromStructuredContent(structuredContent: unknown):
       ? pack.officialDescription
       : "";
   const title = typeof pack.productTitle === "string" ? pack.productTitle : "";
+  const buyerReviews = Array.isArray(pack.buyerReviews)
+    ? (pack.buyerReviews as unknown[]).filter((v): v is string => typeof v === "string")
+    : [];
   if (!title && claims.length === 0 && !description.trim()) return null;
   return [
     "OFFICIAL_EVIDENCE — the only source of product facts (cast, series, label, runtime, content, setting).",
@@ -3116,6 +3121,9 @@ export function reviewEvidenceFromStructuredContent(structuredContent: unknown):
     title ? `productTitle: ${title}` : "",
     claims.length ? `supportedClaims:\n- ${claims.join("\n- ")}` : "",
     description.trim() ? `officialDescription:\n${description.trim()}` : "",
+    buyerReviews.length
+      ? `BUYER_REVIEWS — what buyers wrote. A sentence that attributes a point to buyers' reviews is supported when these say it:\n- ${buyerReviews.join("\n- ")}`
+      : "",
   ]
     .filter(Boolean)
     .join("\n");

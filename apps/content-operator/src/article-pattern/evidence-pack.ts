@@ -137,7 +137,27 @@ export type EvidencePack = {
   insufficientReason: string | null;
   /** R143 — unique performer entities from official metadata (not family-deduped facts). */
   performerItems: PerformerEntity[];
+  /**
+   * What buyers wrote on the work page. Writer material only when attributed to buyers; never
+   * a planned fact (2026-11-26 user decision: buyer reviews may feed the article).
+   */
+  buyerReviews?: string[];
 };
+
+/** The most helpful non-negative buyer reviews, trimmed for the Writer. */
+export function selectBuyerReviewsForWriter(
+  reviews: PageEvidenceMetaShape["buyerReviews"],
+  limit = 5,
+): string[] {
+  return (reviews ?? [])
+    .filter((r) => typeof r.comment === "string" && r.comment.trim() && (r.rating == null || r.rating >= 3))
+    .sort((a, b) => (b.helpfulCount ?? 0) - (a.helpfulCount ?? 0))
+    .slice(0, limit)
+    .map((r) => {
+      const text = `${r.title?.trim() ? `「${r.title.trim()}」` : ""}${String(r.comment).replace(/\s+/g, " ").trim()}`;
+      return text.length > 280 ? `${text.slice(0, 280)}…` : text;
+    });
+}
 
 const CATALOG_FACET_TYPES = new Set<BlueprintEvidenceType>([
   "maker_or_label",
@@ -714,6 +734,7 @@ export function buildEvidencePack(input: {
       input.pageEvidenceMeta?.actors?.length,
   );
 
+  const buyerReviews = selectBuyerReviewsForWriter(input.pageEvidenceMeta?.buyerReviews);
   return {
     schemaVersion: 1,
     productIdentity: {
@@ -745,10 +766,11 @@ export function buildEvidencePack(input: {
       },
       {
         kind: "third_party_review",
-        reason: "not_ingested_as_product_evidence",
+        reason: "buyer_reviews_are_attributed_material_not_product_facts",
         generationEligible: false,
       },
     ],
+    ...(buyerReviews.length ? { buyerReviews } : {}),
     videoEvidence: input.sampleVideo?.playerUrl
       ? { playerUrlPresent: true, generationEligible: false }
       : {
@@ -1097,6 +1119,7 @@ export function toOptionBWriterSourceMaterialFromPack(pack: EvidencePack): Recor
     productTitle: pack.productIdentity.title,
     claims: supportedClaimsFromPack(pack),
     officialDescription: composeWriterOfficialDescriptionFromPack(pack),
+    buyerReviews: pack.buyerReviews ?? [],
   });
 }
 
@@ -1113,6 +1136,7 @@ export function toOptionBWriterSourceMaterial(input: {
   claims: Array<{ id: string; statement: string; kind?: string }>;
   /** r94: string[] = individual facts; legacy string = single blob (tests/manual). */
   officialDescription?: string | string[] | null;
+  buyerReviews?: string[];
 }): Record<string, unknown> {
   const productTitle = input.productTitle;
   const claimStatements = input.claims.map((c) => c.statement);
@@ -1148,6 +1172,7 @@ export function toOptionBWriterSourceMaterial(input: {
       ...(typeof c.kind === "string" && c.kind.trim() ? { kind: c.kind } : {}),
     })),
     officialDescription,
+    ...(input.buyerReviews?.length ? { buyerReviews: input.buyerReviews } : {}),
   };
 }
 

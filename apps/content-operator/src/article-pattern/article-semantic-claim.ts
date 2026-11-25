@@ -25,7 +25,8 @@ const BLOCKING_CLASS = new Set<ArticleSemanticClaimClass>([
   "EDITORIAL_EMBELLISHMENT",
 ]);
 
-const ATTRIBUTION_RE = /公式では|公式紹介|と紹介され/;
+// Buyer reviews count as a source when the sentence names them (ArticlePlan.buyerReviews).
+const ATTRIBUTION_RE = /公式では|公式紹介|と紹介され|レビュー|買った人|購入者/;
 
 function planBlob(planFacts: readonly string[]): string {
   return planFacts.map((f) => f.trim()).filter(Boolean).join("\n");
