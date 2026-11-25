@@ -77,7 +77,7 @@ export function expansionPolicyForResolution(
         maxThemeTagFacts: 10,
         requireAllThemeTagCoverage: false,
         writerDensityNote:
-          "SOURCE is RICH: explain the recorded situation, people, project, format, and volume in prose. Short theme tags are representative — do not list every genre. Do not add evaluation, recommendation, or a viewing claim. Do not invent beyond planned facts.",
+          "SOURCE is RICH: follow who does what, and what happens next, across paragraphs. Format, runtime, and volume are not topics of their own. Short theme tags are representative — do not list every genre. Do not add evaluation, recommendation, or a viewing claim. Do not invent beyond planned facts.",
       };
     case "THEME_LEVEL_EVIDENCE":
       return {

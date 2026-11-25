@@ -8,6 +8,7 @@ import {
   isLowValueArticleHeadline,
   parseEditorialDecisionJson,
   buildDeterministicEditorialDecisionFallback,
+  validateEditorialDecisionGrounding,
 } from "../article-editorial-decision.js";
 import { deriveExecutionMode } from "../plan-execution-contract.js";
 import { ARTICLE_PLAN_JOBS } from "../article-plan.js";
@@ -154,5 +155,27 @@ describe("article editorial headline (not fact assembly)", () => {
     expect(d.angle.length).toBeGreaterThan(10);
     expect(d.angle).not.toBe("椎名心春とハメ撮り");
     expect(isLowValueArticleHeadline({ title: d.angle })).toBe(false);
+  });
+
+  it("fallback asks for what the people do, not for the situation or runtime to be explained (2026-11-26)", () => {
+    const d = buildDeterministicEditorialDecisionFallback({
+      productTitle: "公式ロングタイトル",
+      evidenceSurfaces: ["【VR】", "102分", "恥ずかしそうに告白をしてきた", "竹内美雨"],
+      performers: ["竹内美雨"],
+      seoSearchIntent: { status: "VALID", searchIntent: "この作品の内容を確認したい" },
+    });
+    expect(`${d.angle}${d.readerHook}${d.whyThisWork}`).not.toMatch(/説明|確認したい|102分|【VR】/);
+    expect(d.angle).toContain("恥ずかしそうに告白をしてきた");
+    expect(d.angle).toContain("竹内美雨が何をするか");
+  });
+
+  it("keeps a Brain decision that uses a word from the official title (快楽)", () => {
+    expect(
+      validateEditorialDecisionGrounding({
+        decision: { angle: "人妻が快楽に溺れていく", readerHook: "夫の留守に誘う", whyThisWork: "人妻", supportingEvidenceRefs: [] },
+        allowedSurfaces: ["快楽に溺れる人妻"],
+        performers: [],
+      }).ok,
+    ).toBe(true);
   });
 });

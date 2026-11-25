@@ -29,7 +29,7 @@ describe("R157 Writer expansion execution modes", () => {
   });
 
   it("Writer system asks for rich multi-unit development without empty promo padding", () => {
-    expect(OPTION_B_WRITER_SYSTEM).toMatch(/materialDepth[= ]?=?rich|materialDepth is rich|rich:/i);
+    expect(OPTION_B_WRITER_SYSTEM).toMatch(/RICH may follow what happens across paragraphs/);
     expect(OPTION_B_WRITER_SYSTEM).toMatch(/EXTERNAL FACTUAL CLAIMS|EDITORIAL INTERPRETATION/);
     expect(OPTION_B_WRITER_SYSTEM).toMatch(/fact formatter|Coverage:|realize the meaning/i);
     expect(OPTION_B_WRITER_SYSTEM).not.toMatch(/最低250|必ず3段落/);

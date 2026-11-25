@@ -35,16 +35,16 @@ export const MAX_PLAN_EXECUTION_ATTEMPTS = Math.max(
 );
 
 export const PLAN_REGEN_CORRECTION_INSTRUCTION =
-  "GROUNDED CORRECTION, not a new article. Follow correctionPlan KEEP, REPAIR, and REMOVE. In body sentences, content words may come only from requiredFacts, allowedSupportingFacts, and Evidence words already in those facts. Particles and copulas may connect them. Do not invent an evaluation, recommendation, viewing experience, catch copy, interpretation, or a new work-specific content word. Do not paraphrase UNSUPPORTED_EVALUATION into another adjective, RECOMMENDATION into another recommendation, VIEWING_EXPERIENCE into another experience claim, or EDITORIAL_EMBELLISHMENT into another catch copy. Delete that meaning or restate the allowed fact as FACTUAL_DESCRIPTION. Do not drop a requiredFacts item whose mustKeep is true. Do not rewrite ARTICLE_PLAN. Do not change seoSearchIntent.primaryQuery.";
+  "GROUNDED CORRECTION, not a new article. Follow correctionPlan KEEP, REPAIR, and REMOVE. Body sentences keep the meaning of requiredFacts and allowedSupportingFacts and say what the people do, in your own verbs. Do not add a scene, act, person, number, evaluation, recommendation, viewing experience, catch copy, or interpretation. Do not paraphrase UNSUPPORTED_EVALUATION into another adjective, RECOMMENDATION into another recommendation, VIEWING_EXPERIENCE into another experience claim, or EDITORIAL_EMBELLISHMENT into another catch copy. Delete that meaning or write the allowed fact as what the people do. Do not drop a requiredFacts item whose mustKeep is true. Do not rewrite ARTICLE_PLAN. Do not change seoSearchIntent.primaryQuery.";
 
 const CONTRASTIVE_REGEN_HINT =
   "Preserve concessive/contrastive relation (e.g. 言えど, ではあるものの, にもかかわらず) — do not replace with neutral copula (である) that removes the planned contrast.";
 
 const EVAL_REGEN_HINT =
-  "For PLAN_UNSUPPORTED_EVAL: REPAIR or REMOVE that sentence. Do not replace UNSUPPORTED_EVALUATION, RECOMMENDATION, VIEWING_EXPERIENCE, or EDITORIAL_EMBELLISHMENT with another word of the same class (印象的, 特徴的, 情熱的, 魅力, おすすめ, 楽しめる, 味わえる, 体験できる, 余すことなく). Restate allowedSupportingFacts only. Maker wording stays only as 公式では…と紹介されている.";
+  "For PLAN_UNSUPPORTED_EVAL: REPAIR or REMOVE that sentence. Do not replace UNSUPPORTED_EVALUATION, RECOMMENDATION, VIEWING_EXPERIENCE, or EDITORIAL_EMBELLISHMENT with another word of the same class (印象的, 特徴的, 情熱的, 魅力, おすすめ, 楽しめる, 味わえる, 体験できる, 余すことなく). Use allowedSupportingFacts only, written as what the people do. Maker wording, if kept, is attributed once (公式では…と紹介されている).";
 
 const OMISSION_REGEN_HINT =
-  "For PLAN_FACT_OMISSION: explain the missing requiredFacts in your own words where they fit; do not paste them. Keep every item whose mustKeep is true. Do not change the agent, relation, or numbers, and do not add an evaluation.";
+  "For PLAN_FACT_OMISSION: work the missing requiredFacts in, in your own words, where they fit; do not paste them. Keep every item whose mustKeep is true. Do not change the agent, relation, or numbers, and do not add an evaluation.";
 
 const TITLE_EDITORIAL_REGEN_HINT =
   `For title defects: ${WP_HEADLINE_SHAPE} ` +
@@ -159,7 +159,7 @@ export function buildStructuredPlanRegenViolations(
         reason:
           finding.code === "PLAN_THEME_OVERREACH"
             ? "Short theme fact expanded beyond membership/attested surface — remove the invented psychology/role/plot meaning."
-            : "Restate allowedSupportingFacts as FACTUAL_DESCRIPTION. Do not replace unsupportedMeaning with another word of the same violationType. Do not add a fact. Maker wording stays only as 公式では…と紹介されている.",
+            : "Write allowedSupportingFacts as what the people do. Do not replace unsupportedMeaning with another word of the same violationType. Do not add a fact. Maker wording stays only as 公式では…と紹介されている.",
         unsupportedSentence: unsupportedSentence ?? undefined,
         violationType: claims[0]?.class ?? "UNSUPPORTED_EVALUATION",
         offendingSentence: unsupportedSentence ?? undefined,

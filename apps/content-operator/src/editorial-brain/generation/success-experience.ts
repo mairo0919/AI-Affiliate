@@ -300,6 +300,18 @@ export function parseSuccessLesson(raw: unknown): SuccessLessonPayload | null {
   };
 }
 
+/**
+ * Lessons the user's later reviews overruled (2026-11-10: bodies read product data aloud; 2026-11-17:
+ * best-of bodies explained the collection). They told the Writer to explain format, volume, and
+ * who-it-suits, so the stored rows are no longer applied.
+ */
+const RETIRED_EXPERIENCE_KEYS = new Set([
+  "r77.human_positive.explanation.quantity_structure",
+  "r77.human_positive.ending.grounded_orientation",
+  "post20.human_positive.editorial_orientation",
+  "post20.improvement.paragraph_progression",
+]);
+
 export function summarizeWritingQualityGuidance(input: {
   experiences: ExperienceRow[];
   context: ArticleExperienceContext;
@@ -334,6 +346,10 @@ export function summarizeWritingQualityGuidance(input: {
     }
     if (lesson.signalType === "AUTOMATED_PASS") {
       skipped.push({ experienceId: exp.id, reason: "automated_pass_not_quality_success" });
+      continue;
+    }
+    if (RETIRED_EXPERIENCE_KEYS.has(lesson.experienceKey)) {
+      skipped.push({ experienceId: exp.id, reason: "retired_by_later_review" });
       continue;
     }
     if (!lessonApplies(lesson, input.context)) {
