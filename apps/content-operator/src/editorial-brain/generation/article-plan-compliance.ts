@@ -99,13 +99,12 @@ export type ArticlePlanComplianceMutationResult = {
   mutated: boolean;
 };
 
-const BUYER_ATTRIBUTION_RE = /レビュー|買った人|購入者/;
+const REVIEW_ATTRIBUTION_RE = /レビュー|買った人|購入者|紹介記事/;
 
-/** Buyer reviews back a sentence only when that sentence attributes the point to buyers. */
+/** Buyer reviews and review-site notes back a sentence only when it attributes the point to them. */
 function attestedFactsFor(text: string, planFacts: string[], plan: ArticlePlan): string[] {
-  return plan.buyerReviews?.length && BUYER_ATTRIBUTION_RE.test(text)
-    ? [...planFacts, ...plan.buyerReviews]
-    : planFacts;
+  const attributed = [...(plan.buyerReviews ?? []), ...(plan.webNotes ?? [])];
+  return attributed.length && REVIEW_ATTRIBUTION_RE.test(text) ? [...planFacts, ...attributed] : planFacts;
 }
 
 /** Concrete scene stems — used only to detect plan-unbacked concrete additions. */

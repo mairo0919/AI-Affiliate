@@ -146,6 +146,8 @@ export type ArticlePlan = {
    * only when it attributes the point to buyers' reviews.
    */
   buyerReviews?: string[] | null;
+  /** Review-site notes (EvidencePack.webNotes); same attribution rule as buyerReviews. */
+  webNotes?: string[] | null;
 };
 
 export const ARTICLE_PLAN_JOBS = {

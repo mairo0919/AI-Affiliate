@@ -17,6 +17,8 @@ import {
   type FanzaPageEvidence,
   type MergedProductImageEvidence,
 } from "../providers/fanza/fanza-page-evidence.js";
+import { collectWorkWebNotes } from "../article-pattern/work-web-notes.js";
+import { createBraveSearchApiAdapterFromConfig } from "../article-pattern/brave-search-api.js";
 
 export type IngestFanzaPageEvidenceResult = {
   fetch: PageEvidenceFetchResult;
@@ -98,9 +100,22 @@ export async function ingestFanzaPageEvidence(input: {
 
   const imageReferences = evidenceForPersist.images.map((i) => i.sourceUrl);
   const pageEvidenceMeta = toSourceDocumentPageEvidenceMeta(evidenceForPersist);
+  const config = input.fetchOptions.config;
+  const webNotes =
+    input.fetchOptions.confirmExternal && config.researchAllowExternalRequests
+      ? await collectWorkWebNotes({
+          config,
+          search: createBraveSearchApiAdapterFromConfig(config),
+          contentId: input.contentId,
+          productTitle: evidenceForPersist.productName ?? "",
+          performers: evidenceForPersist.actors,
+          officialText: evidenceForPersist.description?.text ?? "",
+        })
+      : [];
   const metaPatch = {
     pageEvidence: {
       ...pageEvidenceMeta,
+      webNotes,
       // Clear ItemList synthesis stigma when official page Evidence is persisted.
       synthesizedFrom: null,
       fetchedAt: new Date().toISOString(),

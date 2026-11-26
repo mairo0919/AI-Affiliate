@@ -941,6 +941,7 @@ export class ContentGenerationService {
       editorialDecision,
       seoSearchIntent,
       ...(evidencePack.buyerReviews?.length ? { buyerReviews: evidencePack.buyerReviews } : {}),
+      ...(evidencePack.webNotes?.length ? { webNotes: evidencePack.webNotes } : {}),
     };
     const articlePlanExecution = toWriterExecutionContractView(
       buildArticlePlanExecutionContract(articlePlanWithDecision),
@@ -1346,6 +1347,7 @@ export class ContentGenerationService {
           priorReviewFindings: input.priorReviewFindings ?? null,
           writerAdvice: input.writerAdvice ?? null,
           buyerReviews: evidencePack.buyerReviews ?? null,
+          webNotes: evidencePack.webNotes ?? null,
         });
         const systemInstruction = slim.systemInstruction;
         const userPrompt = slim.userPrompt;
@@ -3114,6 +3116,9 @@ export function reviewEvidenceFromStructuredContent(structuredContent: unknown):
   const buyerReviews = Array.isArray(pack.buyerReviews)
     ? (pack.buyerReviews as unknown[]).filter((v): v is string => typeof v === "string")
     : [];
+  const webNotes = Array.isArray(pack.webNotes)
+    ? (pack.webNotes as unknown[]).filter((v): v is string => typeof v === "string")
+    : [];
   if (!title && claims.length === 0 && !description.trim()) return null;
   return [
     "OFFICIAL_EVIDENCE — the only source of product facts (cast, series, label, runtime, content, setting).",
@@ -3123,6 +3128,9 @@ export function reviewEvidenceFromStructuredContent(structuredContent: unknown):
     description.trim() ? `officialDescription:\n${description.trim()}` : "",
     buyerReviews.length
       ? `BUYER_REVIEWS — what buyers wrote. A sentence that attributes a point to buyers' reviews is supported when these say it:\n- ${buyerReviews.join("\n- ")}`
+      : "",
+    webNotes.length
+      ? `REVIEW_SITE_NOTES — what review sites wrote. A sentence that attributes a point to review sites is supported when these say it:\n- ${webNotes.join("\n- ")}`
       : "",
   ]
     .filter(Boolean)

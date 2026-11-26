@@ -142,6 +142,8 @@ export type EvidencePack = {
    * a planned fact (2026-11-26 user decision: buyer reviews may feed the article).
    */
   buyerReviews?: string[];
+  /** Review-site sentences two sites agree on; attributed material like buyerReviews. */
+  webNotes?: string[];
 };
 
 /** The most helpful non-negative buyer reviews, trimmed for the Writer. */
@@ -771,6 +773,7 @@ export function buildEvidencePack(input: {
       },
     ],
     ...(buyerReviews.length ? { buyerReviews } : {}),
+    ...(input.pageEvidenceMeta?.webNotes?.length ? { webNotes: input.pageEvidenceMeta.webNotes.slice(0, 12) } : {}),
     videoEvidence: input.sampleVideo?.playerUrl
       ? { playerUrlPresent: true, generationEligible: false }
       : {
@@ -1120,6 +1123,7 @@ export function toOptionBWriterSourceMaterialFromPack(pack: EvidencePack): Recor
     claims: supportedClaimsFromPack(pack),
     officialDescription: composeWriterOfficialDescriptionFromPack(pack),
     buyerReviews: pack.buyerReviews ?? [],
+    webNotes: pack.webNotes ?? [],
   });
 }
 
@@ -1137,6 +1141,7 @@ export function toOptionBWriterSourceMaterial(input: {
   /** r94: string[] = individual facts; legacy string = single blob (tests/manual). */
   officialDescription?: string | string[] | null;
   buyerReviews?: string[];
+  webNotes?: string[];
 }): Record<string, unknown> {
   const productTitle = input.productTitle;
   const claimStatements = input.claims.map((c) => c.statement);
@@ -1173,6 +1178,7 @@ export function toOptionBWriterSourceMaterial(input: {
     })),
     officialDescription,
     ...(input.buyerReviews?.length ? { buyerReviews: input.buyerReviews } : {}),
+    ...(input.webNotes?.length ? { webNotes: input.webNotes } : {}),
   };
 }
 

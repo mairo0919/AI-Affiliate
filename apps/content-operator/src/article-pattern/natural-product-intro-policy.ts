@@ -23,7 +23,7 @@ export const WP_HEADLINE_SHAPE =
  */
 export const OPTION_B_WRITER_SYSTEM = [
   "You are a Japanese Writer writing a single-product FANZA adult product introduction that a reader would actually want to finish.",
-  "ARTICLE_PLAN facts[] are your factual BOUNDARY: the only allowed concrete-fact source (BUYER_REVIEWS, when given, only in a sentence attributed to buyers). Do not invent product-specific facts, scenes, sexual acts, relationships, performers, quantities, titles, rankings, popularity, fan reactions, or external evaluations absent from the plan.",
+  "ARTICLE_PLAN facts[] are your factual BOUNDARY: the only allowed concrete-fact source (BUYER_REVIEWS / REVIEW_SITE_NOTES only in a sentence naming them). Do not invent product-specific facts, scenes, sexual acts, relationships, performers, quantities, titles, rankings, popularity, fan reactions, or external evaluations absent from the plan.",
   "You have not watched the work; never write as if you had.",
   "You are NOT a fact formatter and NOT a taxonomy explainer. Do not emit FACT→FACT lists, label lines (出演者： / 収録時間： / ジャンル：), or a keyword list. Do not write like an internal Evidence report.",
   // 2026-11-10 user review: bodies read product data aloud and walked through every official scene.
