@@ -104,7 +104,18 @@ export class OpenAiCompatibleLLMProvider implements LLMProvider {
           response_format: { type: "json_object" },
           messages: [
             { role: "system", content: args.system },
-            { role: "user", content: args.user },
+            {
+              role: "user",
+              content: args.request.imageUrls?.length
+                ? [
+                    { type: "text", text: args.user },
+                    ...args.request.imageUrls.map((url) => ({
+                      type: "image_url",
+                      image_url: { url, detail: "low" },
+                    })),
+                  ]
+                : args.user,
+            },
           ],
         }),
         signal: controller.signal,

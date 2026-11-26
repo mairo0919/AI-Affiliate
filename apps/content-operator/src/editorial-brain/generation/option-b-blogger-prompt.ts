@@ -157,6 +157,8 @@ export function buildOptionBBloggerGeneratorPrompt(input: {
   buyerReviews?: string[] | null;
   /** Review-site sentences two sites agree on (EvidencePack.webNotes). */
   webNotes?: string[] | null;
+  /** What the official sample stills show (EvidencePack.imageNotes). */
+  imageNotes?: string[] | null;
 }): { systemInstruction: string; userPrompt: string; outputSchema: Record<string, unknown> } {
   const baseSchema = getOptionBBloggerArticleLlmJsonSchema();
   const outputSchema = applyArticleOutputContractToLlmSchema(
@@ -257,6 +259,12 @@ export function buildOptionBBloggerGeneratorPrompt(input: {
       ? [
           "BUYER_REVIEWS (what people who bought this work wrote). Put one or two concrete points from them in the body — a scene, act, body detail, or line the official text lacks — each in a sentence that says buyers' reviews mention it (買った人のレビューでは…, レビューで挙がっているのは…). Use only what a reviewer says happens in this work — never a wish (〜してほしい), a complaint about something missing, or another work. Say what they mention, not how good it was or how popular (no 印象的, 話題). Do not write as if you watched. Do not copy a review sentence.",
           ...input.buyerReviews.map((line) => `- ${line}`),
+        ].join("\n")
+      : "",
+    input.imageNotes?.length
+      ? [
+          "SAMPLE_IMAGE_NOTES (what the official sample stills show, read by an image model). Use two or three concrete visible details the official text lacks — what she wears, where, which position, her expression — each in a sentence that says the sample images show it (サンプル画像では…) with her as the subject of the verb, never ending on a verb of seeing (見られる, 確認できる). Mention the images once or twice, not every paragraph. Do not build a story or an order of events the stills do not show.",
+          ...input.imageNotes.map((line) => `- ${line}`),
         ].join("\n")
       : "",
     input.webNotes?.length

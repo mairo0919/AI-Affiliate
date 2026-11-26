@@ -148,6 +148,8 @@ export type ArticlePlan = {
   buyerReviews?: string[] | null;
   /** Review-site notes (EvidencePack.webNotes); same attribution rule as buyerReviews. */
   webNotes?: string[] | null;
+  /** What the official sample stills show (EvidencePack.imageNotes); attributed to the images. */
+  imageNotes?: string[] | null;
 };
 
 export const ARTICLE_PLAN_JOBS = {

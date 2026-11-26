@@ -15,6 +15,12 @@ import {
   wpLlmSafety,
   type WpSafetyRun,
 } from "../adapters/llm/wp-article-safety.js";
+import {
+  parseSampleImageNotes,
+  pickSampleImageUrls,
+  SAMPLE_IMAGE_NOTES_SYSTEM,
+  SAMPLE_IMAGE_NOTES_USER,
+} from "../article-pattern/sample-image-notes.js";
 import { LLMProviderError } from "../adapters/types.js";
 import { accountGenerationFailure, retainedFailureTokens } from "./generation-failure-accounting.js";
 import { evaluatePolicies } from "../lifecycle/policy-engine.js";
@@ -687,9 +693,10 @@ export class ContentGenerationService {
     // Reference Blueprint → Writing Skeleton + Evidence Pack (OPTION B Generator SSOT)
     const prisma = (this.repo as unknown as { prisma: ConstructorParameters<typeof ArticlePatternRepository>[0] })
       .prisma;
-    const pageEvidenceMeta = await this.loadOfficialPageEvidenceMeta(
-      input.ctaUrl,
-      input.productCanonicalId,
+    const pageEvidenceMeta = await this.withSampleImageNotes(
+      await this.loadOfficialPageEvidenceMeta(input.ctaUrl, input.productCanonicalId),
+      input.productCanonicalId ?? null,
+      articleIdentity,
     );
     const referenceGuided = await buildReferenceGuidedLayer({
       prisma,
@@ -942,6 +949,7 @@ export class ContentGenerationService {
       seoSearchIntent,
       ...(evidencePack.buyerReviews?.length ? { buyerReviews: evidencePack.buyerReviews } : {}),
       ...(evidencePack.webNotes?.length ? { webNotes: evidencePack.webNotes } : {}),
+      ...(evidencePack.imageNotes?.length ? { imageNotes: evidencePack.imageNotes } : {}),
     };
     const articlePlanExecution = toWriterExecutionContractView(
       buildArticlePlanExecutionContract(articlePlanWithDecision),
@@ -1348,6 +1356,7 @@ export class ContentGenerationService {
           writerAdvice: input.writerAdvice ?? null,
           buyerReviews: evidencePack.buyerReviews ?? null,
           webNotes: evidencePack.webNotes ?? null,
+          imageNotes: evidencePack.imageNotes ?? null,
         });
         const systemInstruction = slim.systemInstruction;
         const userPrompt = slim.userPrompt;
@@ -3048,6 +3057,51 @@ export class ContentGenerationService {
   }
 
   /** Load official pageEvidence from SourceDocument when product CTA URL is known. */
+  /**
+   * Read the official sample stills once per work and keep the notes on the page evidence. A failed
+   * or blocked call leaves the work without notes; it never stops the article.
+   */
+  private async withSampleImageNotes(
+    pe: import("../article-pattern/official-page-evidence-atoms.js").PageEvidenceMetaShape | null,
+    cid: string | null,
+    contentIdentity: string,
+  ): Promise<import("../article-pattern/official-page-evidence-atoms.js").PageEvidenceMetaShape | null> {
+    if (!pe || !cid || Array.isArray(pe.imageNotes)) return pe;
+    const imageUrls = pickSampleImageUrls(pe.images as Parameters<typeof pickSampleImageUrls>[0]);
+    if (imageUrls.length < 3) return pe;
+    try {
+      const result = await this.llm.executeTask({
+        taskType: "GENERATION_BLOGGER",
+        promptIdentifier: "sample-image-notes",
+        promptVersion: "1",
+        systemInstruction: SAMPLE_IMAGE_NOTES_SYSTEM,
+        userPrompt: SAMPLE_IMAGE_NOTES_USER,
+        imageUrls,
+        model: this.models.generation,
+        input: { phase: "sample_image_notes", imageCount: imageUrls.length },
+        safety: wpLlmSafety({
+          cid,
+          operation: "WP_BRAIN",
+          promptVersion: "sample-image-notes-1",
+          contentIdentity,
+        }),
+      });
+      const imageNotes = parseSampleImageNotes(result.output);
+      const runId = executionRunId(result);
+      if (runId) {
+        await settleWpRuns([{ id: runId, operation: "WP_BRAIN", logicalAttempt: 1 }], () =>
+          imageNotes.length ? "ADOPTED" : "DISCARDED_OTHER",
+        );
+      }
+      const next = { ...pe, imageNotes };
+      const doc = await this.repo.findLatestSourceDocumentByUrlContains(cid);
+      if (doc) await this.repo.updateSourceDocumentMetadata(doc.id, { pageEvidence: next }).catch(() => undefined);
+      return next;
+    } catch {
+      return pe;
+    }
+  }
+
   private async loadOfficialPageEvidenceMeta(
     ctaUrl: string | null | undefined,
     productCanonicalId?: string | null,
@@ -3116,6 +3170,9 @@ export function reviewEvidenceFromStructuredContent(structuredContent: unknown):
   const buyerReviews = Array.isArray(pack.buyerReviews)
     ? (pack.buyerReviews as unknown[]).filter((v): v is string => typeof v === "string")
     : [];
+  const imageNotes = Array.isArray(pack.imageNotes)
+    ? (pack.imageNotes as unknown[]).filter((v): v is string => typeof v === "string")
+    : [];
   const webNotes = Array.isArray(pack.webNotes)
     ? (pack.webNotes as unknown[]).filter((v): v is string => typeof v === "string")
     : [];
@@ -3128,6 +3185,9 @@ export function reviewEvidenceFromStructuredContent(structuredContent: unknown):
     description.trim() ? `officialDescription:\n${description.trim()}` : "",
     buyerReviews.length
       ? `BUYER_REVIEWS — what buyers wrote. A sentence that attributes a point to buyers' reviews is supported when these say it:\n- ${buyerReviews.join("\n- ")}`
+      : "",
+    imageNotes.length
+      ? `SAMPLE_IMAGE_NOTES — what the official sample stills show. A sentence that says the sample images show a point is supported when these say it:\n- ${imageNotes.join("\n- ")}`
       : "",
     webNotes.length
       ? `REVIEW_SITE_NOTES — what review sites wrote. A sentence that attributes a point to review sites is supported when these say it:\n- ${webNotes.join("\n- ")}`

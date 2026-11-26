@@ -144,6 +144,8 @@ export type EvidencePack = {
   buyerReviews?: string[];
   /** Review-site sentences two sites agree on; attributed material like buyerReviews. */
   webNotes?: string[];
+  /** What the official sample stills show; attributed to the sample images. */
+  imageNotes?: string[];
 };
 
 /** The most helpful non-negative buyer reviews, trimmed for the Writer. */
@@ -774,6 +776,7 @@ export function buildEvidencePack(input: {
     ],
     ...(buyerReviews.length ? { buyerReviews } : {}),
     ...(input.pageEvidenceMeta?.webNotes?.length ? { webNotes: input.pageEvidenceMeta.webNotes.slice(0, 12) } : {}),
+    ...(input.pageEvidenceMeta?.imageNotes?.length ? { imageNotes: input.pageEvidenceMeta.imageNotes.slice(0, 10) } : {}),
     videoEvidence: input.sampleVideo?.playerUrl
       ? { playerUrlPresent: true, generationEligible: false }
       : {
@@ -1124,6 +1127,7 @@ export function toOptionBWriterSourceMaterialFromPack(pack: EvidencePack): Recor
     officialDescription: composeWriterOfficialDescriptionFromPack(pack),
     buyerReviews: pack.buyerReviews ?? [],
     webNotes: pack.webNotes ?? [],
+    imageNotes: pack.imageNotes ?? [],
   });
 }
 
@@ -1142,6 +1146,7 @@ export function toOptionBWriterSourceMaterial(input: {
   officialDescription?: string | string[] | null;
   buyerReviews?: string[];
   webNotes?: string[];
+  imageNotes?: string[];
 }): Record<string, unknown> {
   const productTitle = input.productTitle;
   const claimStatements = input.claims.map((c) => c.statement);
@@ -1179,6 +1184,7 @@ export function toOptionBWriterSourceMaterial(input: {
     officialDescription,
     ...(input.buyerReviews?.length ? { buyerReviews: input.buyerReviews } : {}),
     ...(input.webNotes?.length ? { webNotes: input.webNotes } : {}),
+    ...(input.imageNotes?.length ? { imageNotes: input.imageNotes } : {}),
   };
 }
 

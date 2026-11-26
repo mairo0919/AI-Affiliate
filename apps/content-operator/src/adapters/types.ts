@@ -174,6 +174,8 @@ export interface LLMTaskRequest {
   timeoutMs?: number;
   /** Optional sampling temperature (provider default when omitted). */
   temperature?: number;
+  /** Public image URLs sent with the user prompt at low detail (vision-capable models only). */
+  imageUrls?: string[];
   /** Execution-gate context. Production sends do not proceed without a ledger. */
   safety?: {
     channel?: string | null;

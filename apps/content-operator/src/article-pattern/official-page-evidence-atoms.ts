@@ -1082,6 +1082,8 @@ export type PageEvidenceMetaShape = {
     originField?: string;
   } | null;
   actors?: string[];
+  /** What the official sample stills show (see sample-image-notes); [] once read with no result. */
+  imageNotes?: string[];
   /** Review-site sentences two sites agree on (see work-web-notes). */
   webNotes?: string[];
   /** Buyer reviews captured with the page (see fanza-page-evidence-fetch). */
