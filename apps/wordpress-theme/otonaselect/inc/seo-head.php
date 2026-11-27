@@ -158,12 +158,47 @@ function otonaselect_truncate_meta(string $text, int $max = 120): string {
 	return rtrim($cut) . '…';
 }
 
+/**
+ * Search wording for a term archive. Queries arrive as 「女優名 作品」 or a tag word, not as the bare name.
+ */
+function otonaselect_term_archive_label(WP_Term $term): string {
+	return $term->taxonomy === OTONASELECT_TAX_PERFORMER ? $term->name . 'の出演作品一覧' : $term->name . 'の作品一覧';
+}
+
+function otonaselect_term_archive_description(WP_Term $term): string {
+	$latest = get_posts([
+		'post_type' => 'post',
+		'post_status' => 'publish',
+		'numberposts' => 1,
+		'no_found_rows' => true,
+		'tax_query' => [['taxonomy' => $term->taxonomy, 'field' => 'term_id', 'terms' => $term->term_id]],
+	]);
+	$head = $term->taxonomy === OTONASELECT_TAX_PERFORMER
+		? $term->name . 'の出演作品' . (int) $term->count . '本を紹介。'
+		: '「' . $term->name . '」の作品' . (int) $term->count . '本を紹介。';
+	if ($latest && $latest[0] instanceof WP_Post) {
+		$head .= '最新は「' . wp_strip_all_tags(get_the_title($latest[0])) . '」。';
+	}
+	return otonaselect_truncate_meta($head, 120);
+}
+
 add_filter('document_title_parts', static function (array $parts): array {
 	if (is_singular('post')) {
 		$post_id = (int) get_queried_object_id();
 		$title = otonaselect_seo_title_for_post($post_id);
+		// Product-code searches brought 10 of 13 clicks (Search Console 2026-11-27); put the package code in the title.
+		$code = function_exists('otonaselect_package_code') ? otonaselect_package_code(otonaselect_post_cid($post_id)) : '';
+		if ($title !== '' && $code !== '' && stripos($title, $code) === false) {
+			$title .= '【' . $code . '】';
+		}
 		if ($title !== '') {
 			$parts['title'] = $title;
+		}
+	}
+	if (is_category() || is_tag() || is_tax()) {
+		$term = get_queried_object();
+		if ($term instanceof WP_Term) {
+			$parts['title'] = otonaselect_term_archive_label($term);
 		}
 	}
 	$site = get_bloginfo('name') ?: 'オトナセレクト';
@@ -277,6 +312,9 @@ add_action('wp_head', static function (): void {
 		$post_id = (int) get_queried_object_id();
 		$title = esc_attr(otonaselect_seo_title_for_post($post_id));
 		$desc = esc_attr(otonaselect_seo_description_for_post($post_id));
+	} elseif ((is_category() || is_tag() || is_tax()) && get_queried_object() instanceof WP_Term) {
+		$title = esc_attr(wp_get_document_title());
+		$desc = esc_attr(otonaselect_term_archive_description(get_queried_object()));
 	} else {
 		$title = esc_attr(wp_get_document_title());
 		$desc = esc_attr(get_bloginfo('description') ?: '作品や出演者の情報を読みやすい記事としてまとめるメディアです。');

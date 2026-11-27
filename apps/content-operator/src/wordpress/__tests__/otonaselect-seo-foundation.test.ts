@@ -11,8 +11,8 @@ function read(rel: string): string {
 }
 
 describe("otonaselect SEO foundation contracts", () => {
-  it("ships theme 1.6.16 with rewrite flush version gate", () => {
-    expect(read("style.css")).toMatch(/Version:\s*1\.6\.16/);
+  it("ships theme 1.6.17 with rewrite flush version gate", () => {
+    expect(read("style.css")).toMatch(/Version:\s*1\.6\.17/);
     const tax = read("inc/taxonomies.php");
     expect(tax).toContain("otonaselect-tax-rewrite-1.6.7");
     expect(tax).toContain("flush_rewrite_rules");
