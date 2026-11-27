@@ -389,7 +389,7 @@ function applyDomCatalog(html: string, cat: PageCatalogEvidence): void {
   } else {
     const genreLine = take("ジャンル");
     if (genreLine) {
-      const tokens = genreLine
+      const tokens = stripMarkup(genreLine)
         .split(/\s+/)
         .map((t) => t.trim())
         .filter((t) => t.length >= 2 && !/関連タグ|平均評価/u.test(t));
@@ -418,7 +418,7 @@ function applyDomCatalog(html: string, cat: PageCatalogEvidence): void {
   } else {
     const relatedLine = take("関連タグ");
     if (relatedLine) {
-      const tokens = relatedLine
+      const tokens = stripMarkup(relatedLine)
         .replace(/#/g, " ")
         .split(/\s+/)
         .map((t) => t.trim())
@@ -494,9 +494,22 @@ function extractListLinkLabels(
   return out;
 }
 
+/**
+ * The detail-row text can carry the tag chips' own markup (<a class="border border-gray-300 px-1 …">),
+ * which became WordPress tags such as border-gray-300 (2026-11-27).
+ */
+function stripMarkup(line: string): string {
+  return line
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/<[^>]*(?:>|$)/g, " ");
+}
+
 function isUsableOfficialLabel(token: string, kind: "genre" | "tag" = "genre"): boolean {
   const t = token.trim();
   if (t.length < 2 || t.length > 32) return false;
+  if (/[<>"=]/.test(t)) return false;
   if (/関連タグ|平均評価|から探す/u.test(t)) return false;
   if (/^\d+$/.test(t)) return false;
   if (/^https?:/i.test(t)) return false;
@@ -634,5 +647,8 @@ export function officialGenreNames(catalog: PageCatalogEvidence | null | undefin
 export function officialRelatedTagNames(
   catalog: PageCatalogEvidence | null | undefined,
 ): string[] {
-  return (catalog?.relatedTags ?? []).map((g) => g.value.trim()).filter(Boolean);
+  const values = (catalog?.relatedTags ?? []).map((g) => g.value.trim()).filter(Boolean);
+  // Evidence stored before the markup fix holds the chips' markup from the first "<a" on.
+  const markupAt = values.findIndex((v) => /[<>"=]/.test(v));
+  return markupAt >= 0 ? values.slice(0, markupAt) : values;
 }
