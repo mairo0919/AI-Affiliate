@@ -6,7 +6,7 @@ Description: オトナセレクト専用の軽量ブロックテーマ。note風
 Requires at least: 6.7
 Tested up to: 6.8
 Requires PHP: 8.0
-Version: 1.6.15
+Version: 1.6.16
 License: GNU General Public License v2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 Text Domain: otonaselect
@@ -733,6 +733,24 @@ body.single-post .otonaselect-single-title {
 }
 
 /* Disclosure / notes */
+.wp-block-post-content .otonaselect-work-code {
+	margin-top: 0.25em;
+	font-size: var(--wp--preset--font-size--small);
+	color: var(--wp--preset--color--muted);
+}
+
+.wp-block-post-content .otonaselect-campaign {
+	margin-top: 0.25em;
+	padding: 0.45em 0.75em;
+	border-left: 3px solid var(--wp--preset--color--accent);
+	background: var(--wp--preset--color--surface);
+	font-weight: 700;
+}
+
+.wp-block-post-content .otonaselect-campaign a {
+	color: inherit;
+}
+
 .wp-block-post-content .blog-meta-note {
 	font-size: 0.75rem !important;
 	line-height: 1.55 !important;

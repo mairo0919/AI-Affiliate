@@ -26,6 +26,8 @@ const OTONASELECT_META_PRODUCT_CID = 'otonaselect_product_cid';
 const OTONASELECT_META_SAFE_OG_IMAGE = 'otonaselect_safe_og_image';
 const OTONASELECT_META_CARD_IMAGE = 'otonaselect_card_image';
 const OTONASELECT_META_SERIES_NAME = 'otonaselect_series_name';
+/** JSON list [{title, begin, end}] of DMM campaigns for the work, refreshed daily by the Factory. */
+const OTONASELECT_META_CAMPAIGN = 'otonaselect_campaign';
 
 const OTONASELECT_TAX_PERFORMER = 'performer';
 const OTONASELECT_TAX_SERIES = 'series';

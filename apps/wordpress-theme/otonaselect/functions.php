@@ -22,6 +22,7 @@ require_once $otonaselect_inc . '/json-ld.php';
 require_once $otonaselect_inc . '/breadcrumbs.php';
 require_once $otonaselect_inc . '/related.php';
 require_once $otonaselect_inc . '/presentation.php';
+require_once $otonaselect_inc . '/work-info.php';
 require_once $otonaselect_inc . '/reading.php';
 require_once $otonaselect_inc . '/taxonomy-hubs.php';
 require_once $otonaselect_inc . '/home-query.php';
@@ -69,6 +70,7 @@ add_action('init', static function (): void {
 		OTONASELECT_META_SAFE_OG_IMAGE,
 		OTONASELECT_META_CARD_IMAGE,
 		OTONASELECT_META_SERIES_NAME,
+		OTONASELECT_META_CAMPAIGN,
 	];
 	foreach ($meta_keys as $key) {
 		register_post_meta('post', $key, [
