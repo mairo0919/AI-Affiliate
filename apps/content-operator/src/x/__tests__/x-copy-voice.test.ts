@@ -101,9 +101,11 @@ describe("personal X copy voice", () => {
     expect(recent.findings.map((f) => f.code)).toContain("TOO_SIMILAR_TO_RECENT_POST");
   });
 
-  it("asks for what the work is and one scene, and keeps the existing cost gates", () => {
+  it("asks for what the work is in a short post, without pretending to have watched, and keeps the existing cost gates", () => {
     const prompts = buildXSocialWriterPrompts(planFor("九井スナオ", "完全主観ホラー"));
-    expect(prompts.systemInstruction).toContain("場面を1つだけ");
+    expect(prompts.systemInstruction).toContain("誰がどんな状況になる作品か");
+    expect(prompts.systemInstruction).toContain("本編を見た人のふりをしない");
+    expect(prompts.systemInstruction).not.toContain("続きが気になる所で止める");
     expect(prompts.systemInstruction).not.toMatch(/VERY_SHORT|独り言/);
     expect(prompts.systemInstruction).toContain("個人Xアカウント");
     expect(prompts.systemInstruction).not.toContain("http");
