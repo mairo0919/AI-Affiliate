@@ -42,7 +42,8 @@ function otonaselect_breadcrumb_items(): array {
 				'url' => otonaselect_public_origin() . '/performers/',
 			];
 			$first = $performers[0];
-			if ($first instanceof WP_Term) {
+			// A one-post performer archive is noindex and only repeats this post; leave it out of the trail.
+			if ($first instanceof WP_Term && (int) $first->count >= OTONASELECT_MIN_INDEXED_TERM_POSTS) {
 				$link = get_term_link($first);
 				$items[] = [
 					'name' => $first->name,
@@ -216,7 +217,7 @@ add_action('wp_head', static function (): void {
 							'@type' => 'Person',
 							'name' => $term->name,
 						];
-						if (!is_wp_error($link)) {
+						if (!is_wp_error($link) && (int) $term->count >= OTONASELECT_MIN_INDEXED_TERM_POSTS) {
 							$person['url'] = otonaselect_replace_legacy_host($link);
 						}
 						$about[] = $person;

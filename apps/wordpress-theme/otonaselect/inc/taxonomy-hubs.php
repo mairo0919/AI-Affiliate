@@ -90,7 +90,7 @@ function otonaselect_render_gojuon_term_hub(array $terms, string $heading, strin
 				<ul class="otonaselect-term-grid">
 					<?php foreach ($list as $term) : ?>
 						<li>
-							<a href="<?php echo esc_url(get_term_link($term)); ?>">
+							<a href="<?php echo esc_url(otonaselect_term_href($term)); ?>">
 								<?php echo esc_html($term->name); ?>
 								<span class="otonaselect-term-count"><?php echo esc_html((string) (int) $term->count); ?></span>
 							</a>
@@ -155,7 +155,7 @@ function otonaselect_render_home_performer_cloud(int $limit = 18): string {
 	foreach ($shown as $term) {
 		printf(
 			'<li><a href="%s">%s</a></li>',
-			esc_url(get_term_link($term)),
+			esc_url(otonaselect_term_href($term)),
 			esc_html($term->name)
 		);
 	}

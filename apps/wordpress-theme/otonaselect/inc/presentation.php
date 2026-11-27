@@ -166,17 +166,53 @@ function otonaselect_term_name_keys(array $terms): array {
  */
 function otonaselect_render_term_links(array $terms, string $separator = ' / '): string {
 	$links = [];
+	$current = is_singular() ? (int) get_queried_object_id() : 0;
 	foreach ($terms as $term) {
 		if (!$term instanceof WP_Term) {
 			continue;
 		}
-		$link = get_term_link($term);
-		if (is_wp_error($link)) {
+		$link = otonaselect_term_href($term);
+		if ($link === '') {
+			continue;
+		}
+		// The only post under this term is the page being read: a link would go nowhere new.
+		if ($current > 0 && $link === get_permalink($current)) {
+			$links[] = '<span>' . esc_html($term->name) . '</span>';
 			continue;
 		}
 		$links[] = '<a href="' . esc_url(otonaselect_replace_legacy_host($link)) . '">' . esc_html($term->name) . '</a>';
 	}
 	return implode($separator, $links);
+}
+
+/**
+ * Where a term name should link. An archive with fewer than OTONASELECT_MIN_INDEXED_TERM_POSTS posts is noindex
+ * and only repeats its one post, so link that post instead; Google then stops finding hundreds of thin archive
+ * URLs through article and hub links (Search Console 2026-11-27: 269 noindex + 145 discovered, nearly all such).
+ */
+function otonaselect_term_href(WP_Term $term): string {
+	$min = defined('OTONASELECT_MIN_INDEXED_TERM_POSTS') ? (int) OTONASELECT_MIN_INDEXED_TERM_POSTS : 2;
+	if ((int) $term->count < $min) {
+		$key = 'otonaselect_term_only_post_' . $term->term_id;
+		$post_id = wp_cache_get($key, 'otonaselect');
+		if ($post_id === false) {
+			$ids = get_posts([
+				'post_type' => 'post',
+				'post_status' => 'publish',
+				'numberposts' => 1,
+				'fields' => 'ids',
+				'no_found_rows' => true,
+				'tax_query' => [['taxonomy' => $term->taxonomy, 'field' => 'term_id', 'terms' => $term->term_id]],
+			]);
+			$post_id = $ids ? (int) $ids[0] : 0;
+			wp_cache_set($key, $post_id, 'otonaselect', HOUR_IN_SECONDS);
+		}
+		if ((int) $post_id > 0) {
+			return (string) get_permalink((int) $post_id);
+		}
+	}
+	$link = get_term_link($term);
+	return is_wp_error($link) ? '' : (string) $link;
 }
 
 /**
