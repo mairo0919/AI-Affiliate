@@ -141,14 +141,7 @@ export type ArticlePlan = {
    * Writer and Rewrite must reuse this object; they must not replace the query.
    */
   seoSearchIntent?: import("./seo-search-intent.js").SeoSearchIntent | null;
-  /**
-   * What buyers wrote (EvidencePack.buyerReviews). Not a planned fact: a sentence may draw on it
-   * only when it attributes the point to buyers' reviews.
-   */
-  buyerReviews?: string[] | null;
-  /** Review-site notes (EvidencePack.webNotes); same attribution rule as buyerReviews. */
-  webNotes?: string[] | null;
-  /** What the official sample stills show (EvidencePack.imageNotes); attributed to the images. */
+  /** What the official sample stills show (EvidencePack.imageNotes); usable as plain visible details. */
   imageNotes?: string[] | null;
 };
 

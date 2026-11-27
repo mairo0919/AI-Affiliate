@@ -99,16 +99,9 @@ export type ArticlePlanComplianceMutationResult = {
   mutated: boolean;
 };
 
-const REVIEW_ATTRIBUTION_RE = /レビュー|買った人|購入者|紹介記事/;
-const IMAGE_ATTRIBUTION_RE = /サンプル|画像/;
-
-/** Reviews, review-site notes, and sample-image notes back a sentence only when it names their source. */
-function attestedFactsFor(text: string, planFacts: string[], plan: ArticlePlan): string[] {
-  const attributed = [
-    ...(REVIEW_ATTRIBUTION_RE.test(text) ? [...(plan.buyerReviews ?? []), ...(plan.webNotes ?? [])] : []),
-    ...(IMAGE_ATTRIBUTION_RE.test(text) ? (plan.imageNotes ?? []) : []),
-  ];
-  return attributed.length ? [...planFacts, ...attributed] : planFacts;
+/** Sample-image notes back a sentence as plain narration (2026-11-27: the user dropped 「サンプル画像では」 and review-attributed sentences). */
+function attestedFactsFor(_text: string, planFacts: string[], plan: ArticlePlan): string[] {
+  return plan.imageNotes?.length ? [...planFacts, ...plan.imageNotes] : planFacts;
 }
 
 /** Concrete scene stems — used only to detect plan-unbacked concrete additions. */

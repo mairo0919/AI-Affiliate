@@ -21,7 +21,7 @@ describe("sample image notes", () => {
     expect(parseSampleImageNotes(null)).toEqual([]);
   });
 
-  it("lets a sentence use an image detail only when it names the sample images", () => {
+  it("lets a sentence use an image detail as plain narration, without evaluation words", () => {
     const plan = {
       schemaVersion: 1 as const,
       materialDepth: "standard" as const,
@@ -36,7 +36,7 @@ describe("sample image notes", () => {
         article: { title: "夢乃あいか｜銭湯の看板お姉ちゃん", summary: "", sections: [{ paragraphs: [`番台にいたあいかお姉ちゃんは銭湯の看板巨乳お姉ちゃんだ。${sentence}`] }] },
         articlePlan: plan,
       }).findings.filter((f) => f.severity === "BLOCKING");
-    expect(blocking("サンプル画像では、浴槽の中で上目遣いの印象的な表情を見せている。")).toHaveLength(0);
+    expect(blocking("浴槽の中で男の上にまたがり、上目遣いで見つめる。")).toHaveLength(0);
     expect(blocking("浴槽の中で上目遣いの印象的な表情を見せている。")).not.toHaveLength(0);
   });
 });

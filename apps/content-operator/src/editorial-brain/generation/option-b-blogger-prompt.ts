@@ -153,10 +153,6 @@ export function buildOptionBBloggerGeneratorPrompt(input: {
   priorReviewFindings?: string[] | null;
   /** Brain advice from past rejections and human fixes. */
   writerAdvice?: string[] | null;
-  /** What buyers wrote on the work page (EvidencePack.buyerReviews). */
-  buyerReviews?: string[] | null;
-  /** Review-site sentences two sites agree on (EvidencePack.webNotes). */
-  webNotes?: string[] | null;
   /** What the official sample stills show (EvidencePack.imageNotes). */
   imageNotes?: string[] | null;
 }): { systemInstruction: string; userPrompt: string; outputSchema: Record<string, unknown> } {
@@ -255,22 +251,10 @@ export function buildOptionBBloggerGeneratorPrompt(input: {
           input.officialDescription.trim(),
         ].join("\n")
       : "",
-    input.buyerReviews?.length
-      ? [
-          "BUYER_REVIEWS (what people who bought this work wrote). Put one or two concrete points from them in the body — a scene, act, body detail, or line the official text lacks — each in a sentence that says buyers' reviews mention it (買った人のレビューでは…, レビューで挙がっているのは…). Use only what a reviewer says happens in this work — never a wish (〜してほしい), a complaint about something missing, or another work. Say what they mention, not how good it was or how popular (no 印象的, 話題). Do not write as if you watched. Do not copy a review sentence.",
-          ...input.buyerReviews.map((line) => `- ${line}`),
-        ].join("\n")
-      : "",
     input.imageNotes?.length
       ? [
-          "SAMPLE_IMAGE_NOTES (what the official sample stills show, read by an image model). Use two or three concrete visible details the official text lacks — what she wears, where, which position, her expression — each in a sentence that says the sample images show it (サンプル画像では…) with her as the subject of the verb, never ending on a verb of seeing (見られる, 確認できる). Mention the images once or twice, not every paragraph. Do not build a story or an order of events the stills do not show.",
+          "SAMPLE_IMAGE_NOTES (what the official sample stills show, read by an image model). You may weave one or two visible details the official text lacks — what she wears, where, which position — into a sentence about what she does, as plain narration with her as the subject. Never mention the images, samples, or stills (no サンプル画像では), and never end on a verb of seeing (見られる, 確認できる). Do not build a story or an order of events the stills do not show.",
           ...input.imageNotes.map((line) => `- ${line}`),
-        ].join("\n")
-      : "",
-    input.webNotes?.length
-      ? [
-          "REVIEW_SITE_NOTES (sentences from review sites; each point appears on two or more sites). Same rules as BUYER_REVIEWS: use one or two points the official text lacks, each in a sentence that names review sites (レビューサイトでは…, 紹介記事では…); only what happens in this work, no praise or popularity, no copying.",
-          ...input.webNotes.map((line) => `- ${line}`),
         ].join("\n")
       : "",
     input.priorReviewFindings?.length

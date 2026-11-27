@@ -947,8 +947,6 @@ export class ContentGenerationService {
       ...articlePlanBase,
       editorialDecision,
       seoSearchIntent,
-      ...(evidencePack.buyerReviews?.length ? { buyerReviews: evidencePack.buyerReviews } : {}),
-      ...(evidencePack.webNotes?.length ? { webNotes: evidencePack.webNotes } : {}),
       ...(evidencePack.imageNotes?.length ? { imageNotes: evidencePack.imageNotes } : {}),
     };
     const articlePlanExecution = toWriterExecutionContractView(
@@ -1354,8 +1352,6 @@ export class ContentGenerationService {
               : null,
           priorReviewFindings: input.priorReviewFindings ?? null,
           writerAdvice: input.writerAdvice ?? null,
-          buyerReviews: evidencePack.buyerReviews ?? null,
-          webNotes: evidencePack.webNotes ?? null,
           imageNotes: evidencePack.imageNotes ?? null,
         });
         const systemInstruction = slim.systemInstruction;
@@ -3167,14 +3163,8 @@ export function reviewEvidenceFromStructuredContent(structuredContent: unknown):
       ? pack.officialDescription
       : "";
   const title = typeof pack.productTitle === "string" ? pack.productTitle : "";
-  const buyerReviews = Array.isArray(pack.buyerReviews)
-    ? (pack.buyerReviews as unknown[]).filter((v): v is string => typeof v === "string")
-    : [];
   const imageNotes = Array.isArray(pack.imageNotes)
     ? (pack.imageNotes as unknown[]).filter((v): v is string => typeof v === "string")
-    : [];
-  const webNotes = Array.isArray(pack.webNotes)
-    ? (pack.webNotes as unknown[]).filter((v): v is string => typeof v === "string")
     : [];
   if (!title && claims.length === 0 && !description.trim()) return null;
   return [
@@ -3183,14 +3173,8 @@ export function reviewEvidenceFromStructuredContent(structuredContent: unknown):
     title ? `productTitle: ${title}` : "",
     claims.length ? `supportedClaims:\n- ${claims.join("\n- ")}` : "",
     description.trim() ? `officialDescription:\n${description.trim()}` : "",
-    buyerReviews.length
-      ? `BUYER_REVIEWS — what buyers wrote. A sentence that attributes a point to buyers' reviews is supported when these say it:\n- ${buyerReviews.join("\n- ")}`
-      : "",
     imageNotes.length
-      ? `SAMPLE_IMAGE_NOTES — what the official sample stills show. A sentence that says the sample images show a point is supported when these say it:\n- ${imageNotes.join("\n- ")}`
-      : "",
-    webNotes.length
-      ? `REVIEW_SITE_NOTES — what review sites wrote. A sentence that attributes a point to review sites is supported when these say it:\n- ${webNotes.join("\n- ")}`
+      ? `SAMPLE_IMAGE_NOTES — what the official sample stills show. A sentence stating one of these visible points (clothing, place, position) is supported:\n- ${imageNotes.join("\n- ")}`
       : "",
   ]
     .filter(Boolean)
