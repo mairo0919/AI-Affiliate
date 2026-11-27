@@ -12,10 +12,12 @@ import { DmmApiClient } from "../providers/fanza/dmm-api-client.js";
 import type { DmmItem } from "../providers/fanza/dmm-api-types.js";
 import { mapDmmItemToCollected } from "../providers/fanza/fanza-mapper.js";
 import { loadLatestDemandSnapshot } from "./demand-store.js";
-import { FANZA_API_POPULAR } from "./demand-signal.js";
+import { FANZA_API_POPULAR, FANZA_RECOMMENDED_PRODUCT } from "./demand-signal.js";
 import { jstDayStart } from "./demand-collector.js";
 
 export const POPULAR_DISCOVERY_DAILY_CAP = 20;
+/** Recommended ranks are 1-10; popular ranks are placed after them. */
+const RECOMMENDED_RANK_SPAN = 10;
 const DISCOVERY_SOURCE_KEY = "demandDiscoverySource";
 
 export type PopularDiscoveryResult = {
@@ -105,9 +107,16 @@ export async function runFanzaPopularDemandDiscovery(deps: {
   }
 
   const snapshot = await loadLatestDemandSnapshot(deps.prisma);
-  const ranked = snapshot
-    .filter((row) => row.source === FANZA_API_POPULAR && row.contentId)
-    .map((row) => ({ contentId: row.contentId!, rank: row.rank }));
+  // The affiliate-admin recommended TOP10 comes first, then the API popular list (2026-11-27: the
+  // recommended works were never fetched, so most of them had no ResearchItem to write about).
+  const ranked = [
+    ...snapshot
+      .filter((row) => row.source === FANZA_RECOMMENDED_PRODUCT && row.contentId)
+      .map((row) => ({ contentId: row.contentId!, rank: row.rank })),
+    ...snapshot
+      .filter((row) => row.source === FANZA_API_POPULAR && row.contentId)
+      .map((row) => ({ contentId: row.contentId!, rank: RECOMMENDED_RANK_SPAN + row.rank })),
+  ];
   if (ranked.length === 0) return empty;
 
   const ids = [...new Set(ranked.map((row) => row.contentId))];
@@ -171,8 +180,9 @@ export async function runFanzaPopularDemandDiscovery(deps: {
       const mapped = mapDmmItemToCollected(item, {
         collectedAt: now,
         recordedAt: now,
-        includeRankingMetric: true,
-        rankingPosition: row.rank,
+        // Only popular rows carry an API popularity rank; recommended rows have none.
+        includeRankingMetric: row.rank > RECOMMENDED_RANK_SPAN,
+        rankingPosition: row.rank - RECOMMENDED_RANK_SPAN,
       });
       if (!mapped.item) {
         errors.push(`${row.contentId}: map_failed`);
