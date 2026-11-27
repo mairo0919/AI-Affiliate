@@ -54,6 +54,7 @@ import {
 import { probeEnabledAdultProviders } from "../providers/adult-provider-registry.js";
 import { runScheduledFanzaDemandCollection } from "../daily-ops/demand-collector.js";
 import { runFanzaPopularDemandDiscovery } from "../daily-ops/demand-discovery.js";
+import { createCampaignSyncState, runCampaignMetaSync } from "../wordpress/campaign-meta-sync.js";
 import { promoteDueWordPressSchedules } from "../stock/wp-publish-status-sync.js";
 
 export const DEFAULT_DUE_SCHEDULE_LIMIT = 20;
@@ -149,6 +150,7 @@ export class SchedulerPipeline {
   private readonly xRepo: XPublicationRepository;
   private readonly optimizationRepo: XOptimizationRepository;
   private readonly opsRepo: XOpsRepository;
+  private readonly campaignSync = createCampaignSyncState();
   private readonly scheduleRepository: ScheduleRepository;
 
   constructor(deps: SchedulerPipelineDeps) {
@@ -582,6 +584,22 @@ export class SchedulerPipeline {
           .replace(/affiliate_id=[^&\s]+/gi, "affiliate_id=[redacted]")
           .slice(0, 300)}`,
       );
+    }
+
+    try {
+      const campaign = await runCampaignMetaSync({
+        config: this.config,
+        logger: this.logger,
+        state: this.campaignSync,
+        now: this.now(),
+      });
+      if (campaign.checked > 0 || campaign.updated > 0) {
+        this.logger.info(
+          `campaign meta sync checked=${campaign.checked} updated=${campaign.updated} remaining=${campaign.remaining}`,
+        );
+      }
+    } catch (error) {
+      this.logger.warn(`campaign meta sync failed: ${String(error).slice(0, 200)}`);
     }
 
     try {
