@@ -5,7 +5,7 @@
 
 import type { LLMProvider } from "../adapters/types.js";
 import type { XSocialPlan } from "./social-plan.js";
-import { detectXAdultExpressions, stripXAdultSpans } from "./x-social-content-policy.js";
+import { detectXAdultExpressions } from "./x-social-content-policy.js";
 
 /** Lower temperature for X social — reduces run-to-run PASS/FAIL oscillation. */
 export const X_SOCIAL_LLM_TEMPERATURE = 0.2;
@@ -92,14 +92,14 @@ function sanitizeProductTitleForWriter(plan: XSocialPlan): string {
   return "作品紹介";
 }
 
-/** Keep non-adult sentences from an LLM draft — does not invent new facts. */
+/**
+ * Keep the whole non-adult sentences of an LLM draft — does not invent new facts. Adult words are
+ * never cut out of a sentence: that left holes such as 「ベッドで を当てられて」 (2026-11-27).
+ */
 function salvageNonAdultBody(raw: string): string | null {
-  const stripped = stripXAdultSpans(raw)
-    .replace(/\s+/g, " ")
-    .replace(/（\s*）|\(\s*\)/gu, "")
-    .trim();
-  if (!stripped) return null;
-  const kept = stripped
+  const text = raw.replace(/\s+/g, " ").trim();
+  if (!text) return null;
+  const kept = text
     .split(/([。！？])/u)
     .reduce<string[]>((acc, part, i, arr) => {
       if (i % 2 === 1) return acc;
