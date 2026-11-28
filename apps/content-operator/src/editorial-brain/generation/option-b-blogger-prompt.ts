@@ -153,6 +153,8 @@ export function buildOptionBBloggerGeneratorPrompt(input: {
   priorReviewFindings?: string[] | null;
   /** Brain advice from past rejections and human fixes. */
   writerAdvice?: string[] | null;
+  /** What buyers wrote on the work page (EvidencePack.buyerReviews). */
+  buyerReviews?: string[] | null;
   /** What the official sample stills show (EvidencePack.imageNotes). */
   imageNotes?: string[] | null;
 }): { systemInstruction: string; userPrompt: string; outputSchema: Record<string, unknown> } {
@@ -249,6 +251,12 @@ export function buildOptionBBloggerGeneratorPrompt(input: {
       ? [
           "OFFICIAL_DESCRIPTION (context only — read it to understand how the planned facts relate, then write in your own words. Do not copy its sentences: a sentence that carries 30 or more consecutive characters of it is rejected. Concrete facts still come from ARTICLE_PLAN):",
           input.officialDescription.trim(),
+        ].join("\n")
+      : "",
+    input.buyerReviews?.length
+      ? [
+          "BUYER_REVIEWS (what people who bought this work wrote). Use what they say happens in this work — scenes, acts, places, how she reacts, how her feelings change, lines she says — to follow the story further than the official text, as plain narration with the people as subjects. Never mention reviews, buyers, or any source. Use only what happens in this work: never a reviewer's opinion of the acting, looks, or quality, a wish (〜してほしい), a complaint, or another work. If reviews disagree, leave the point out. Do not copy a review sentence.",
+          ...input.buyerReviews.map((line) => `- ${line}`),
         ].join("\n")
       : "",
     input.imageNotes?.length

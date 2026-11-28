@@ -99,9 +99,13 @@ export type ArticlePlanComplianceMutationResult = {
   mutated: boolean;
 };
 
-/** Sample-image notes back a sentence as plain narration (2026-11-27: the user dropped 「サンプル画像では」 and review-attributed sentences). */
+/**
+ * Buyer reviews and sample-image notes back a sentence as plain narration (2026-11-27: the user dropped
+ * 「サンプル画像では」 and review-attributed sentences; 2026-11-29: reviews feed the story again, unattributed).
+ */
 function attestedFactsFor(_text: string, planFacts: string[], plan: ArticlePlan): string[] {
-  return plan.imageNotes?.length ? [...planFacts, ...plan.imageNotes] : planFacts;
+  const extra = [...(plan.buyerReviews ?? []), ...(plan.imageNotes ?? [])];
+  return extra.length ? [...planFacts, ...extra] : planFacts;
 }
 
 /** Concrete scene stems — used only to detect plan-unbacked concrete additions. */

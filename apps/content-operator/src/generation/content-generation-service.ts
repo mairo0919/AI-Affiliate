@@ -947,6 +947,7 @@ export class ContentGenerationService {
       ...articlePlanBase,
       editorialDecision,
       seoSearchIntent,
+      ...(evidencePack.buyerReviews?.length ? { buyerReviews: evidencePack.buyerReviews } : {}),
       ...(evidencePack.imageNotes?.length ? { imageNotes: evidencePack.imageNotes } : {}),
     };
     const articlePlanExecution = toWriterExecutionContractView(
@@ -1352,6 +1353,7 @@ export class ContentGenerationService {
               : null,
           priorReviewFindings: input.priorReviewFindings ?? null,
           writerAdvice: input.writerAdvice ?? null,
+          buyerReviews: evidencePack.buyerReviews ?? null,
           imageNotes: evidencePack.imageNotes ?? null,
         });
         const systemInstruction = slim.systemInstruction;
@@ -3163,6 +3165,9 @@ export function reviewEvidenceFromStructuredContent(structuredContent: unknown):
       ? pack.officialDescription
       : "";
   const title = typeof pack.productTitle === "string" ? pack.productTitle : "";
+  const buyerReviews = Array.isArray(pack.buyerReviews)
+    ? (pack.buyerReviews as unknown[]).filter((v): v is string => typeof v === "string")
+    : [];
   const imageNotes = Array.isArray(pack.imageNotes)
     ? (pack.imageNotes as unknown[]).filter((v): v is string => typeof v === "string")
     : [];
@@ -3173,6 +3178,9 @@ export function reviewEvidenceFromStructuredContent(structuredContent: unknown):
     title ? `productTitle: ${title}` : "",
     claims.length ? `supportedClaims:\n- ${claims.join("\n- ")}` : "",
     description.trim() ? `officialDescription:\n${description.trim()}` : "",
+    buyerReviews.length
+      ? `BUYER_REVIEWS — what buyers wrote. A sentence stating what these say happens in the work (a scene, act, place, her reaction or line) is supported; a buyer's opinion is not:\n- ${buyerReviews.join("\n- ")}`
+      : "",
     imageNotes.length
       ? `SAMPLE_IMAGE_NOTES — what the official sample stills show. A sentence stating one of these visible points (clothing, place, position) is supported:\n- ${imageNotes.join("\n- ")}`
       : "",

@@ -137,9 +137,29 @@ export type EvidencePack = {
   insufficientReason: string | null;
   /** R143 — unique performer entities from official metadata (not family-deduped facts). */
   performerItems: PerformerEntity[];
+  /**
+   * What buyers wrote on the work page. Plain narration material for what happens in the work
+   * (2026-11-29 user decision: longer story-shaped articles; never attributed in the text).
+   */
+  buyerReviews?: string[];
   /** What the official sample stills show; plain visible details, never attributed in the text. */
   imageNotes?: string[];
 };
+
+/** The most helpful non-negative buyer reviews, trimmed for the Writer. */
+export function selectBuyerReviewsForWriter(
+  reviews: PageEvidenceMetaShape["buyerReviews"],
+  limit = 5,
+): string[] {
+  return (reviews ?? [])
+    .filter((r) => typeof r.comment === "string" && r.comment.trim() && (r.rating == null || r.rating >= 3))
+    .sort((a, b) => (b.helpfulCount ?? 0) - (a.helpfulCount ?? 0))
+    .slice(0, limit)
+    .map((r) => {
+      const text = `${r.title?.trim() ? `「${r.title.trim()}」` : ""}${String(r.comment).replace(/\s+/g, " ").trim()}`;
+      return text.length > 280 ? `${text.slice(0, 280)}…` : text;
+    });
+}
 
 const CATALOG_FACET_TYPES = new Set<BlueprintEvidenceType>([
   "maker_or_label",
@@ -716,6 +736,7 @@ export function buildEvidencePack(input: {
       input.pageEvidenceMeta?.actors?.length,
   );
 
+  const buyerReviews = selectBuyerReviewsForWriter(input.pageEvidenceMeta?.buyerReviews);
   return {
     schemaVersion: 1,
     productIdentity: {
@@ -751,6 +772,7 @@ export function buildEvidencePack(input: {
         generationEligible: false,
       },
     ],
+    ...(buyerReviews.length ? { buyerReviews } : {}),
     ...(input.pageEvidenceMeta?.imageNotes?.length ? { imageNotes: input.pageEvidenceMeta.imageNotes.slice(0, 10) } : {}),
     videoEvidence: input.sampleVideo?.playerUrl
       ? { playerUrlPresent: true, generationEligible: false }
@@ -1100,6 +1122,7 @@ export function toOptionBWriterSourceMaterialFromPack(pack: EvidencePack): Recor
     productTitle: pack.productIdentity.title,
     claims: supportedClaimsFromPack(pack),
     officialDescription: composeWriterOfficialDescriptionFromPack(pack),
+    buyerReviews: pack.buyerReviews ?? [],
     imageNotes: pack.imageNotes ?? [],
   });
 }
@@ -1117,6 +1140,7 @@ export function toOptionBWriterSourceMaterial(input: {
   claims: Array<{ id: string; statement: string; kind?: string }>;
   /** r94: string[] = individual facts; legacy string = single blob (tests/manual). */
   officialDescription?: string | string[] | null;
+  buyerReviews?: string[];
   imageNotes?: string[];
 }): Record<string, unknown> {
   const productTitle = input.productTitle;
@@ -1153,6 +1177,7 @@ export function toOptionBWriterSourceMaterial(input: {
       ...(typeof c.kind === "string" && c.kind.trim() ? { kind: c.kind } : {}),
     })),
     officialDescription,
+    ...(input.buyerReviews?.length ? { buyerReviews: input.buyerReviews } : {}),
     ...(input.imageNotes?.length ? { imageNotes: input.imageNotes } : {}),
   };
 }

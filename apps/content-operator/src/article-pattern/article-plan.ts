@@ -141,6 +141,8 @@ export type ArticlePlan = {
    * Writer and Rewrite must reuse this object; they must not replace the query.
    */
   seoSearchIntent?: import("./seo-search-intent.js").SeoSearchIntent | null;
+  /** What buyers wrote (EvidencePack.buyerReviews); what happens in the work may be told as plain narration. */
+  buyerReviews?: string[] | null;
   /** What the official sample stills show (EvidencePack.imageNotes); usable as plain visible details. */
   imageNotes?: string[] | null;
 };
